@@ -1,0 +1,38 @@
+# ==============================================================================
+# MOTOR DE GÊMEO DIGITAL (TIER GOVERNAMENTAL) - BRASÍLIA
+# ==============================================================================
+
+[generation]
+# TWEAK RIGOROSO: Substitui o 1.414 genérico pelas escalas exatas do DF
+scale = 1.33
+scale_h = 1.33
+scale_v = 1.15
+
+# Datapack de 4064 blocos (Permite que Brasília fique no alto do planalto)
+vertical_offset = -307
+
+# Centro do mapa (Atual: Guará / EPTG / Águas Claras)
+offset = [-15.8464, -47.9713]
+
+[terrain]
+enabled = true
+# 0.05 é o ideal para o LiDAR e o Smootherstep de 5º grau que implementamos
+smoothing = 0.05
+
+[buildings]
+# Ativa os detalhes das áreas residenciais do Guará e Asa Sul
+window_shutters = true
+balconies = true
+chimneys = true
+roofs = true
+
+# ==============================================================================
+# ?? PARÂMETROS DO MOTOR BESM-6 (Via CLI ou integração futura de Config)
+# Descomente e preencha caso seu parser TOML suporte a injeção direta:
+# ==============================================================================
+# [government_data]
+# local_shp = "./dados/codeplan_lotes.shp"
+# local_lidar = "./dados/topocart_relevo.laz"
+# enable_underground_wfs = true
+# wfs_endpoint = "https://atlas.caesb.df.gov.br/api/wfs"
+# epsg = 31983
