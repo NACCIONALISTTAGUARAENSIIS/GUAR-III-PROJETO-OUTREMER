@@ -1,7 +1,8 @@
 // Top-down world map renderer for GUI preview.
 //
-// Generates a 1:1 pixel-per-block PNG image of the generated world,
+// Generates a PNG image of the generated world,
 // showing the topmost visible block at each position.
+// ?? BESM-6 TWEAK: Proteção Dinâmica de Memória (Downsampling) contra Mapas Governamentais Massivos.
 
 use fastanvil::Region;
 use fastnbt::{from_bytes, Value};
@@ -12,6 +13,10 @@ use rayon::prelude::*;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Mutex;
+
+/// Limite rígido da dimensão máxima da imagem na RAM (Largura ou Altura)
+/// 32768 x 32768 x 3 bytes (RGB) = ~3 Gigabytes de RAM apenas para a foto.
+const MAX_IMAGE_DIMENSION: u32 = 32768;
 
 /// Pre-computed block colors for fast lookup
 static BLOCK_COLORS: Lazy<FnvHashMap<&'static str, Rgb<u8>>> = Lazy::new(get_block_colors);
@@ -25,12 +30,24 @@ pub fn render_world_map(
     min_z: i32,
     max_z: i32,
 ) -> Result<std::path::PathBuf, String> {
-    let width = (max_x - min_x + 1) as u32;
-    let height = (max_z - min_z + 1) as u32;
+    let mut raw_width = (max_x - min_x + 1).max(0) as u32;
+    let mut raw_height = (max_z - min_z + 1).max(0) as u32;
 
-    if width == 0 || height == 0 {
+    if raw_width == 0 || raw_height == 0 {
         return Err("Invalid world bounds".to_string());
     }
+
+    // ?? BESM-6 Tweak: Auto-Downsampling (Proteção contra OOM do O.S.)
+    // Se a imagem passar de ~3GB na RAM (o que é trivial no DF inteiro), reduzimos a escala.
+    let mut downsample_factor = 1;
+    while raw_width / downsample_factor > MAX_IMAGE_DIMENSION || raw_height / downsample_factor > MAX_IMAGE_DIMENSION {
+        downsample_factor *= 2;
+    }
+
+    let width = raw_width / downsample_factor;
+    let height = raw_height / downsample_factor;
+
+    println!("[INFO] ?? Iniciando renderização do minimapa: {}x{} pixels (Downsample: {}x)", width, height, downsample_factor);
 
     // Use Mutex for thread-safe image access
     let img = Mutex::new(RgbImage::from_pixel(width, height, Rgb([255, 255, 255])));
@@ -67,12 +84,14 @@ pub fn render_world_map(
                     min_z,
                     max_x,
                     max_z,
+                    downsample_factor, // Repassamos a taxa de escala
                 );
 
                 // Then batch-write to image under lock
                 if !pixels.is_empty() {
                     let mut img_guard = img.lock().unwrap();
                     for (x, z, color) in pixels {
+                        // Verifica limites para não crachar a matriz do `image` crate
                         if x < img_guard.width() && z < img_guard.height() {
                             img_guard.put_pixel(x, z, color);
                         }
@@ -84,6 +103,8 @@ pub fn render_world_map(
 
     // Save the image
     let output_path = world_dir.join("arnis_world_map.png");
+    println!("[INFO] ?? Salvando preview cartográfico em: {}", output_path.display());
+    
     img.into_inner()
         .unwrap()
         .save(&output_path)
@@ -93,6 +114,7 @@ pub fn render_world_map(
 }
 
 /// Renders all chunks within a region and returns pixel data
+#[allow(clippy::too_many_arguments)]
 fn render_region_to_pixels(
     region: &mut Region<File>,
     region_x: i32,
@@ -101,6 +123,7 @@ fn render_region_to_pixels(
     min_z: i32,
     max_x: i32,
     max_z: i32,
+    downsample_factor: u32,
 ) -> Vec<(u32, u32, Rgb<u8>)> {
     let mut pixels = Vec::new();
     let region_base_x = region_x * 512;
@@ -132,6 +155,7 @@ fn render_region_to_pixels(
                     min_z,
                     max_x,
                     max_z,
+                    downsample_factor,
                 );
             }
         }
@@ -151,6 +175,7 @@ fn render_chunk_to_pixels(
     min_z: i32,
     max_x: i32,
     max_z: i32,
+    downsample_factor: u32,
 ) {
     // Parse chunk NBT - look for Level.sections or sections depending on format
     let chunk: Value = match from_bytes(chunk_data) {
@@ -181,6 +206,12 @@ fn render_chunk_to_pixels(
                 continue;
             }
 
+            // ?? Pulo de Downsampling (Economiza CPU no mapa enorme)
+            // Renderizamos apenas 1 pixel a cada X blocos definidos pelo fator.
+            if world_x.rem_euclid(downsample_factor as i32) != 0 || world_z.rem_euclid(downsample_factor as i32) != 0 {
+                continue;
+            }
+
             // Find topmost non-air block using pre-sorted sections
             if let Some((block_name, world_y)) =
                 find_top_block_sorted(&sorted_sections, local_x as usize, local_z as usize)
@@ -196,8 +227,8 @@ fn render_chunk_to_pixels(
                 // Apply elevation shading
                 let color = apply_elevation_shading(base_color, world_y);
 
-                let img_x = (world_x - min_x) as u32;
-                let img_z = (world_z - min_z) as u32;
+                let img_x = ((world_x - min_x) as u32) / downsample_factor;
+                let img_z = ((world_z - min_z) as u32) / downsample_factor;
 
                 pixels.push((img_x, img_z, color));
             }

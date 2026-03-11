@@ -1,16 +1,26 @@
 [package]
-name = "arnis"
+name = "pincelism"
 version = "2.5.0"
 edition = "2021"
-description = "Arnis - Generate real life cities in Minecraft"
-homepage = "https://github.com/louis-e/arnis"
-repository = "https://github.com/louis-e/arnis"
-license = "Apache-2.0"
+rust-version = "1.75" # Restrição necessária para garantir a compatibilidade do compilador
+description = "Pincelism (BESM-6 Engine) - Procedural Digital Twin Generator for the Federal District"
+authors = ["Pincé - @pincelism"]
+homepage = "https://github.com/nasnEdfbXOHEfuW5hi06gN/n-p70-fMh8I-k-oQ1-r-D-ZtpwC"
+repository = "https://github.com/nasnEdfbXOHEfuW5hi06gN/n-p70-fMh8I-k-oQ1-r-D-ZtpwC"
+license = "AGPL-3.0-or-later"
 readme = "README.md"
+keywords = ["gis", "procedural", "voxel", "digital-twin", "lidar"]
+categories = ["science", "simulation", "rendering"]
 
 [profile.release]
-lto = "thin"
-overflow-checks = true
+opt-level = 3          # Maximização de performance bruta e matemática
+lto = "fat"            # Link-Time Optimization agressivo cruzando todos os crates
+codegen-units = 1      # Compilação em thread única: aumenta tempo de build, mas oblitera gargalos de execução
+panic = "abort"        # Desativa unwinding: poupa RAM e reduz o inchaço do binário
+overflow-checks = true # Mantido como barreira de segurança física no processamento das malhas
+
+[profile.dev]
+opt-level = 1          # Impede que testes em ambiente local com arquivos pesados sejam estrangulados pela lentidão do modo dev padrão
 
 [features]
 default = ["gui"]
@@ -21,45 +31,53 @@ bedrock = ["bedrockrs_level", "bedrockrs_shared", "nbtx", "zip", "byteorder", "v
 tauri-build = {version = "2", optional = true}
 
 [dependencies]
+# Cartografia, Modelagem e Processamento de Dados Abertos
+las = { version = "0.8", features = ["laz"] }
+osmpbf = "0.3.3"
+shapefile = "0.3.0"
+tiff = "0.9.0"
+tobj = "4.0.0"
+csv = "1.3.0"
+geozero = { version = "0.13.0", features = ["with-wkb", "with-geo"] }
+geo = { version = "0.31.0", features = ["use-serde"] }
+proj = "0.27.2"
+quick-xml = "0.31.0"
+fastanvil = "0.32.0"
+fastnbt = "2.6.0"
+
+# Estruturas de Alta Performance O(1) e Paralelismo
+rayon = "1.10.0"
+rustc-hash = "1.1"
+fnv = "1.0.7"
+once_cell = "1.21.3"
+
+# Utilitários Sistêmicos, Master Control e Matemática
 base64 = "0.22.1"
 byteorder = { version = "1.5", optional = true }
 clap = { version = "4.5.53", features = ["derive", "env"] }
 colored = "3.0.0"
-csv = "1.3.0" # ADICIONADO: Leitor de planilhas de dados abertos do governo
+crossterm = "0.27.0"
 dirs = "6.0.0"
-fastanvil = "0.32.0"
-fastnbt = "2.6.0"
 flate2 = "1.1"
-fnv = "1.0.7"
 fs2 = "0.4"
-geo = { version = "0.31.0", features = ["use-serde"] } # ATUALIZADO: Suporte a Serde para Indoor Utilities
-geozero = { version = "0.13.0", features = ["with-wkb", "with-geo"] } # ADICIONADO: Decodificador WKB para GeoPackage
 image = "0.25"
 indicatif = "0.17.11"
 itertools = "0.14.0"
 jsonwebtoken = "10.3.0"
-las = { version = "0.8", features = ["laz"] } # ADICIONADO: Leitor de nuvens de pontos LiDAR
 log = "0.4.27"
-once_cell = "1.21.3"
-osmpbf = "0.3.3" # ADICIONADO: Decodificador de OSM PBF local
-proj = "0.27.2" # ADICIONADO: Motor de Reprojeção Matemática (SIRGAS2000 -> WGS84)
-quick-xml = "0.31.0" # ADICIONADO: Motor SAX Streaming para CityGML gigas sem afogar a RAM
 rand = { version = "0.9.1", features = ["std", "std_rng"] }
 rand_chacha = "0.9"
-rayon = "1.10.0"
 reqwest = { version = "0.13.1", features = ["blocking", "json", "query"] }
-rfd = { version = "0.16.0", optional = true }
-rusqlite = { version = "0.31.0", features = ["bundled"] } # ADICIONADO: Banco de dados local (GeoPackage)
-rustc-hash = "1.1" # ADICIONADO: Hash de extrema performance O(1) para mapas de escala distrital
+rusqlite = { version = "0.31.0", features = ["bundled"] }
 semver = "1.0.27"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-shapefile = "0.3.0" # ADICIONADO: Leitor de Dados do Geoportal do GDF
+
+# GUI e Comunicação Externa (Isolados por Features)
+rfd = { version = "0.16.0", optional = true }
 tauri = { version = "2", optional = true }
 tauri-plugin-log = { version = "2.6.0", optional = true }
 tauri-plugin-shell = { version = "2", optional = true }
-tiff = "0.9.0" # ADICIONADO: Leitor de Rasters GeoTIFF (MapBiomas, SISDIA)
-tobj = "4.0.0" # ADICIONADO: Motor de leitura de malhas 3D (Wavefront OBJ)
 tokio = { version = "1.48.0", features = ["full"], optional = true }
 bedrockrs_level = { git = "https://github.com/bedrock-crustaceans/bedrock-rs", package = "bedrockrs_level", optional = true }
 bedrockrs_shared = { git = "https://github.com/bedrock-crustaceans/bedrock-rs", package = "bedrockrs_shared", optional = true }
