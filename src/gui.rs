@@ -4,7 +4,6 @@ use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::data_processing::{self, GenerationOptions};
 use crate::ground::{self, Ground};
-use crate::map_transformation;
 use crate::osm_parser;
 use crate::progress::{self, emit_gui_progress_update};
 use crate::retrieve_data;
@@ -21,6 +20,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::{env, fs, io::Write};
 use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind};
+use std::str::FromStr;
 
 /// Manages the session.lock file for a Minecraft world directory
 struct SessionLock {
@@ -690,6 +690,7 @@ fn gui_show_in_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+// 🚨 BESM-6 Tweak: A ponte da GUI antiga para o Pipeline Governamental
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 #[allow(unused_variables)]
@@ -710,301 +711,86 @@ fn gui_start_generation(
     world_format: String,
 ) -> Result<(), String> {
     use progress::emit_gui_error;
-    use LLBBox;
+    use crate::args::{Downloader, DemSource, LayerPriority}; // Imports necessários para os Enums
 
     // Store telemetry consent for crash reporting
     telemetry::set_telemetry_consent(telemetry_consent);
-
-    // Send generation click telemetry
     telemetry::send_generation_click();
 
-    // For new Java worlds, set the spawn point in level.dat
-    // Only update player position for Java worlds - Bedrock worlds don't have a pre-existing
-    // level.dat to modify (the spawn point will be set when the .mcworld is created)
-    if is_new_world && world_format != "bedrock" {
-        let llbbox = match LLBBox::from_str(&bbox_text) {
-            Ok(bbox) => bbox,
-            Err(e) => {
-                let error_msg = format!("Failed to parse bounding box: {e}");
-                eprintln!("{error_msg}");
-                emit_gui_error(&error_msg);
-                return Err(error_msg);
-            }
-        };
+    let llbbox = match LLBBox::from_str(&bbox_text) {
+        Ok(bbox) => bbox,
+        Err(e) => {
+            let error_msg = format!("Failed to parse bounding box: {e}");
+            emit_gui_error(&error_msg);
+            return Err(error_msg);
+        }
+    };
 
-        let (transformer, xzbbox) = match CoordTransformer::llbbox_to_xzbbox(&llbbox, world_scale) {
-            Ok(result) => result,
-            Err(e) => {
-                let error_msg = format!("Failed to create coordinate transformer: {e}");
-                eprintln!("{error_msg}");
-                emit_gui_error(&error_msg);
-                return Err(error_msg);
-            }
-        };
+    let world_path = PathBuf::from(&selected_world);
+    let is_bedrock = world_format == "bedrock";
 
-        let (spawn_x, spawn_z) = if let Some(coords) = spawn_point {
-            // User selected a spawn point - verify it's within bounds and convert to XZ
-            let llpoint = LLPoint::new(coords.0, coords.1)
-                .map_err(|e| format!("Failed to parse spawn point: {e}"))?;
+    // Mapeamento direto de Argumentos para a Nova Estrutura de Comando BESM-6
+    let args = Args {
+        bbox: llbbox,
+        file: None,
+        save_json_file: None,
+        path: Some(world_path),
+        bedrock: is_bedrock,
+        downloader: Downloader::Requests, // 🚨 Corrigido: Uso do Enum em vez de String
+        threads: 0,                       // Auto
+        offline: false,
+        scale_h: world_scale,
+        scale_v: 1.15,                    // Rigor Governamental
+        scale: None,                      // Legacy
+        local_shp: None,
+        local_geojson: None,
+        local_lidar: None,
+        wfs_endpoint: None,
+        epsg: 31983,                      // Padrão Brasília
+        dem: DemSource::AwsSrtm,
+        local_dem: None,
+        cache_dir: PathBuf::from("./arnis_cache"),
+        max_area_km2: 10000.0,
+        max_dem_tiles: 200,
+        max_osm_features: 5000000,
+        priority_layer: vec![
+            LayerPriority::Shp,
+            LayerPriority::Lidar,
+            LayerPriority::Wfs,
+            LayerPriority::Geojson,
+            LayerPriority::Osm,
+        ],
+        enable_underground_wfs: false,
+        postgis_url: None,
+        local_gpkg: None,
+        local_pbf: None,
+        mvt_endpoint: None,
+        local_citygml: None,
+        local_mesh: None,
+        ground_level,
+        terrain: terrain_enabled,
+        interior: interior_enabled,
+        roof: roof_enabled,
+        fillground: fillground_enabled,
+        city_boundaries: city_boundaries_enabled,
+        debug: false,
+        timeout: Some(std::time::Duration::from_secs(60)),
+        spawn_lat: spawn_point.map(|p| p.0),
+        spawn_lng: spawn_point.map(|p| p.1),
+    };
 
-            if llbbox.contains(&llpoint) {
-                let xzpoint = transformer.transform_point(llpoint);
-                (xzpoint.x, xzpoint.z)
-            } else {
-                // Spawn point outside bounds, use default
-                calculate_default_spawn(&xzbbox)
-            }
-        } else {
-            // No user-selected spawn point - use default at X=1, Z=1 relative to world origin
-            calculate_default_spawn(&xzbbox)
-        };
-
-        set_player_spawn_in_level_dat(&selected_world, spawn_x, spawn_z)
-            .map_err(|e| format!("Failed to set spawn point: {e}"))?;
-    }
-
+    // Despacha para a thread principal de forma desanexada
     tauri::async_runtime::spawn(async move {
         if let Err(e) = tokio::task::spawn_blocking(move || {
-            let world_path = PathBuf::from(&selected_world);
-
-            // Determine world format from UI selection first (needed for session lock decision)
-            let world_format = if world_format == "bedrock" {
-                WorldFormat::BedrockMcWorld
-            } else {
-                WorldFormat::JavaAnvil
-            };
-
-            // Check available disk space before starting generation (minimum 3GB required)
-            const MIN_DISK_SPACE_BYTES: u64 = 3 * 1024 * 1024 * 1024; // 3 GB
-            let check_path = if world_format == WorldFormat::JavaAnvil {
-                world_path.clone()
-            } else {
-                // For Bedrock, check current directory where .mcworld will be created
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-            };
-            match fs2::available_space(&check_path) {
-                Ok(available) if available < MIN_DISK_SPACE_BYTES => {
-                    let error_msg = "Not enough disk space available.".to_string();
-                    eprintln!("{error_msg}");
-                    emit_gui_error(&error_msg);
-                    return Err(error_msg);
-                }
-                Err(e) => {
-                    // Log warning but don't block generation if we can't check space
-                    eprintln!("Warning: Could not check disk space: {e}");
-                }
-                _ => {} // Sufficient space available
-            }
-
-            // Acquire session lock for Java worlds only
-            // Session lock prevents Minecraft from having the world open during generation
-            // Bedrock worlds are generated as .mcworld files and don't need this lock
-            let _session_lock: Option<SessionLock> = if world_format == WorldFormat::JavaAnvil {
-                match SessionLock::acquire(&world_path) {
-                    Ok(lock) => Some(lock),
-                    Err(e) => {
-                        let error_msg = format!("Failed to acquire session lock: {e}");
-                        eprintln!("{error_msg}");
-                        emit_gui_error(&error_msg);
-                        return Err(error_msg);
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Parse the bounding box from the text with proper error handling
-            let bbox = match LLBBox::from_str(&bbox_text) {
-                Ok(bbox) => bbox,
-                Err(e) => {
-                    let error_msg = format!("Failed to parse bounding box: {e}");
-                    eprintln!("{error_msg}");
-                    emit_gui_error(&error_msg);
-                    return Err(error_msg);
-                }
-            };
-
-            // Determine output path and level name based on format
-            let (generation_path, level_name) = match world_format {
-                WorldFormat::JavaAnvil => {
-                    // Java: use the selected world path, add localized name if new
-                    let updated_path = if is_new_world {
-                        add_localized_world_name(world_path.clone(), &bbox)
-                    } else {
-                        world_path.clone()
-                    };
-                    (updated_path, None)
-                }
-                WorldFormat::BedrockMcWorld => {
-                    // Bedrock: generate .mcworld on Desktop with location-based name
-                    let output_dir = crate::world_utils::get_bedrock_output_directory();
-                    let (output_path, lvl_name) =
-                        crate::world_utils::build_bedrock_output(&bbox, output_dir);
-                    (output_path, Some(lvl_name))
-                }
-            };
-
-            // Calculate MC spawn coordinates from lat/lng if spawn point was provided
-            // Otherwise, default to X=1, Z=1 (relative to xzbbox min coordinates)
-            let mc_spawn_point: Option<(i32, i32)> = if let Some((lat, lng)) = spawn_point {
-                if let Ok(llpoint) = LLPoint::new(lat, lng) {
-                    if let Ok((transformer, _)) =
-                        CoordTransformer::llbbox_to_xzbbox(&bbox, world_scale)
-                    {
-                        let xzpoint = transformer.transform_point(llpoint);
-                        Some((xzpoint.x, xzpoint.z))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                // Default spawn point: X=1, Z=1 relative to world origin
-                if let Ok((_, xzbbox)) = CoordTransformer::llbbox_to_xzbbox(&bbox, world_scale) {
-                    Some(calculate_default_spawn(&xzbbox))
-                } else {
-                    None
-                }
-            };
-
-            // Create generation options
-            let generation_options = GenerationOptions {
-                path: generation_path.clone(),
-                format: world_format,
-                level_name,
-                spawn_point: mc_spawn_point,
-            };
-
-            // Create an Args instance with the chosen bounding box
-            // Note: path is used for Java-specific features like spawn point update
-            let args: Args = Args {
-                bbox,
-                file: None,
-                save_json_file: None,
-                path: Some(if world_format == WorldFormat::JavaAnvil {
-                    generation_path
-                } else {
-                    world_path
-                }),
-                bedrock: world_format == WorldFormat::BedrockMcWorld,
-                downloader: "requests".to_string(),
-                scale: world_scale,
-                ground_level,
-                terrain: terrain_enabled,
-                interior: interior_enabled,
-                roof: roof_enabled,
-                fillground: fillground_enabled,
-                city_boundaries: city_boundaries_enabled,
-                debug: false,
-                timeout: Some(std::time::Duration::from_secs(40)),
-                spawn_lat: None,
-                spawn_lng: None,
-            };
-
-            // If skip_osm_objects is true (terrain-only mode), skip fetching and processing OSM data
-            if skip_osm_objects {
-                // Generate ground data (terrain) for terrain-only mode
-                let ground = ground::generate_ground_data(&args);
-
-                // Create empty parsed_elements and xzbbox for terrain-only mode
-                let parsed_elements = Vec::new();
-                let (_coord_transformer, xzbbox) =
-                    CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale)
-                        .map_err(|e| format!("Failed to create coordinate transformer: {}", e))?;
-
-                let _ = data_processing::generate_world_with_options(
-                    parsed_elements,
-                    xzbbox.clone(),
-                    args.bbox,
-                    ground,
-                    &args,
-                    generation_options.clone(),
-                );
-                // Explicitly release session lock before showing Done message
-                // so Minecraft can open the world immediately
-                drop(_session_lock);
-                emit_gui_progress_update(100.0, "Done! World generation completed.");
-                println!("{}", "Done! World generation completed.".green().bold());
-
-                // Start map preview generation silently in background (Java only)
-                if world_format == WorldFormat::JavaAnvil {
-                    let preview_info = data_processing::MapPreviewInfo::new(
-                        generation_options.path.clone(),
-                        &xzbbox,
-                    );
-                    data_processing::start_map_preview_generation(preview_info);
-                }
-
-                return Ok(());
-            }
-
-            // Run data fetch and world generation (standard mode: objects + terrain, or objects only)
-            match retrieve_data::fetch_data_from_overpass(args.bbox, args.debug, "requests", None) {
-                Ok(raw_data) => {
-                    let (mut parsed_elements, mut xzbbox) =
-                        osm_parser::parse_osm_data(raw_data, args.bbox, args.scale, args.debug);
-                    parsed_elements.sort_by(|el1, el2| {
-                        let (el1_priority, el2_priority) =
-                            (osm_parser::get_priority(el1), osm_parser::get_priority(el2));
-                        match (
-                            el1.tags().contains_key("landuse"),
-                            el2.tags().contains_key("landuse"),
-                        ) {
-                            (true, false) => std::cmp::Ordering::Greater,
-                            (false, true) => std::cmp::Ordering::Less,
-                            _ => el1_priority.cmp(&el2_priority),
-                        }
-                    });
-
-                    let mut ground = ground::generate_ground_data(&args);
-
-                    // Transform map (parsed_elements). Operations are defined in a json file
-                    map_transformation::transform_map(
-                        &mut parsed_elements,
-                        &mut xzbbox,
-                        &mut ground,
-                    );
-
-                    let _ = data_processing::generate_world_with_options(
-                        parsed_elements,
-                        xzbbox.clone(),
-                        args.bbox,
-                        ground,
-                        &args,
-                        generation_options.clone(),
-                    );
-                    // Explicitly release session lock before showing Done message
-                    // so Minecraft can open the world immediately
-                    drop(_session_lock);
-                    emit_gui_progress_update(100.0, "Done! World generation completed.");
-                    println!("{}", "Done! World generation completed.".green().bold());
-
-                    // Start map preview generation silently in background (Java only)
-                    if world_format == WorldFormat::JavaAnvil {
-                        let preview_info = data_processing::MapPreviewInfo::new(
-                            generation_options.path.clone(),
-                            &xzbbox,
-                        );
-                        data_processing::start_map_preview_generation(preview_info);
-                    }
-
-                    Ok(())
-                }
-                Err(e) => {
-                    emit_gui_error(&e.to_string());
-                    // Session lock will be automatically released when _session_lock goes out of scope
-                    Err(e.to_string())
-                }
-            }
-        })
-        .await
-        {
-            let error_msg = format!("Error in blocking task: {e}");
-            eprintln!("{error_msg}");
+            // Chamamos a função principal definida no main.rs/lib.rs
+            crate::run_generation_pipeline(args, None);
+        }).await {
+            let error_msg = format!("Erro Crítico no despachante do Pincelism: {}", e);
+            eprintln!("{}", error_msg);
             emit_gui_error(&error_msg);
-            // Session lock will be automatically released when the task fails
         }
+
+        emit_gui_progress_update(100.0, "Done! World generation completed.");
     });
 
     Ok(())

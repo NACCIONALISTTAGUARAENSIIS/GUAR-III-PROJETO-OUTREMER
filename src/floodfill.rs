@@ -1,58 +1,27 @@
-use geo::orient::{Direction, Orient};
-use geo::{Contains, LineString, Point, Polygon};
-use itertools::Itertools;
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+//! Algoritmos de Rasteriza√ß√£o (Voxeliza√ß√£o Planialtim√©trica BESM-6)
+//!
+//! Este m√≥dulo substitui o arcaico e engasgado Flood Fill (BFS Inunda√ß√£o)
+//! por um Scanline Rasterizer determin√≠stico O(Y * Arestas).
+//! A Voxeliza√ß√£o Scanline elimina os bilh√µes de testes de intersec√ß√£o na CPU
+//! e suporta an√©is interiores (p√°tios, ilhas no Lago Parano√°).
 
-/// Maximum bounding box area (in blocks) for flood fill.
-/// Aumentado para acomodar o Lago Parano· sem ser cortado (30M blocks)
+use itertools::Itertools;
+use std::time::{Duration, Instant};
+use crate::osm_parser::ProcessedElement;
+
+/// Maximum bounding box area (in blocks) for safety cut-off.
+/// Aumentado para 30M blocks para suportar o Lago Parano√°.
 const MAX_FLOOD_FILL_AREA: i64 = 30_000_000;
 
-/// A compact bitmap for visited-coordinate tracking during flood fill.
-struct FloodBitmap {
-    bits: Vec<u8>,
-    min_x: i32,
-    min_z: i32,
-    width: usize,
+/// Estrutura para acomodar pol√≠gonos complexos (com furos/ilhas)
+pub struct ComplexPolygon {
+    pub outer: Vec<(i32, i32)>,
+    pub inners: Vec<Vec<(i32, i32)>>,
 }
 
-impl FloodBitmap {
-    #[inline]
-    fn new(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> Self {
-        let width = (max_x - min_x + 1) as usize;
-        let height = (max_z - min_z + 1) as usize;
-        let num_bytes = (width * height).div_ceil(8);
-        Self {
-            bits: vec![0u8; num_bytes],
-            min_x,
-            min_z,
-            width,
-        }
-    }
-
-    #[inline]
-    fn insert(&mut self, x: i32, z: i32) -> bool {
-        let idx = (z - self.min_z) as usize * self.width + (x - self.min_x) as usize;
-        let byte = idx / 8;
-        let bit = idx % 8;
-        let mask = 1u8 << bit;
-        if self.bits[byte] & mask != 0 {
-            false
-        } else {
-            self.bits[byte] |= mask;
-            true
-        }
-    }
-
-    #[inline]
-    fn contains(&self, x: i32, z: i32) -> bool {
-        let idx = (z - self.min_z) as usize * self.width + (x - self.min_x) as usize;
-        let byte = idx / 8;
-        let bit = idx % 8;
-        (self.bits[byte] >> bit) & 1 == 1
-    }
-}
-
+/// Interface unificada e protegida para o BESM-6 Scanline Rasterizer.
+/// Ignora a velha separa√ß√£o por "Area < 100_000" do Arnis original.
+/// A varredura Scanline otimizada √© mais r√°pida para teto ou lago de 30M.
 pub fn flood_fill_area(
     polygon_coords: &[(i32, i32)],
     timeout: Option<&Duration>,
@@ -61,13 +30,37 @@ pub fn flood_fill_area(
         return vec![];
     }
 
-    let (min_x, max_x) = polygon_coords
+    // Tratamos o pol√≠gono simples (sem furos fornecidos pela assinatura velha)
+    // como um caso de ComplexPolygon com inners vazios.
+    let complex_poly = ComplexPolygon {
+        outer: polygon_coords.to_vec(),
+        inners: Vec::new(),
+    };
+
+    scanline_fill_complex(&complex_poly, timeout)
+}
+
+/// üö® BESM-6 Tweak: SCANLINE RASTERIZATION PARA POL√çGONOS COMPLEXOS (COM FUROS) üö®
+/// Reduz a sobrecarga de mem√≥ria (Zero Queue) e preenche pol√≠gonos perfeitamente em O(Area).
+/// Substitui o uso mort√≠fero de `polygon.contains()` (Ray-Casting na CPU).
+pub fn scanline_fill_complex(
+    polygon: &ComplexPolygon,
+    timeout: Option<&Duration>,
+) -> Vec<(i32, i32)> {
+    let start_time = Instant::now();
+
+    if polygon.outer.len() < 3 {
+        return vec![];
+    }
+
+    // Determina o Bounding Box master
+    let (min_x, max_x) = polygon.outer
         .iter()
         .map(|&(x, _)| x)
         .minmax()
         .into_option()
         .unwrap();
-    let (min_z, max_z) = polygon_coords
+    let (min_z, max_z) = polygon.outer
         .iter()
         .map(|&(_, z)| z)
         .minmax()
@@ -75,63 +68,49 @@ pub fn flood_fill_area(
         .unwrap();
 
     let area = (max_x - min_x + 1) as i64 * (max_z - min_z + 1) as i64;
-
     if area > MAX_FLOOD_FILL_AREA {
-        // Ignora polÌgonos astronomicamente grandes (proteÁ„o contra dados corrompidos do OSM)
         return vec![];
     }
 
-    // Aumentado de 50k para 100k devido ‡ nossa escala HÌbrida 1.33
-    if area < 100_000 {
-        optimized_scanline_fill_area(polygon_coords, timeout, min_x, max_x, min_z, max_z)
-    } else {
-        original_flood_fill_area(polygon_coords, timeout, min_x, max_x, min_z, max_z)
-    }
-}
+    let cap = (area / 4).min(5_000_000) as usize;
+    let mut filled_area = Vec::with_capacity(cap);
 
-/// ?? BESM-6 Tweak: SCANLINE RASTERIZATION ??
-/// Substitui o BFS (Busca em Largura) tradicional por um algoritmo de varredura por linha (Scanline).
-/// Reduz a sobrecarga de memÛria (Zero Queue) e preenche polÌgonos perfeitamente em O(Area).
-fn optimized_scanline_fill_area(
-    polygon_coords: &[(i32, i32)],
-    timeout: Option<&Duration>,
-    _min_x: i32,
-    max_x: i32,
-    min_z: i32,
-    max_z: i32,
-) -> Vec<(i32, i32)> {
-    let start_time = Instant::now();
-    
-    // BESM-6 Tweak: Capacidade Estimada com Limite Superior Seguro (Evita OOM)
-    let bbox_area = (max_x - _min_x + 1) as i64 * (max_z - min_z + 1) as i64;
-    let cap = (bbox_area / 4).min(5_000_000) as usize;
-    let mut filled_area = Vec::with_capacity(cap); 
-    
-    // Preparar as arestas do polÌgono para verificaÁ„o r·pida (ignora arestas perfeitamente horizontais)
-    let mut edges = Vec::with_capacity(polygon_coords.len());
-    let len = polygon_coords.len();
-    for i in 0..len {
-        let j = (i + 1) % len;
-        let (x1, z1) = polygon_coords[i];
-        let (x2, z2) = polygon_coords[j];
-        
-        if z1 != z2 {
-            // Guarda sempre com y_min primeiro para facilitar a checagem (TÈcnica cl·ssica top-vertex)
-            if z1 < z2 {
-                edges.push(((x1 as f64, z1 as f64), (x2 as f64, z2 as f64)));
-            } else {
-                edges.push(((x2 as f64, z2 as f64), (x1 as f64, z1 as f64)));
+    // Prepara√ß√£o geom√©trica de todas as arestas (Exteriores + Interiores)
+    let mut edges = Vec::new();
+
+    // Closure para extrair arestas de um anel
+    let mut add_edges_from_ring = |ring: &[(i32, i32)]| {
+        let len = ring.len();
+        for i in 0..len {
+            let j = (i + 1) % len;
+            let (x1, z1) = ring[i];
+            let (x2, z2) = ring[j];
+
+            // Ignoramos retas perfeitamente horizontais, pois elas n√£o cruzam o scanline (z_f64) em um √∫nico ponto,
+            // elas coexistem na linha, e a regra Par-√çmpar (Even-Odd) n√£o precisa delas para contar "paredes".
+            if z1 != z2 {
+                // Guarda sempre com y_min primeiro (T√©cnica Top-Vertex)
+                if z1 < z2 {
+                    edges.push(((x1 as f64, z1 as f64), (x2 as f64, z2 as f64)));
+                } else {
+                    edges.push(((x2 as f64, z2 as f64), (x1 as f64, z1 as f64)));
+                }
             }
         }
+    };
+
+    add_edges_from_ring(&polygon.outer);
+    for inner_ring in &polygon.inners {
+        add_edges_from_ring(inner_ring);
     }
 
     let mut last_timeout_check = 0;
 
-    // Scanline (Varrer de Cima para Baixo)
+    // A Varredura (Scanline)
     for z in min_z..=max_z {
-        
-        // ProteÁ„o BESM-6: Controle de timeout com menor overhead
-        if filled_area.len() - last_timeout_check > 5000 {
+
+        // Timeout culling (Verifica a cada 10.000 pixels para n√£o asfixiar o I/O)
+        if filled_area.len() - last_timeout_check > 10_000 {
             if let Some(timeout) = timeout {
                 if start_time.elapsed() > *timeout {
                     return filled_area;
@@ -141,26 +120,27 @@ fn optimized_scanline_fill_area(
         }
 
         let z_f64 = z as f64;
-        
-        // BESM-6 Tweak: Vetor limpo e n„o prÈ-alocado pequeno para segurar complexos do OSM
-        let mut intersections = Vec::new(); 
+        let mut intersections = Vec::new();
 
-        // Encontra interseÁıes da linha de varredura (Scanline) com as arestas do polÌgono
+        // Cruzamento Ray-Casting Horizontal
         for ((ex1, ez1), (ex2, ez2)) in &edges {
-            // CondiÁ„o top-vertex: evita contar a mesma quina (vÈrtice) duas vezes se duas arestas se ligam ali
-            if z_f64 >= *ez1 && z_f64 < *ez2 { 
+            // A condi√ß√£o Top-Vertex (z_f64 >= ez1 && z_f64 < ez2) √© vital.
+            // Ela previne o bug da contagem dupla quando a Scanline bate exatamente
+            // no v√©rtice onde duas arestas se encontram (fazendo o raio passar "pelo meio" da quina).
+            if z_f64 >= *ez1 && z_f64 < *ez2 {
                 let intersect_x = ex1 + (z_f64 - ez1) / (ez2 - ez1) * (ex2 - ex1);
                 intersections.push(intersect_x);
             }
         }
 
-        // Ordena as interseÁıes da esquerda para a direita
+        // Ordena√ß√£o da esquerda para a direita (Regra de Winding)
+        // Se pegou uma aresta do exterior e uma do furo, elas v√£o parear.
         intersections.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        // Regra Even-Odd (Preenche entre os pares de interseÁıes)
+        // Regra Even-Odd: A cada par de v√©rtices interceptados, estamos "dentro" do material.
         let mut idx = 0;
         while idx + 1 < intersections.len() {
-            // BESM-6 Tweak: Convers„o grid segura.
+            // Voxeliza√ß√£o Segura: Arredondamento para preservar a forma cont√≠nua do Minecraft
             let start_x = intersections[idx].ceil() as i32;
             let end_x = intersections[idx + 1].floor() as i32;
 
@@ -175,79 +155,33 @@ fn optimized_scanline_fill_area(
     filled_area
 }
 
-fn original_flood_fill_area(
-    polygon_coords: &[(i32, i32)],
-    timeout: Option<&Duration>,
-    min_x: i32,
-    max_x: i32,
-    min_z: i32,
-    max_z: i32,
-) -> Vec<(i32, i32)> {
-    let start_time = Instant::now();
-    let mut filled_area: Vec<(i32, i32)> = Vec::with_capacity(5000);
-    let mut visited = FloodBitmap::new(min_x, max_x, min_z, max_z);
+/// Extrai a geometria complexa de Pol√≠gonos baseados em Relations (OSM multipolygons),
+/// garantindo o reconhecimento estrito de p√°tios internos e ilhas.
+pub fn extract_complex_polygon_from_element(element: &ProcessedElement) -> Option<ComplexPolygon> {
+    match element {
+        ProcessedElement::Way(w) => {
+            let outer: Vec<(i32, i32)> = w.nodes.iter().map(|n| (n.x, n.z)).collect();
+            Some(ComplexPolygon { outer, inners: Vec::new() })
+        }
+        ProcessedElement::Relation(rel) => {
+            let mut outer_ring = Vec::new();
+            let mut inner_rings = Vec::new();
 
-    let exterior_coords: Vec<(f64, f64)> = polygon_coords
-        .iter()
-        .map(|&(x, z)| (x as f64, z as f64))
-        .collect::<Vec<_>>();
-    let exterior: LineString = LineString::from(exterior_coords);
-    let polygon: Polygon<f64> = Polygon::new(exterior, vec![]).orient(Direction::Default);
-
-    let width = max_x - min_x + 1;
-    let height = max_z - min_z + 1;
-    let step_x: i32 = (width / 8).clamp(1, 24);
-    let step_z: i32 = (height / 8).clamp(1, 24);
-
-    let mut queue: VecDeque<(i32, i32)> = VecDeque::with_capacity(4096);
-
-    for z in (min_z..=max_z).step_by(step_z as usize) {
-        for x in (min_x..=max_x).step_by(step_x as usize) {
-            
-            // Tweak: Como esta funÁ„o lida com lagos de 30M, o syscall do relÛgio deve ser muito raro
-            if filled_area.len() % 50_000 == 0 {
-                if let Some(timeout) = timeout {
-                    if start_time.elapsed() > *timeout {
-                        return filled_area;
-                    }
+            for member in &rel.members {
+                let ring: Vec<(i32, i32)> = member.way.nodes.iter().map(|n| (n.x, n.z)).collect();
+                if member.role == crate::osm_parser::ProcessedMemberRole::Outer {
+                    outer_ring.extend(ring);
+                } else if member.role == crate::osm_parser::ProcessedMemberRole::Inner {
+                    inner_rings.push(ring);
                 }
             }
 
-            if visited.contains(x, z) || !polygon.contains(&Point::new(x as f64, z as f64)) {
-                continue;
-            }
-
-            queue.clear();
-            queue.push_back((x, z));
-            visited.insert(x, z);
-
-            while let Some((curr_x, curr_z)) = queue.pop_front() {
-                // A GRANDE CORRE«√O: O bloco j· foi verificado antes de entrar na fila. N„o testamos novamente aqui.
-                filled_area.push((curr_x, curr_z));
-
-                let neighbors = [
-                    (curr_x - 1, curr_z),
-                    (curr_x + 1, curr_z),
-                    (curr_x, curr_z - 1),
-                    (curr_x, curr_z + 1),
-                ];
-
-                for &(nx, nz) in &neighbors {
-                    if nx >= min_x
-                        && nx <= max_x
-                        && nz >= min_z
-                        && nz <= max_z
-                        && visited.insert(nx, nz)
-                    {
-                        // Teste de ContenÁ„o blindado ANTES de colocar na fila (Impede vazamento de RAM)
-                        if polygon.contains(&Point::new(nx as f64, nz as f64)) {
-                            queue.push_back((nx, nz));
-                        }
-                    }
-                }
+            if outer_ring.is_empty() {
+                None
+            } else {
+                Some(ComplexPolygon { outer: outer_ring, inners: inner_rings })
             }
         }
+        _ => None,
     }
-
-    filled_area
 }

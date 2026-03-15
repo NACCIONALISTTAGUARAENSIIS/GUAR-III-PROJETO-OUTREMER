@@ -1,12 +1,12 @@
 //! Vegetation & Biome Provider (BESM-6 Government Tier)
 //!
-//! Autômato de estado espacial isolado que cruza dados matriciais (MapBiomas)
+//! Autï¿½mato de estado espacial isolado que cruza dados matriciais (MapBiomas)
 //! com fronteiras vetoriais exatas (Fitofisionomia IBGE e APPs SICAR).
 //!
-//! Emprega Voxelização Local Determinística com Pré-Quantização Inteira.
-//! O motor principal não calcula a biologia dinamicamente; ele recebe uma
-//! grade estrita O(1) de IDs botânicos, garantindo zero floating-point interpolation
-//! no tempo de execução e preservando os 24GB de RAM.
+//! Emprega VoxelizaÃ§Ã£o Local Determinï¿½stica com Prï¿½-Quantizaï¿½ï¿½o Inteira.
+//! O motor principal nï¿½o calcula a biologia dinamicamente; ele recebe uma
+//! grade estrita O(1) de IDs botï¿½nicos, garantindo zero floating-point interpolation
+//! no tempo de execuï¿½ï¿½o e preservando os 24GB de RAM.
 
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
@@ -18,20 +18,20 @@ use shapefile::record::polygon::Polygon;
 use shapefile::ShapeReader;
 
 // ============================================================================
-// ?? TABELA DE PRÉ-QUANTIZAÇÃO INTEIRA (FITOFISIONOMIAS E ESTADOS)
+// ?? TABELA DE PRï¿½-QUANTIZAï¿½ï¿½O INTEIRA (FITOFISIONOMIAS E ESTADOS)
 // ============================================================================
 
 pub const BIOME_NONE: u16 = 0;
-pub const BIOME_MATA_GALERIA: u16 = 1; // Dossel fechado, solo escuro, árvores altas
+pub const BIOME_MATA_GALERIA: u16 = 1; // Dossel fechado, solo escuro, ï¿½rvores altas
 pub const BIOME_CERRADAO: u16 = 2;     // Floresta densa, solo seco
-pub const BIOME_CERRADO_SS: u16 = 3;   // Árvores tortuosas (Ipês, Pequizeiros), grama
-pub const BIOME_CAMPO_SUJO: u16 = 4;   // Arbustos espaçados, gramíneas
+pub const BIOME_CERRADO_SS: u16 = 3;   // ï¿½rvores tortuosas (Ipï¿½s, Pequizeiros), grama
+pub const BIOME_CAMPO_SUJO: u16 = 4;   // Arbustos espaï¿½ados, gramï¿½neas
 pub const BIOME_VEREDA: u16 = 5;       // Buritis, solo alagado, nascentes
 pub const BIOME_CAMPO_RUPESTRE: u16 = 6; // Afloramentos rochosos, capim
-// Máscaras de proteção legal (Bitwise flags)
-pub const MASK_APP_SICAR: u16 = 0x8000;  // Área de Preservação Permanente (Força vegetação máxima)
+// Mï¿½scaras de proteï¿½ï¿½o legal (Bitwise flags)
+pub const MASK_APP_SICAR: u16 = 0x8000;  // ï¿½rea de Preservaï¿½ï¿½o Permanente (Forï¿½a vegetaï¿½ï¿½o mï¿½xima)
 
-/// O Autômato Espacial de Vegetação.
+/// O Autï¿½mato Espacial de Vegetaï¿½ï¿½o.
 pub struct VegetationProvider {
     pub mapbiomas_tiff_path: Option<PathBuf>,
     pub ibge_shapefile_path: Option<PathBuf>,
@@ -66,8 +66,8 @@ impl VegetationProvider {
         }
     }
 
-    /// Algoritmo Ray-Casting (Point-in-Polygon) Matemático Rápido.
-    /// Corta as fronteiras borradas do satélite com a navalha do vetor do SICAR/IBGE.
+    /// Algoritmo Ray-Casting (Point-in-Polygon) Matemï¿½tico Rï¿½pido.
+    /// Corta as fronteiras borradas do satï¿½lite com a navalha do vetor do SICAR/IBGE.
     #[inline]
     fn point_in_polygon(x: f64, y: f64, polygon: &Polygon) -> bool {
         let mut inside = false;
@@ -98,7 +98,7 @@ impl VegetationProvider {
         inside
     }
 
-    /// Carrega as fitofisionomias orgânicas do IBGE e APPs do SICAR que cruzam a Bounding Box local.
+    /// Carrega as fitofisionomias orgï¿½nicas do IBGE e APPs do SICAR que cruzam a Bounding Box local.
     fn load_vector_masks(
         &self,
         bbox: &LLBBox,
@@ -106,24 +106,24 @@ impl VegetationProvider {
         let mut ibge_polygons = Vec::new();
         let mut sicar_polygons = Vec::new();
 
-        // 1. Extração do IBGE (Fitofisionomia exata do solo)
+        // 1. Extraï¿½ï¿½o do IBGE (Fitofisionomia exata do solo)
         if let Some(ref path) = self.ibge_shapefile_path {
             if let Ok(mut reader) = ShapeReader::from_path(path) {
-                // Lemos as geometrias. Num cenário real de banco de dados, o GeoPackage usaria a R-Tree.
-                // Como este é o provedor raw, filtramos pela BBox (Streaming).
+                // Lemos as geometrias. Num cenï¿½rio real de banco de dados, o GeoPackage usaria a R-Tree.
+                // Como este ï¿½ o provedor raw, filtramos pela BBox (Streaming).
                 if let Ok(shapes) = reader.read() {
                     for shape in shapes {
                         if let shapefile::Shape::Polygon(polygon) = shape {
-                            // Culling brutal: Se o bounding box do polígono está totalmente fora do mapa atual, descarta.
+                            // Culling brutal: Se o bounding box do polï¿½gono estï¿½ totalmente fora do mapa atual, descarta.
                             let p_box = polygon.bbox();
-                            if p_box.xmax < bbox.min().lng() || p_box.xmin > bbox.max().lng() ||
-                               p_box.ymax < bbox.min().lat() || p_box.ymin > bbox.max().lat() {
+                            if p_box.max.x < bbox.min().lng() || p_box.min.x > bbox.max().lng() ||
+                               p_box.max.y < bbox.min().lat() || p_box.min.y > bbox.max().lat() {
                                 continue;
                             }
 
-                            // Determinação do Bioma IBGE (Mapeado pelos metadados do DBF no mundo real,
-                            // aqui inferimos pelo tipo geométrico simulado para a blindagem arquitetural).
-                            // Num pipeline completo, leríamos o dbf concomitante. Assumimos Cerrado Sensu Stricto como base.
+                            // Determinaï¿½ï¿½o do Bioma IBGE (Mapeado pelos metadados do DBF no mundo real,
+                            // aqui inferimos pelo tipo geomï¿½trico simulado para a blindagem arquitetural).
+                            // Num pipeline completo, lerï¿½amos o dbf concomitante. Assumimos Cerrado Sensu Stricto como base.
                             let biome_id = BIOME_CERRADO_SS; 
                             ibge_polygons.push((biome_id, polygon));
                         }
@@ -132,15 +132,15 @@ impl VegetationProvider {
             }
         }
 
-        // 2. Extração do SICAR (Áreas de Preservação Permanente - O Corte Frio)
+        // 2. Extraï¿½ï¿½o do SICAR (ï¿½reas de Preservaï¿½ï¿½o Permanente - O Corte Frio)
         if let Some(ref path) = self.sicar_shapefile_path {
             if let Ok(mut reader) = ShapeReader::from_path(path) {
                 if let Ok(shapes) = reader.read() {
                     for shape in shapes {
                         if let shapefile::Shape::Polygon(polygon) = shape {
                             let p_box = polygon.bbox();
-                            if p_box.xmax < bbox.min().lng() || p_box.xmin > bbox.max().lng() ||
-                               p_box.ymax < bbox.min().lat() || p_box.ymin > bbox.max().lat() {
+                            if p_box.max.x < bbox.min().lng() || p_box.min.x > bbox.max().lng() ||
+                               p_box.max.y < bbox.min().lat() || p_box.min.y > bbox.max().lat() {
                                 continue;
                             }
                             sicar_polygons.push(polygon);
@@ -153,13 +153,13 @@ impl VegetationProvider {
         (ibge_polygons, sicar_polygons)
     }
 
-    /// O Motor do Autômato Espacial: Produz o grid quantizado O(1) de Identidades Botânicas.
+    /// O Motor do Autï¿½mato Espacial: Produz o grid quantizado O(1) de Identidades Botï¿½nicas.
     pub fn fetch_quantized_biomes(
         &self,
         bbox: &LLBBox,
     ) -> Result<FxHashMap<(i32, i32), u16>, String> {
         println!(
-            "[INFO] ?? Iniciando Autômato Espacial de Vegetação (MapBiomas + IBGE + SICAR)..."
+            "[INFO] ?? Iniciando Autï¿½mato Espacial de Vegetaï¿½ï¿½o (MapBiomas + IBGE + SICAR)..."
         );
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -168,15 +168,15 @@ impl VegetationProvider {
         let mut biome_grid: FxHashMap<(i32, i32), u16> = FxHashMap::default();
         let mut pixels_processed = 0u64;
 
-        // Pré-carrega os vetores exatos para a região de Scanline atual
+        // Prï¿½-carrega os vetores exatos para a regiï¿½o de Scanline atual
         let (ibge_polygons, sicar_polygons) = self.load_vector_masks(bbox);
 
-        // FASE 1: Leitura da Matriz de Cobertura (Onde há verde no mundo real? MapBiomas 30m)
+        // FASE 1: Leitura da Matriz de Cobertura (Onde hï¿½ verde no mundo real? MapBiomas 30m)
         if let Some(ref tiff_path) = self.mapbiomas_tiff_path {
             let file = File::open(tiff_path).map_err(|e| format!("Falha ao abrir TIFF MapBiomas: {}", e))?;
             let mut decoder = Decoder::new(file).map_err(|e| format!("Falha ao inicializar descodificador: {}", e))?;
             
-            let (width, height) = decoder.dimensions().map_err(|e| format!("Falha ao ler dimensões: {}", e))?;
+            let (width, height) = decoder.dimensions().map_err(|e| format!("Falha ao ler dimensï¿½es: {}", e))?;
 
             let start_x = ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees_x).max(0.0) as u32;
             let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees_x).min(width as f64) as u32;
@@ -191,7 +191,7 @@ impl VegetationProvider {
                             let mapbiomas_class = image_data[pixel_index];
 
                             // O MapBiomas diz SE tem planta.
-                            // Se for classe urbana (24) ou água (33), ignoramos a vegetação aqui.
+                            // Se for classe urbana (24) ou ï¿½gua (33), ignoramos a vegetaï¿½ï¿½o aqui.
                             let mut base_biome = match mapbiomas_class {
                                 3..=5 => BIOME_CERRADAO,      // Florestas
                                 10..=13 => BIOME_CERRADO_SS,  // Savanas e Campos
@@ -211,7 +211,7 @@ impl VegetationProvider {
                                     pixels_processed += 1;
                                     
                                     // FASE 2: O Corte da Navalha Vetorial (IBGE - Qual a biologia exata?)
-                                    // Se o ponto cair no shapefile do IBGE de Vereda, ele não é Cerradão, é Vereda.
+                                    // Se o ponto cair no shapefile do IBGE de Vereda, ele nï¿½o ï¿½ Cerradï¿½o, ï¿½ Vereda.
                                     for (ibge_id, poly) in &ibge_polygons {
                                         if Self::point_in_polygon(lon, lat, poly) {
                                             base_biome = *ibge_id;
@@ -232,25 +232,25 @@ impl VegetationProvider {
                                         base_biome |= MASK_APP_SICAR;
                                     }
 
-                                    // A Voxelização Local Determinística
+                                    // A Voxelizaï¿½ï¿½o Local Determinï¿½stica
                                     let xz_point = transformer.transform_point(llpoint);
                                     
-                                    // Injeta a Semente Estática no Hash O(1)
-                                    // (Devido à resolução de 30m do raster, um pixel cobrirá múltiplos blocos Minecraft de 1x1m.
-                                    // A escalonagem H_SCALE cuida da expansão absoluta na BBox do motor)
+                                    // Injeta a Semente Estï¿½tica no Hash O(1)
+                                    // (Devido ï¿½ resoluï¿½ï¿½o de 30m do raster, um pixel cobrirï¿½ mï¿½ltiplos blocos Minecraft de 1x1m.
+                                    // A escalonagem H_SCALE cuida da expansï¿½o absoluta na BBox do motor)
                                     let mc_x = xz_point.x;
                                     let mc_z = xz_point.z;
                                     
-                                    // Preenche o polígono quantizado no Minecraft Grid correspondente ao tamanho do pixel
+                                    // Preenche o polï¿½gono quantizado no Minecraft Grid correspondente ao tamanho do pixel
                                     // Pixel de 30m -> ~40 blocos Minecraft de lado (com H_SCALE 1.33)
                                     let block_spread = (30.0 * self.scale_h).ceil() as i32;
                                     
                                     for bx in mc_x..(mc_x + block_spread) {
                                         for bz in mc_z..(mc_z + block_spread) {
-                                            // Se já houver um registro (sobreposição), prioriza APPs e matas densas.
+                                            // Se jï¿½ houver um registro (sobreposiï¿½ï¿½o), prioriza APPs e matas densas.
                                             let entry = biome_grid.entry((bx, bz)).or_insert(BIOME_NONE);
                                             
-                                            // Se o novo bioma é protegido (APP) ou o antigo estava vazio, atualiza.
+                                            // Se o novo bioma ï¿½ protegido (APP) ou o antigo estava vazio, atualiza.
                                             if (base_biome & MASK_APP_SICAR != 0) || *entry == BIOME_NONE {
                                                 *entry = base_biome;
                                             }
@@ -266,7 +266,7 @@ impl VegetationProvider {
 
         biome_grid.shrink_to_fit();
         println!(
-            "[INFO] ? Bioma engessado na RAM de forma binária O(1). {} sementes base de fitofisionomia extraídas com corte SICAR.",
+            "[INFO] ? Bioma engessado na RAM de forma binï¿½ria O(1). {} sementes base de fitofisionomia extraï¿½das com corte SICAR.",
             pixels_processed
         );
 

@@ -1,17 +1,17 @@
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
+use crate::coordinate_system::geographic::LLBBox;
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-// Necess·rio para ler Shapefiles e Tabelas DBF
+// Necess√°rio para ler Shapefiles e Tabelas DBF
 use shapefile::{Reader, Shape};
-// Necess·rio para reprojeÁ„o matem·tica SIRGAS 2000 -> WGS84
+// Necess√°rio para reproje√ß√£o matem√°tica SIRGAS 2000 -> WGS84
 use proj::Proj;
 
 /// Provedor de Dados Governamentais do Distrito Federal.
-/// LÍ Shapefiles locais, reprojeta de UTM 23S para WGS84, mapeia colunas DBF para tags OSM,
-/// e injeta Features com prioridade m·xima no motor.
+/// L√™ Shapefiles locais, reprojeta de UTM 23S para WGS84, mapeia colunas DBF para tags OSM,
+/// e injeta Features com prioridade maxima no motor.
 pub struct GDFProvider {
     pub shp_path: PathBuf,
     pub scale_h: f64,
@@ -30,14 +30,16 @@ impl GDFProvider {
     }
 
     /// O "Rosetta Stone": Converte atributos de banco de dados do GDF para o dialeto OSM
-    /// que o `buildings.rs` e o `highways.rs` j· sabem ler.
+    /// que o `buildings.rs` e o `highways.rs` j√° sabem ler.
     fn translate_attributes(dbf_record: &shapefile::dbase::Record) -> HashMap<String, String> {
-        let mut tags = HashMap::with_capacity(dbf_record.len());
-        
+        let mut tags = HashMap::new();
+
         // Mantemos um marcador de origem
         tags.insert("source".to_string(), "GDF_Shapefile".to_string());
 
-        for (name, value) in dbf_record {
+        // üö® CORRE√á√ÉO CR√çTICA BESM-6: Itera√ß√£o universal em Record DBF.
+        // Ao transformar em iterador, desestruturamos a tupla nativa expl√≠cita (nome do campo, valor do campo).
+        for (name, value) in dbf_record.clone().into_iter() {
             let val_str = match value {
                 shapefile::dbase::FieldValue::Character(Some(s)) => s.trim().to_string(),
                 shapefile::dbase::FieldValue::Numeric(Some(n)) => n.to_string(),
@@ -50,20 +52,21 @@ impl GDFProvider {
                 continue;
             }
 
-            let col = name.to_uppercase();
+            // üö® Tipagem resolvida e limpa: 'name' vira string e depois upper case.
+            let col = name.to_string().to_uppercase();
 
-            // Mapeamento HeurÌstico (Baseado no padr„o SEDUH/SITURB do DF)
+            // Mapeamento Heur√≠stico (Baseado no padr√£o SEDUH/SITURB do DF)
             match col.as_str() {
-                "PAVIMENTOS" | "GABARITO" | "N_PAV" => {
+                "PAVIMENTOS" | "GABARITO" | "N_PAV" | "LEVELS" => {
                     tags.insert("building:levels".to_string(), val_str);
                     if !tags.contains_key("building") {
                         tags.insert("building".to_string(), "yes".to_string());
                     }
                 }
-                "ALTURA" | "COTA_TOPO" => {
+                "ALTURA" | "COTA_TOPO" | "HEIGHT" => {
                     tags.insert("height".to_string(), val_str);
                 }
-                "USO" | "USO_SOLO" | "DESTINACAO" => {
+                "USO" | "USO_SOLO" | "DESTINACAO" | "TIPO" => {
                     let uso = val_str.to_lowercase();
                     let mapped_uso = if uso.contains("comercial") {
                         "commercial"
@@ -78,24 +81,23 @@ impl GDFProvider {
                     };
                     tags.insert("building".to_string(), mapped_uso.to_string());
                 }
-                "NOME" | "DESC" | "LOGRADOURO" => {
+                "NOME" | "DESC" | "LOGRADOURO" | "NAME" => {
                     tags.insert("name".to_string(), val_str.clone());
-                    
-                    // Hook autom·tico para landmarks: se o nome do shapefile bater com
-                    // o do OSM, ele ser· pescado pelo landmarks.rs
+                    // Hook autom√°tico para landmarks: se o nome do shapefile bater com
+                    // o do OSM, ele ser√° pescado pelo landmarks.rs
                 }
-                "TIPO_VIA" | "CLASSE_VIA" => {
+                "TIPO_VIA" | "CLASSE_VIA" | "HIGHWAY" => {
                     tags.insert("highway".to_string(), "residential".to_string()); // Fallback
                 }
                 _ => {
-                    // MantÈm atributos crus para debug ou expans„o futura
+                    // Mant√©m atributos crus para debug ou expans√£o futura
                     tags.insert(format!("gdf:{}", col.to_lowercase()), val_str);
                 }
             }
         }
 
-        // Se o shapefile n„o definiu nada estrutural, forÁamos como building padr„o
-        // assumindo que a maioria dos SHPs locais que vamos injetar s„o footprints exatos da CODEPLAN.
+        // Se o shapefile n√£o definiu nada estrutural, for√ßamos como building padr√£o
+        // assumindo que a maioria dos SHPs locais que vamos injetar s√£o footprints exatos da CODEPLAN.
         if !tags.contains_key("building") && !tags.contains_key("highway") {
             tags.insert("building".to_string(), "yes".to_string());
         }
@@ -104,12 +106,12 @@ impl GDFProvider {
         tags
     }
 
-    /// Helper GeomÈtrico (Semelhante ‡ lÛgica interna do Arnis) para projetar LL para XZ
+    /// Helper Geom√©trico (Semelhante √† l√≥gica interna do Arnis) para projetar LL para XZ
     #[inline]
     fn project_to_minecraft_xz(lat: f64, lon: f64, bbox: &LLBBox, scale_h: f64) -> XZPoint {
-        // Convers„o Equirretangular baseada na origem da Bounding Box do jogador
+        // Convers√£o Equirretangular baseada na origem da Bounding Box do jogador
         const EARTH_RADIUS_M: f64 = 6_371_000.0;
-        
+
         let min_lat_rad = bbox.min().lat().to_radians();
         let lat_rad = lat.to_radians();
         let lon_rad = lon.to_radians();
@@ -130,18 +132,23 @@ impl DataProvider for GDFProvider {
         "GDF Shapefile (Geoportal SITURB)"
     }
 
+    // üö® BESM-6: Satisfazendo o contrato mestre do ProviderManager
+    fn priority(&self) -> u8 {
+        self.priority
+    }
+
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         let mut reader = Reader::from_path(&self.shp_path)
             .map_err(|e| format!("Falha ao ler Shapefile {}: {}", self.shp_path.display(), e))?;
 
-        // Inicializa o pipeline de reprojeÁ„o
+        // Inicializa o pipeline de reproje√ß√£o
         // EPSG:31983 (SIRGAS 2000 / UTM zone 23S) -> EPSG:4326 (WGS84 Lat/Lon)
         let proj = Proj::new_known_crs("EPSG:31983", "EPSG:4326", None)
             .ok()
             .ok_or("Falha ao inicializar biblioteca PROJ para CRS 31983 -> 4326")?;
 
         let mut features = Vec::new();
-        let mut next_id = 1_000_000_000; // Offset alto para n„o colidir com IDs do OSM
+        let mut next_id = 1_000_000_000; // Offset alto para n√£o colidir com IDs do OSM
 
         // Itera pelos registros (Geometria + Atributos do DBF) simultaneamente
         for result in reader.iter_shapes_and_records() {
@@ -151,66 +158,66 @@ impl DataProvider for GDFProvider {
             };
 
             let tags = Self::translate_attributes(&record);
-            
-            // Define o grupo sem‚ntico (usa override se a camada inteira for de um tipo especÌfico, ex: "¡rvores")
+
+            // Define o grupo sem√¢ntico (usa override se a camada inteira for de um tipo espec√≠fico, ex: "√Årvores")
             let semantic_group = self.semantic_override.unwrap_or_else(|| {
                 if tags.contains_key("building") { SemanticGroup::Building }
                 else if tags.contains_key("highway") { SemanticGroup::Highway }
                 else { SemanticGroup::Other }
             });
 
-            // ExtraÁ„o e ReprojeÁ„o da Geometria
+            // Extra√ß√£o e Reproje√ß√£o da Geometria
             let geometry = match shape {
-                Shape::Polygon(poly) | Shape::PolygonZ(poly) | Shape::PolygonM(poly) => {
+                Shape::Polygon(poly)  => {
                     let mut outer_ring = Vec::new();
-                    
-                    // Shapefile Polygons contÍm anÈis (Rings). O primeiro geralmente È o Outer.
+
+                    // Shapefile Polygons cont√™m an√©is (Rings). O primeiro geralmente √© o Outer.
                     for ring in poly.rings() {
                         let mut mc_points = Vec::with_capacity(ring.points().len());
-                        
+
                         for pt in ring.points() {
                             // Converte de UTM para Lat/Lon
                             let (lon, lat) = proj.convert((pt.x, pt.y))
-                                .map_err(|e| format!("Erro de reprojeÁ„o PROJ: {}", e))?;
-                            
+                                .map_err(|e| format!("Erro de reproje√ß√£o PROJ: {}", e))?;
+
                             // Projeta para blocos do Minecraft
                             let xz = Self::project_to_minecraft_xz(lat, lon, bbox, self.scale_h);
                             mc_points.push(xz);
                         }
-                        
-                        // Garante o fechamento topolÛgico do anel
+
+                        // Garante o fechamento topol√≥gico do anel
                         if mc_points.len() > 2 && mc_points.first() != mc_points.last() {
                             let first = mc_points[0];
                             mc_points.push(first);
                         }
-                        
+
                         // Assumimos o primeiro anel como exterior por simplicidade.
-                        // (OtimizaÁ„o BESM-6: Ignora buracos internos complexos de shapefiles residenciais)
+                        // (Otimiza√ß√£o BESM-6: Ignora buracos internos complexos de shapefiles residenciais)
                         outer_ring = mc_points;
-                        break; 
+                        break;
                     }
-                    
+
                     if outer_ring.len() < 4 { continue; }
                     GeometryType::Polygon(outer_ring)
                 }
-                Shape::Polyline(pline) | Shape::PolylineZ(pline) | Shape::PolylineM(pline) => {
+                Shape::Polyline(pline)  => {
                     let mut lines = Vec::new();
                     for part in pline.parts() {
                         for pt in part {
                             let (lon, lat) = proj.convert((pt.x, pt.y)).unwrap_or((0.0, 0.0));
                             lines.push(Self::project_to_minecraft_xz(lat, lon, bbox, self.scale_h));
                         }
-                        break; // Pega sÛ o primeiro segmento contÌnuo para evitar complexidade
+                        break; // Pega s√≥ o primeiro segmento cont√≠nuo para evitar complexidade
                     }
                     if lines.len() < 2 { continue; }
                     GeometryType::LineString(lines)
                 }
-                Shape::Point(pt) | Shape::PointZ(pt) | Shape::PointM(pt) => {
+                Shape::Point(pt)  => {
                     let (lon, lat) = proj.convert((pt.x, pt.y)).unwrap_or((0.0, 0.0));
                     let xz = Self::project_to_minecraft_xz(lat, lon, bbox, self.scale_h);
                     GeometryType::Point(xz)
                 }
-                _ => continue, // MultiPatch e outros formatos n„o suportados descartados
+                _ => continue, // MultiPatch e outros formatos n√£o suportados descartados
             };
 
             // Criar Feature (Calcula AABB dinamicamente)
@@ -231,7 +238,7 @@ impl DataProvider for GDFProvider {
                 Self::project_to_minecraft_xz(bbox.min().lat(), bbox.max().lng(), bbox, self.scale_h).z
             );
 
-            // Verifica se est· dentro do quadrante gerado (assumindo origem 0,0)
+            // Verifica se est√° dentro do quadrante gerado (assumindo origem 0,0)
             if max_x < 0 || min_x > mc_max_x || max_z < 0 || min_z > mc_max_z {
                 continue;
             }

@@ -15,6 +15,7 @@ pub mod power;
 pub mod railways;
 pub mod subprocessor;
 pub mod tourisms;
+pub mod landmarks;
 pub mod tree;
 pub mod water_areas;
 pub mod waterways;

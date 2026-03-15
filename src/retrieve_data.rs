@@ -7,12 +7,11 @@ use colored::Colorize;
 use rand::prelude::IndexedRandom;
 use reqwest::blocking::Client;
 use reqwest::blocking::ClientBuilder;
-use serde::Deserialize;
-use serde_json::Value;
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Write};
 use std::process::Command;
 use std::time::Duration;
+use serde_json::Value;
 
 /// Function to download data using reqwest
 fn download_with_reqwest(url: &str, query: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -93,13 +92,14 @@ pub fn fetch_data_from_file(file: &str) -> Result<OsmData, Box<dyn std::error::E
     let file: File = File::open(file)?;
     let reader: BufReader<File> = BufReader::new(file);
     let mut deserializer = serde_json::Deserializer::from_reader(reader);
-    let data: OsmData = OsmData::deserialize(&mut deserializer)?;
+    // 🚨 BESM-6: Utiliza a trait genérica de Deserialize do Serde para reconstruir a matriz.
+    let data: OsmData = serde::Deserialize::deserialize(&mut deserializer)?;
     Ok(data)
 }
 
-/// ?? BESM-6 TWEAK: Subdivis�o T�tica de Consultas
-/// Divide uma BBox massiva em peda�os menores para evitar que a API do Overpass estoure 
-/// a mem�ria do servidor com "runtime error: out of memory".
+/// 🚨 BESM-6 TWEAK: Subdivisão Tática de Consultas
+/// Divide uma BBox massiva em pedaços menores para evitar que a API do Overpass estoure
+/// a memória do servidor com "runtime error: out of memory".
 fn split_bbox_if_needed(bbox: &LLBBox) -> Vec<LLBBox> {
     let max_span = 0.15; // Aproximadamente 16 km. Se passar disso, fatia o BBox.
     let lat_span = bbox.max().lat() - bbox.min().lat();
@@ -118,22 +118,20 @@ fn split_bbox_if_needed(bbox: &LLBBox) -> Vec<LLBBox> {
 
     for i in 0..lat_splits {
         for j in 0..lon_splits {
-            use crate::coordinate_system::geographic::LLPoint;
             let min_lat = bbox.min().lat() + (i as f64 * lat_step);
             let min_lon = bbox.min().lng() + (j as f64 * lon_step);
             let max_lat = if i == lat_splits - 1 { bbox.max().lat() } else { min_lat + lat_step };
             let max_lon = if j == lon_splits - 1 { bbox.max().lng() } else { min_lon + lon_step };
-            
-            sub_boxes.push(LLBBox::new(
-                LLPoint::new(min_lat, min_lon),
-                LLPoint::new(max_lat, max_lon),
-            ));
+
+            if let Ok(b) = LLBBox::new(min_lat, min_lon, max_lat, max_lon) {
+                sub_boxes.push(b);
+            }
         }
     }
     sub_boxes
 }
 
-/// Gera a string de consulta Overpass para um BBox espec�fico.
+/// Gera a string de consulta Overpass para um BBox especifico.
 fn build_overpass_query(bbox: &LLBBox) -> String {
     format!(
         r#"[out:json][timeout:360][bbox:{},{},{},{}];
@@ -200,13 +198,13 @@ pub fn fetch_data_from_overpass(
         vec!["https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
     let mut url: &&str = api_servers.choose(&mut rand::rng()).unwrap();
 
-    // ?? BESM-6: Subdivis�o do BBox
+    // 🚨 BESM-6: Subdivisão do BBox
     let sub_boxes = split_bbox_if_needed(&bbox);
-    let mut merged_data = OsmData::empty();
+    let mut merged_data = OsmData::default(); // Instanciação correta via Trait
     let total_chunks = sub_boxes.len();
 
     if total_chunks > 1 {
-        println!("[INFO] ?? BBox massivo detectado. Dividindo consulta OSM em {} setores.", total_chunks);
+        println!("[INFO] 🧩 BBox massivo detectado. Dividindo consulta OSM em {} setores.", total_chunks);
     }
 
     for (i, sub_bbox) in sub_boxes.iter().enumerate() {
@@ -221,7 +219,7 @@ pub fn fetch_data_from_overpass(
             } else {
                 println!("Downloading from {url} with method {download_method}...");
             }
-            
+
             let result = match download_method {
                 "requests" => download_with_reqwest(url, &query),
                 "curl" => download_with_curl(url, &query).map_err(|e| e.into()),
@@ -244,7 +242,7 @@ pub fn fetch_data_from_overpass(
         };
 
         let mut deserializer = serde_json::Deserializer::from_reader(Cursor::new(response.as_bytes()));
-        let chunk_data: OsmData = OsmData::deserialize(&mut deserializer)?;
+        let chunk_data: OsmData = serde::Deserialize::deserialize(&mut deserializer)?;
 
         if chunk_data.is_empty() {
             if let Some(remark) = chunk_data.remark.as_deref() {
@@ -264,7 +262,7 @@ pub fn fetch_data_from_overpass(
                 );
                 emit_gui_error("API returned no data. Please try again!");
             }
-            
+
             if !is_running_with_gui() && total_chunks == 1 {
                 std::process::exit(1);
             } else if total_chunks == 1 {
@@ -272,9 +270,9 @@ pub fn fetch_data_from_overpass(
             }
         }
 
-        // ?? BESM-6: Funde as respostas mantendo a integridade dos IDs.
+        // 🚨 BESM-6: Funde as respostas mantendo a integridade dos IDs.
         merged_data.merge(chunk_data);
-        
+
         // Anti-DDoS delay para respeitar o rate-limit do Overpass
         if total_chunks > 1 && i < total_chunks - 1 {
             std::thread::sleep(std::time::Duration::from_secs(3));
@@ -290,10 +288,10 @@ pub fn fetch_data_from_overpass(
     }
 
     if debug {
-        println!("Additional debug information: {} nodes, {} ways, {} relations fetched.", 
-            merged_data.elements.iter().filter(|e| e.type_str() == "node").count(),
-            merged_data.elements.iter().filter(|e| e.type_str() == "way").count(),
-            merged_data.elements.iter().filter(|e| e.type_str() == "relation").count()
+        println!("Additional debug information: {} nodes, {} ways, {} relations fetched.",
+                 merged_data.elements.iter().filter(|e| e.type_str() == "node").count(),
+                 merged_data.elements.iter().filter(|e| e.type_str() == "way").count(),
+                 merged_data.elements.iter().filter(|e| e.type_str() == "relation").count()
         );
     }
 
@@ -319,6 +317,7 @@ pub fn fetch_area_name(lat: f64, lon: f64) -> Result<Option<String>, Box<dyn std
     if let Some(address) = json.get("address") {
         let fields = ["city", "town", "village", "county", "borough", "suburb"];
         for field in fields.iter() {
+            // 🚨 CORREÇÃO CRÍTICA: Sem tipagem forçada na closure.
             if let Some(name) = address.get(*field).and_then(|v| v.as_str()) {
                 let mut name_str = name.to_string();
 

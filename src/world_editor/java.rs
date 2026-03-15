@@ -89,13 +89,13 @@ impl<'a> WorldEditor<'a> {
     }
 
     // ========================================================================
-    // ?? BESM-6: SAVE EPISÓDICO E METADADOS FINAIS
+    // ?? BESM-6: SAVE EPISODICO E METADADOS FINAIS
     // ========================================================================
 
-    /// Salva a região ativa no disco e não faz mais nada.
+    /// Salva a regiï¿½o ativa no disco e nï¿½o faz mais nada.
     /// Invocado pelo roteador Scanline.
     pub(super) fn save_java_region(&mut self, rx: i32, rz: i32) {
-        // Se a região não existir na memória (totalmente vazia), apenas cria blocos base
+        // Se a regiï¿½o nï¿½o existir na memï¿½ria (totalmente vazia), apenas cria blocos base
         let region_exists = self.world.regions.contains_key(&(rx, rz));
         
         let mut ser_buffer = Vec::with_capacity(8192);
@@ -143,7 +143,7 @@ impl<'a> WorldEditor<'a> {
         }
     }
 
-    /// Executado apenas no FIM da esteira de produção para gravar as coordenadas e finalizar.
+    /// Executado apenas no FIM da esteira de produï¿½ï¿½o para gravar as coordenadas e finalizar.
     pub(super) fn save_java(&mut self) {
         println!("{} Saving world metadata...", "[7/7]".bold());
         emit_gui_progress_update(95.0, "Saving world metadata...");

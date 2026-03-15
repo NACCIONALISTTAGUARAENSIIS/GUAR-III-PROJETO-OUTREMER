@@ -21,14 +21,14 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 8;
 const TILE_CACHE_MAX_AGE_DAYS: u64 = 7;
 
 /// Holds processed elevation data and metadata
-/// ?? BESM-6 Tweak: VirtualizaÁ„o da Matriz de Relevo
+/// üö® BESM-6 Tweak: Virtualiza√ß√£o da Matriz de Relevo
 /// Em vez de alocar uma Vec<Vec<i32>> global e tragar 5GB de RAM,
 /// guardamos apenas os dados compactos (tiles e cloud points)
-/// e respondemos a consultas de interpolaÁ„o on-demand.
+/// e respondemos a consultas de interpola√ß√£o on-demand.
 #[derive(Clone)]
 pub struct ElevationData {
-    // Para simplificar a ponte com o cÛdigo legado, mantemos a estrutura de grid 2D,
-    // MAS fatiado pelas proporÁıes do Scanline se necess·rio, ou otimizado se for LiDAR.
+    // Para simplificar a ponte com o c√≥digo legado, mantemos a estrutura de grid 2D,
+    // MAS fatiado pelas propor√ß√µes do Scanline se necess√°rio, ou otimizado se for LiDAR.
     pub(crate) heights: Vec<Vec<i32>>,
     pub(crate) width: usize,
     pub(crate) height: usize,
@@ -239,11 +239,11 @@ fn fetch_or_load_tile(
 }
 
 // ============================================================================
-// ?? LiDAR POINT CLOUD PROCESSOR (Government Tier) ??
+// üö® LiDAR POINT CLOUD PROCESSOR (Government Tier) üö®
 // ============================================================================
 
-/// Processa um arquivo LiDAR .las local, extraindo cotas com precis„o submÈtrica.
-/// Usa Downsampling Din‚mico via Grid (Baldes 2D) para n„o explodir a memÛria RAM.
+/// Processa um arquivo LiDAR .las local, extraindo cotas com precis√£o sub-m√©trica.
+/// Usa Downsampling Din√¢mico via Grid (Baldes 2D) para n√£o explodir a mem√≥ria RAM.
 fn load_local_lidar(
     lidar_path: &Path,
     bbox: &LLBBox,
@@ -253,7 +253,7 @@ fn load_local_lidar(
     use las::{Read, Reader};
     use proj::Proj;
 
-    println!("[INFO] ??? Iniciando scanner LiDAR de alta densidade no arquivo: {}", lidar_path.display());
+    println!("[INFO] üõ∞Ô∏è Iniciando scanner LiDAR de alta densidade no arquivo: {}", lidar_path.display());
 
     let mut reader = Reader::from_path(lidar_path)
         .map_err(|e| format!("Falha ao ler arquivo LiDAR: {}", e))?;
@@ -261,10 +261,10 @@ fn load_local_lidar(
     // LiDAR no GDF usa SIRGAS 2000 (EPSG:31983). O BBox usa WGS84 (EPSG:4326).
     let proj = Proj::new_known_crs("EPSG:31983", "EPSG:4326", None)
         .ok()
-        .ok_or("Falha ao inicializar PROJ para convers„o LiDAR SIRGAS 2000")?;
+        .ok_or("Falha ao inicializar PROJ para convers√£o LiDAR SIRGAS 2000")?;
 
     let mut height_grid: Vec<Vec<f64>> = vec![vec![f64::NAN; grid_width]; grid_height];
-    
+
     let mut processed_pts = 0;
     let mut mapped_pts = 0;
 
@@ -276,17 +276,18 @@ fn load_local_lidar(
 
         processed_pts += 1;
 
-        // OTIMIZA«√O BESM-6: Apenas classes de solo (Class 2: Ground, Class 9: Water) 
-        // para evitar que o topo das ·rvores e dos prÈdios vire montanhas de terra.
-        if point.classification != 2 && point.classification != 9 {
-            continue; 
+        // OTIMIZA√á√ÉO BESM-6: Apenas classes de solo (Class 2: Ground, Class 9: Water)
+        // para evitar que o topo das √°rvores e dos pr√©dios vire montanhas de terra.
+        // üö® CORRE√á√ÉO DO CASTING: Usando u8::from para enum opaco.
+        if u8::from(point.classification) != 2 && u8::from(point.classification) != 9 {
+            continue;
         }
 
         // Converter XYZ do LiDAR (UTM) para WGS84 Lat/Lon
         let (lon, lat) = proj.convert((point.x, point.y))
             .unwrap_or((0.0, 0.0));
 
-        // Verificar se est· dentro do nosso quadrante de interesse (Streaming Filter)
+        // Verificar se est√° dentro do nosso quadrante de interesse (Streaming Filter)
         if lat < bbox.min().lat()
             || lat > bbox.max().lat()
             || lon < bbox.min().lng()
@@ -306,16 +307,16 @@ fn load_local_lidar(
             continue;
         }
 
-        // AcumulaÁ„o: Pegamos o ponto de solo mais alto daquela cÈlula (evita buracos de esgoto)
+        // Acumula√ß√£o: Pegamos o ponto de solo mais alto daquela c√©lula (evita buracos de esgoto)
         let current_h = height_grid[scaled_y][scaled_x];
         if current_h.is_nan() || point.z > current_h {
             height_grid[scaled_y][scaled_x] = point.z;
         }
-        
+
         mapped_pts += 1;
     }
 
-    println!("[INFO] ? LiDAR processado: {} milhıes de pontos lidos, {} alocados no relevo de solo.", processed_pts / 1_000_000, mapped_pts);
+    println!("[INFO] üìç LiDAR processado: {} milh√µes de pontos lidos, {} alocados no relevo de solo.", processed_pts / 1_000_000, mapped_pts);
 
     Ok(height_grid)
 }
@@ -329,7 +330,7 @@ pub fn fetch_elevation_data(
     scale_h: f64,
     scale_v: f64,
     ground_level: i32,
-    local_lidar: Option<&PathBuf>, 
+    local_lidar: Option<&PathBuf>,
 ) -> Result<ElevationData, Box<dyn std::error::Error>> {
     let (base_scale_z, base_scale_x) = geo_distance(bbox.min(), bbox.max());
 
@@ -339,9 +340,10 @@ pub fn fetch_elevation_data(
     let grid_width: usize = scale_factor_x as usize;
     let grid_height: usize = scale_factor_z as usize;
 
-    let mut height_grid: Vec<Vec<f64>>;
+    // üö® BESM-6: A matriz √© instanciada limpa para evitar uninitialized variable errors
+    let mut height_grid: Vec<Vec<f64>> = vec![vec![f64::NAN; grid_width]; grid_height];
 
-    // 1. TENTATIVA DE LEITURA DO LiDAR (Prioridade M·xima Gov-Tier)
+    // 1. TENTATIVA DE LEITURA DO LiDAR (Prioridade M√°xima Gov-Tier)
     let lidar_success = if let Some(lidar_path) = local_lidar {
         match load_local_lidar(lidar_path, bbox, grid_width, grid_height) {
             Ok(grid) => {
@@ -357,9 +359,8 @@ pub fn fetch_elevation_data(
         false
     };
 
-    // 2. FALLBACK PARA O SRTM (Se n„o houver LiDAR ou se ele falhar)
+    // 2. FALLBACK PARA O SRTM (Se n√£o houver LiDAR ou se ele falhar)
     if !lidar_success {
-        height_grid = vec![vec![f64::NAN; grid_width]; grid_height];
         let zoom: u8 = calculate_zoom_level(bbox);
         let tiles: Vec<(u32, u32)> = get_tile_coordinates(bbox, zoom);
 
@@ -453,7 +454,8 @@ pub fn fetch_elevation_data(
     let blurred_heights: Vec<Vec<f64>> = apply_gaussian_blur(&height_grid, sigma);
     drop(height_grid); // Libera a matriz bruta
 
-    let (min_height, max_height, extreme_low_count, extreme_high_count) = blurred_heights
+    // üö® BESM-6: Corrigidos os warnings de vari√°veis n√£o lidas prefixando com _
+    let (min_height, max_height, _extreme_low_count, _extreme_high_count) = blurred_heights
         .par_iter()
         .map(|row| {
             let mut local_min = f64::MAX;
@@ -480,7 +482,7 @@ pub fn fetch_elevation_data(
     // TWEAK: Rigor Escala Vertical V_SCALE na Topografia
     let ideal_scaled_range: f64 = height_range * scale_v;
 
-    const TERRAIN_HEIGHT_BUFFER: i32 = 300; 
+    const TERRAIN_HEIGHT_BUFFER: i32 = 300;
     let available_y_range: f64 = (MAX_Y - TERRAIN_HEIGHT_BUFFER - ground_level) as f64;
 
     let scaled_range: f64 = if ideal_scaled_range <= available_y_range {
@@ -601,9 +603,9 @@ fn create_gaussian_kernel(size: usize, sigma: f64) -> Vec<f64> {
     kernel
 }
 
-/// ?? BESM-6: Fast Bilinear Fill
-/// Substitui o O(n≥) da repetiÁ„o com While por uma interpolaÁ„o direta
-/// dos vizinhos mais prÛximos, otimizado para preencher buracos no SRTM.
+/// üö® BESM-6: Fast Bilinear Fill
+/// Substitui o O(n¬≤) da repeti√ß√£o com While por uma interpola√ß√£o direta
+/// dos vizinhos mais pr√≥ximos, otimizado para preencher buracos no SRTM.
 fn fill_nan_values(height_grid: &mut [Vec<f64>]) {
     let height: usize = height_grid.len();
     if height == 0 { return; }
@@ -619,8 +621,8 @@ fn fill_nan_values(height_grid: &mut [Vec<f64>]) {
                     let mut sum: f64 = 0.0;
                     let mut count: i32 = 0;
 
-                    for dy in -1..=1 {
-                        for dx in -1..=1 {
+                    for dy in -1i32..=1i32 {
+                        for dx in -1i32..=1i32 {
                             let ny: i32 = y as i32 + dy;
                             let nx: i32 = x as i32 + dx;
 

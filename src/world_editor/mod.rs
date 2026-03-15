@@ -70,7 +70,7 @@ pub(crate) struct WorldMetadata {
 /// and a "Halo Cache" (orphaned blocks belonging to adjacent regions).
 pub struct WorldEditor<'a> {
     world_dir: PathBuf,
-    world: WorldToModify, // O CORE CACHE (Apenas a região ativa reside aqui)
+    world: WorldToModify, // O CORE CACHE (Apenas a regiï¿½o ativa reside aqui)
     
     // ?? O Roteador Espacial
     active_region_x: i32,
@@ -95,7 +95,7 @@ impl<'a> WorldEditor<'a> {
         Self {
             world_dir,
             world: WorldToModify::default(),
-            active_region_x: 0, // Será dinamicamente setado pelo loop principal
+            active_region_x: 0, // Serï¿½ dinamicamente setado pelo loop principal
             active_region_z: 0,
             halo_cache: HashMap::new(),
             xzbbox,
@@ -144,14 +144,14 @@ impl<'a> WorldEditor<'a> {
     // ?? BESM-6 CONTROLE DO MOTOR DE VARREDURA (SCANLINE LIFECYCLE)
     // ========================================================================
 
-    /// Move o foco do motor para uma nova Região. 
-    /// Isso é chamado pelo `data_processing.rs` antes de voxelizar as geometrias.
+    /// Move o foco do motor para uma nova Regiï¿½o. 
+    /// Isso ï¿½ chamado pelo `data_processing.rs` antes de voxelizar as geometrias.
     pub fn set_active_region(&mut self, rx: i32, rz: i32) {
         self.active_region_x = rx;
         self.active_region_z = rz;
     }
 
-    /// Injeta os blocos "órfãos" que vazaram das regiões vizinhas anteriores 
+    /// Injeta os blocos "ï¿½rfï¿½os" que vazaram das regiï¿½es vizinhas anteriores 
     /// para dentro do Core Cache atual, para que sejam selados no momento correto.
     pub fn load_halo_to_core(&mut self) {
         let region_key = (self.active_region_x, self.active_region_z);
@@ -162,23 +162,23 @@ impl<'a> WorldEditor<'a> {
                 self.world.set_block(x, y, z, block);
             }
             if count > 0 {
-                println!("[HALO] Despejados {} blocos vazados na região ({}, {})", count, self.active_region_x, self.active_region_z);
+                println!("[HALO] Despejados {} blocos vazados na regiï¿½o ({}, {})", count, self.active_region_x, self.active_region_z);
             }
         }
     }
 
     /// Comprime o Core Cache (WorldToModify) com Zlib, escreve o `.mca` no disco,
-    /// e em seguida ANIQUILA a RAM do Core para garantir segurança de 24GB constante.
+    /// e em seguida ANIQUILA a RAM do Core para garantir seguranï¿½a de 24GB constante.
     pub fn flush_active_region(&mut self) {
-        // Compacta as seções para poupar banda de memória antes da gravação
+        // Compacta as seï¿½ï¿½es para poupar banda de memï¿½ria antes da gravaï¿½ï¿½o
         self.world.compact_sections();
         
-        // ?? No Java Edition, uma região equivale a um arquivo Anvil exato.
+        // ?? No Java Edition, uma regiï¿½o equivale a um arquivo Anvil exato.
         match self.format {
             WorldFormat::JavaAnvil => self.save_java_region(self.active_region_x, self.active_region_z),
             WorldFormat::BedrockMcWorld => {
-                // Para Bedrock, o fluxo out-of-core é mais complexo devido ao LevelDB.
-                // Por ora, acumularemos as mutações no driver apropriado que faremos no bedrock.rs
+                // Para Bedrock, o fluxo out-of-core ï¿½ mais complexo devido ao LevelDB.
+                // Por ora, acumularemos as mutaï¿½ï¿½es no driver apropriado que faremos no bedrock.rs
             }
         }
 
@@ -186,7 +186,7 @@ impl<'a> WorldEditor<'a> {
         self.world = WorldToModify::default(); 
     }
 
-    /// Retorna o tamanho atual do Halo Cache para estatísticas do Terminal HUD
+    /// Retorna o tamanho atual do Halo Cache para estatï¿½sticas do Terminal HUD
     pub fn get_halo_metrics(&self) -> (usize, usize) {
         let active_buckets = self.halo_cache.len();
         let total_blocks = self.halo_cache.values().map(|bucket| bucket.len()).sum();
@@ -252,7 +252,7 @@ impl<'a> WorldEditor<'a> {
     // ========================================================================
 
     /// Sets a block of the specified type at the given coordinates with absolute Y value.
-    /// Injeta a lógica de Roteamento (Core vs Halo).
+    /// Injeta a lï¿½gica de Roteamento (Core vs Halo).
     #[inline]
     pub fn set_block_absolute(
         &mut self,
@@ -267,10 +267,10 @@ impl<'a> WorldEditor<'a> {
             return;
         }
 
-        let rx = x >> 9; // Bitwise Shift instantâneo (512 = 2^9)
+        let rx = x >> 9; // Bitwise Shift instantï¿½neo (512 = 2^9)
         let rz = z >> 9;
 
-        // Se o bloco pertencer à região ativamente processada, ele vai pro Core.
+        // Se o bloco pertencer ï¿½ regiï¿½o ativamente processada, ele vai pro Core.
         if rx == self.active_region_x && rz == self.active_region_z {
             let should_insert = if let Some(existing_block) = self.world.get_block(x, absolute_y, z) {
                 if let Some(whitelist) = override_whitelist {
@@ -288,11 +288,11 @@ impl<'a> WorldEditor<'a> {
                 self.world.set_block(x, absolute_y, z, block);
             }
         } 
-        // Se o bloco pertencer a uma região vizinha (vazamento), ele vai pro Halo Cache.
+        // Se o bloco pertencer a uma regiï¿½o vizinha (vazamento), ele vai pro Halo Cache.
         else {
             // Nota: No Halo, ignoramos whitelists complexos por performance,
-            // assumindo que a borda do prédio tem prioridade de escrita. O check definitivo
-            // ocorre quando o Halo é despejado no Core.
+            // assumindo que a borda do prï¿½dio tem prioridade de escrita. O check definitivo
+            // ocorre quando o Halo ï¿½ despejado no Core.
             self.halo_cache
                 .entry((rx, rz))
                 .or_default()
@@ -313,7 +313,7 @@ impl<'a> WorldEditor<'a> {
         if rx == self.active_region_x && rz == self.active_region_z {
             self.world.set_block_if_absent(x, absolute_y, z, block);
         } else {
-            // Se já não existe no Halo, insere.
+            // Se jï¿½ nï¿½o existe no Halo, insere.
             let bucket = self.halo_cache.entry((rx, rz)).or_default();
             bucket.entry((x, absolute_y, z)).or_insert(block);
         }
@@ -368,16 +368,16 @@ impl<'a> WorldEditor<'a> {
             }
         } else {
             // Blocos com propriedades vazando para o Halo (Armazenamos o bloco base por ora)
-            // Futuro: Expansão do Halo para suportar properties
+            // Futuro: Expansï¿½o do Halo para suportar properties
             self.halo_cache
                 .entry((rx, rz))
                 .or_default()
-                .insert((x, absolute_y, z), block_with_props.block());
+                .insert((x, absolute_y, z), block_with_props.block);
         }
     }
 
     // ========================================================================
-    // DEMAIS FUNÇÕES DO EDITOR (Mantidas, mas roteadas)
+    // DEMAIS FUNÃ‡Ã•ES DO EDITOR (Mantidas, mas roteadas)
     // ========================================================================
 
     #[allow(clippy::too_many_arguments)]
@@ -432,7 +432,7 @@ impl<'a> WorldEditor<'a> {
         let rx = x >> 9;
         let rz = z >> 9;
 
-        // Se está na região ativa, checa no Core
+        // Se estï¿½ na regiï¿½o ativa, checa no Core
         if rx == self.active_region_x && rz == self.active_region_z {
             if let Some(existing_block) = self.world.get_block(x, absolute_y, z) {
                 if let Some(whitelist) = whitelist {
@@ -446,7 +446,7 @@ impl<'a> WorldEditor<'a> {
             return false;
         } 
         
-        // Se a região vazou, checa no Halo
+        // Se a regiï¿½o vazou, checa no Halo
         if let Some(bucket) = self.halo_cache.get(&(rx, rz)) {
             if let Some(existing_block) = bucket.get(&(x, absolute_y, z)) {
                 if let Some(whitelist) = whitelist {
@@ -523,7 +523,7 @@ impl<'a> WorldEditor<'a> {
         self.world.compact_sections();
 
         match self.format {
-            WorldFormat::JavaAnvil => self.save_java(), // Esta função agora só fechará as últimas regiões abertas, se houver
+            WorldFormat::JavaAnvil => self.save_java(), // Esta funï¿½ï¿½o agora sï¿½ fecharï¿½ as ï¿½ltimas regiï¿½es abertas, se houver
             WorldFormat::BedrockMcWorld => self.save_bedrock(),
         }
     }
@@ -609,7 +609,7 @@ impl<'a> WorldEditor<'a> {
         Ok(())
     }
 
-    // Lógica Inalterada de Entidades e Chests (Apenas bypass para simplificar RAM)
+    // Lï¿½gica Inalterada de Entidades e Chests (Apenas bypass para simplificar RAM)
 
     #[allow(clippy::too_many_arguments, dead_code)]
     pub fn set_sign(&mut self, line1: String, line2: String, line3: String, line4: String, x: i32, y: i32, z: i32, _rotation: i8) {
@@ -619,7 +619,7 @@ impl<'a> WorldEditor<'a> {
         let region_x = chunk_x >> 5;
         let region_z = chunk_z >> 5;
 
-        // Se o sinal não for da região atual, nós o evitamos no fluxo Scanline.
+        // Se o sinal nï¿½o for da regiï¿½o atual, nï¿½s o evitamos no fluxo Scanline.
         if region_x != self.active_region_x || region_z != self.active_region_z { return; }
 
         let mut block_entities = HashMap::new();
@@ -665,7 +665,7 @@ impl<'a> WorldEditor<'a> {
         let region_x: i32 = chunk_x >> 5;
         let region_z: i32 = chunk_z >> 5;
 
-        // Limita a inserção de entidades para a região ativa do scanline.
+        // Limita a inserï¿½ï¿½o de entidades para a regiï¿½o ativa do scanline.
         if region_x != self.active_region_x || region_z != self.active_region_z { return; }
 
         let absolute_y = self.get_absolute_y(x, y, z);

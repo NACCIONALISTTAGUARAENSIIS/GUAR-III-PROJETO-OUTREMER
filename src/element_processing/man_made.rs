@@ -8,11 +8,11 @@ use crate::floodfill_cache::FloodFillCache;
 const V_SCALE: f64 = 1.15;
 
 pub fn generate_man_made(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args, flood_fill_cache: &FloodFillCache) {
-    // ?? BESM-6: Controle Absoluto de Submundo e Infraestrutura
+    // ðŸš¨ BESM-6: Controle Absoluto de Submundo e Infraestrutura
     if let Some(layer) = element.tags().get("layer") {
         if layer.parse::<i32>().unwrap_or(0) < 0 {
-            // Se for cano de esgoto, duto ou subterrâneo mapeado da CAESB, NÃO pule. Deixe o motor gerar.
-            let is_underground_infra = element.tags().get("man_made").map(|s| s.as_str()) == Some("pipeline") 
+            // Se for cano de esgoto, duto ou subterrÃ¢neo mapeado da CAESB, NÃƒO pule. Deixe o motor gerar.
+            let is_underground_infra = element.tags().get("man_made").map(|s: &String| s.as_str()) == Some("pipeline")
                 || element.tags().get("diameter").is_some();
             if !is_underground_infra {
                 return;
@@ -43,7 +43,7 @@ pub fn generate_man_made(editor: &mut WorldEditor, element: &ProcessedElement, a
     }
 }
 
-/// Geração de Pier e Passarelas do Lago Paranoá
+/// GeraÃ§Ã£o de Pier e Passarelas do Lago ParanoÃ¡
 fn generate_pier(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
     if let ProcessedElement::Way(way) = element {
         let nodes = &way.nodes;
@@ -54,10 +54,10 @@ fn generate_pier(editor: &mut WorldEditor, element: &ProcessedElement, args: &Ar
         let pier_width = element
             .tags()
             .get("width")
-            .and_then(|w| w.parse::<i32>().ok())
+            .and_then(|w: &String| w.parse::<i32>().ok())
             .unwrap_or(5);
 
-        let pier_height = 2; // Acima da água
+        let pier_height = 2; // Acima da Ã¡gua
         let support_spacing = 5;
 
         for i in 0..nodes.len() - 1 {
@@ -69,7 +69,7 @@ fn generate_pier(editor: &mut WorldEditor, element: &ProcessedElement, args: &Ar
 
             for (index, (center_x, _y, center_z)) in line_points.iter().enumerate() {
                 let half_width = pier_width / 2;
-                
+
                 let ground_y = if args.terrain { editor.get_ground_level(*center_x, *center_z) } else { 0 };
                 let absolute_pier_y = ground_y + pier_height;
 
@@ -79,19 +79,19 @@ fn generate_pier(editor: &mut WorldEditor, element: &ProcessedElement, args: &Ar
                     }
                 }
 
-                // Pilares fincados até o chão
+                // Pilares fincados atÃ© o chÃ£o
                 if index % support_spacing == 0 {
                     let support_positions = [
-                        (center_x - half_width, center_z), 
-                        (center_x + half_width, center_z), 
+                        (center_x - half_width, center_z),
+                        (center_x + half_width, center_z),
                     ];
 
                     for (pillar_x, pillar_z) in support_positions {
-                        let bottom_y = if args.terrain { editor.get_ground_level(pillar_x, pillar_z) } else { 0 };
-                        // Garante que o pilar atravesse a água
+                        let bottom_y = if args.terrain { editor.get_ground_level(pillar_x, *pillar_z) } else { 0 };
+                        // Garante que o pilar atravesse a Ã¡gua
                         let start_pillar = bottom_y.min(absolute_pier_y - 3);
                         for y in start_pillar..absolute_pier_y {
-                            editor.set_block_absolute(OAK_LOG, pillar_x, y, pillar_z, None, None);
+                            editor.set_block_absolute(OAK_LOG, pillar_x, y, *pillar_z, None, None);
                         }
                     }
                 }
@@ -100,7 +100,7 @@ fn generate_pier(editor: &mut WorldEditor, element: &ProcessedElement, args: &Ar
     }
 }
 
-/// Antenas de celular e rádio (Torres treliçadas metálicas)
+/// Antenas de celular e rÃ¡dio (Torres treliÃ§adas metÃ¡licas)
 fn generate_antenna(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
     if let Some(first_node) = element.nodes().next() {
         let x = first_node.x;
@@ -125,7 +125,7 @@ fn generate_antenna(editor: &mut WorldEditor, element: &ProcessedElement, args: 
             }
         }
 
-        // Casa de máquinas da base
+        // Casa de mÃ¡quinas da base
         editor.fill_blocks(
             LIGHT_GRAY_CONCRETE,
             x - 2,
@@ -140,46 +140,46 @@ fn generate_antenna(editor: &mut WorldEditor, element: &ProcessedElement, args: 
     }
 }
 
-/// Torres Massivas (Torre de TV / Torres de Observação)
+/// Torres Massivas (Torre de TV / Torres de ObservaÃ§Ã£o)
 fn generate_tower(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
     if let Some(first_node) = element.nodes().next() {
         let x = first_node.x;
         let z = first_node.z;
         let ground_y = if args.terrain { editor.get_ground_level(x, z) } else { 0 };
-        
-        let tower_type = element.tags().get("tower:type").map(|s| s.as_str()).unwrap_or("");
-        
+
+        let tower_type = element.tags().get("tower:type").map(|s: &String| s.as_str()).unwrap_or("");
+
         let height = match element.tags().get("height") {
             Some(h) => (h.parse::<f64>().unwrap_or(50.0) * V_SCALE) as i32,
             None => if tower_type == "observation" { 120 } else { 60 },
         };
 
         if tower_type == "communication" || tower_type == "observation" {
-            // ?? BESM-6: Geometria Treliçada Dinâmica (Conic/Eiffel Shape)
+            // ðŸš¨ BESM-6: Geometria TreliÃ§ada DinÃ¢mica (Conic/Eiffel Shape)
             let base_radius = (height / 8).clamp(3, 15);
-            
+
             for y in 0..height {
                 let current_y = ground_y + y;
                 // Raio diminui conforme sobe
                 let current_radius = (base_radius as f64 * (1.0 - (y as f64 / height as f64))).max(1.0) as i32;
-                
+
                 for dx in -current_radius..=current_radius {
                     for dz in -current_radius..=current_radius {
                         let dist_sq = dx*dx + dz*dz;
-                        
+
                         // Parede externa do cone
                         if dist_sq <= current_radius*current_radius && dist_sq >= (current_radius-1)*(current_radius-1) {
                             if y % 5 == 0 {
                                 editor.set_block_absolute(IRON_BLOCK, x + dx, current_y, z + dz, None, None); // Anel de travamento
                             } else if (dx + dz + y) % 3 == 0 {
-                                editor.set_block_absolute(IRON_BARS, x + dx, current_y, z + dz, None, None); // Treliça
+                                editor.set_block_absolute(IRON_BARS, x + dx, current_y, z + dz, None, None); // TreliÃ§a
                             }
                         }
                     }
                 }
             }
 
-            // Se for torre de observação, cria um disco (mirante) a 70% da altura
+            // Se for torre de observaÃ§Ã£o, cria um disco (mirante) a 70% da altura
             if tower_type == "observation" {
                 let mirante_y = ground_y + (height as f64 * 0.7) as i32;
                 let deck_radius = base_radius + 2;
@@ -198,13 +198,13 @@ fn generate_tower(editor: &mut WorldEditor, element: &ProcessedElement, args: &A
             }
 
         } else {
-            // Torre Genérica (Pilar de Pedra)
+            // Torre GenÃ©rica (Pilar de Pedra)
             editor.fill_blocks(STONE_BRICKS, x - 1, ground_y, z - 1, x + 1, ground_y + height, z + 1, None, None);
         }
     }
 }
 
-/// Reservatórios da CAESB e Tanques Industriais (SIA)
+/// ReservatÃ³rios da CAESB e Tanques Industriais (SIA)
 fn generate_tank(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args, flood_fill_cache: &FloodFillCache) {
     let area = match element {
         ProcessedElement::Way(way) => flood_fill_cache.get_or_compute(way, args.timeout.as_ref()),
@@ -226,9 +226,9 @@ fn generate_tank(editor: &mut WorldEditor, element: &ProcessedElement, args: &Ar
         None => 10,
     };
 
-    let material = match element.tags().get("material").map(|s| s.as_str()) {
+    let material = match element.tags().get("material").map(|s: &String| s.as_str()) {
         Some("metal" | "steel") => IRON_BLOCK,
-        _ => WHITE_CONCRETE, // Padrão CAESB
+        _ => WHITE_CONCRETE, // PadrÃ£o CAESB
     };
 
     let mut min_x = i32::MAX; let mut max_x = i32::MIN;
@@ -240,22 +240,22 @@ fn generate_tank(editor: &mut WorldEditor, element: &ProcessedElement, args: &Ar
         if pz < min_z { min_z = pz; }
         if pz > max_z { max_z = pz; }
     }
-    
+
     let cx = (min_x + max_x) / 2;
     let cz = (min_z + max_z) / 2;
     let base_y = if args.terrain { editor.get_ground_level(cx, cz) } else { 0 };
 
-    // Constrói o cilindro/polígono sólido extrudando o footprint exato
+    // ConstrÃ³i o cilindro/polÃ­gono sÃ³lido extrudando o footprint exato
     for &(px, pz) in &area {
         let is_edge = !area.contains(&(px + 1, pz)) || !area.contains(&(px - 1, pz)) || !area.contains(&(px, pz + 1)) || !area.contains(&(px, pz - 1));
-        
+
         for y in 0..height {
-            let block = if is_edge { material } else { WATER }; // Tanques são cheios d'água por dentro
+            let block = if is_edge { material } else { WATER }; // Tanques sÃ£o cheios d'Ã¡gua por dentro
             editor.set_block_absolute(block, px, base_y + y, pz, None, None);
         }
-        // Tampa do reservatório plana
+        // Tampa do reservatÃ³rio plana
         editor.set_block_absolute(material, px, base_y + height, pz, None, None);
-        
+
         // Borda extra para telhado (Beiral)
         if is_edge {
             editor.set_block_absolute(STONE_BRICK_SLAB, px, base_y + height + 1, pz, None, None);
@@ -270,25 +270,25 @@ fn generate_utility_pole(editor: &mut WorldEditor, element: &ProcessedElement, a
         let z = first_node.z;
         let ground_y = if args.terrain { editor.get_ground_level(x, z) } else { 0 };
 
-        let height = (8.0 * V_SCALE).round() as i32; // ~9 blocos (Poste CEB padrão)
-        let mat = match element.tags().get("material").map(|s| s.as_str()) {
+        let height = (8.0 * V_SCALE).round() as i32; // ~9 blocos (Poste CEB padrÃ£o)
+        let mat = match element.tags().get("material").map(|s: &String| s.as_str()) {
             Some("wood") => SPRUCE_LOG,
             Some("metal") => IRON_BLOCK,
-            _ => POLISHED_ANDESITE, // Concreto armado padrão CEB
+            _ => POLISHED_ANDESITE, // Concreto armado padrÃ£o CEB
         };
 
         for y in 1..=height {
             editor.set_block_absolute(mat, x, ground_y + y, z, None, None);
         }
-        
-        // Braço do Poste (Luminária ou Fiação)
+
+        // BraÃ§o do Poste (LuminÃ¡ria ou FiaÃ§Ã£o)
         editor.set_block_absolute(IRON_BARS, x + 1, ground_y + height - 1, z, None, None);
         editor.set_block_absolute(IRON_BARS, x - 1, ground_y + height - 1, z, None, None);
         editor.set_block_absolute(GLOWSTONE, x + 1, ground_y + height - 2, z, None, None);
     }
 }
 
-/// Infraestrutura Menor: Armários de Telecom / Semáforos Terrestres
+/// Infraestrutura Menor: ArmÃ¡rios de Telecom / SemÃ¡foros Terrestres
 fn generate_street_cabinet(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
     if let Some(first_node) = element.nodes().next() {
         let x = first_node.x;
@@ -300,7 +300,7 @@ fn generate_street_cabinet(editor: &mut WorldEditor, element: &ProcessedElement,
     }
 }
 
-/// Estações de Tratamento de Esgoto (CAESB) e Complexos Industriais
+/// EstaÃ§Ãµes de Tratamento de Esgoto (CAESB) e Complexos Industriais
 fn generate_industrial_works(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args, flood_fill_cache: &FloodFillCache) {
     let area = match element {
         ProcessedElement::Way(way) => flood_fill_cache.get_or_compute(way, args.timeout.as_ref()),
@@ -313,20 +313,20 @@ fn generate_industrial_works(editor: &mut WorldEditor, element: &ProcessedElemen
     let cz = area[0].1;
     let base_y = if args.terrain { editor.get_ground_level(cx, cz) } else { 0 };
 
-    // Planta de tratamento genérica (Piso de concreto e tanques abertos de água)
+    // Planta de tratamento genÃ©rica (Piso de concreto e tanques abertos de Ã¡gua)
     for &(px, pz) in &area {
         let noise = ((px as f64 * 0.3).sin() * (pz as f64 * 0.3).cos()).abs();
-        
-        // Chão de concreto industrial
+
+        // ChÃ£o de concreto industrial
         editor.set_block_absolute(LIGHT_GRAY_CONCRETE, px, base_y, pz, None, None);
-        
-        // Tanques de aeração (buracos com água) e Pás Mecânicas (Estética Industrial CAESB)
+
+        // Tanques de aeraÃ§Ã£o (buracos com Ã¡gua) e PÃ¡s MecÃ¢nicas (EstÃ©tica Industrial CAESB)
         if noise > 0.8 {
             editor.set_block_absolute(WATER, px, base_y, pz, None, None);
             editor.set_block_absolute(WATER, px, base_y - 1, pz, None, None);
             editor.set_block_absolute(STONE_BRICKS, px + 1, base_y, pz, None, None); // Borda
-            
-            // Pás de aeração mecânica giratórias do tratamento de esgoto
+
+            // PÃ¡s de aeraÃ§Ã£o mecÃ¢nica giratÃ³rias do tratamento de esgoto
             if (px + pz) % 7 == 0 {
                 editor.set_block_absolute(IRON_BARS, px, base_y + 1, pz, None, None);
                 editor.set_block_absolute(GRINDSTONE, px, base_y + 2, pz, None, None);
@@ -335,22 +335,23 @@ fn generate_industrial_works(editor: &mut WorldEditor, element: &ProcessedElemen
     }
 }
 
-/// Chaminés Isoladas
+/// ChaminÃ©s Isoladas
 fn generate_chimney(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
     if let Some(first_node) = element.nodes().next() {
         let x = first_node.x;
         let z = first_node.z;
         let ground_y = if args.terrain { editor.get_ground_level(x, z) } else { 0 };
-        
+
         let height = match element.tags().get("height") {
             Some(h) => (h.parse::<f64>().unwrap_or(35.0) * V_SCALE) as i32,
             None => 40,
         };
 
         for y in 0..height {
-            for dx in -2..=2 {
-                for dz in -2..=2 {
-                    if dx.abs() <= 1 && dz.abs() <= 1 { continue; }
+            // ðŸš¨ CorreÃ§Ã£o do E0689 de Ambiguidade de Valor Absoluto (i32.abs)
+            for dx in -2i32..=2i32 {
+                for dz in -2i32..=2i32 {
+                    if (dx as i32).abs() <= 1 && (dz as i32).abs() <= 1 { continue; }
                     editor.set_block_absolute(BRICK, x + dx, ground_y + y, z + dz, None, None);
                 }
             }
@@ -358,15 +359,15 @@ fn generate_chimney(editor: &mut WorldEditor, element: &ProcessedElement, args: 
     }
 }
 
-/// Poços de Água Rurais
+/// PoÃ§os de Ãgua Rurais
 fn generate_water_well(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
     if let Some(first_node) = element.nodes().next() {
         let x = first_node.x;
         let z = first_node.z;
         let ground_y = if args.terrain { editor.get_ground_level(x, z) } else { 0 };
 
-        for dx in -1..=1 {
-            for dz in -1..=1 {
+        for dx in -1i32..=1i32 {
+            for dz in -1i32..=1i32 {
                 if dx == 0 && dz == 0 {
                     editor.set_block_absolute(WATER, x, ground_y - 1, z, None, None);
                     editor.set_block_absolute(WATER, x, ground_y, z, None, None);
@@ -387,13 +388,13 @@ fn generate_water_well(editor: &mut WorldEditor, element: &ProcessedElement, arg
     }
 }
 
-/// Torres de Água da CAESB Elevadas
+/// Torres de Ãgua da CAESB Elevadas
 fn generate_water_tower(editor: &mut WorldEditor, element: &ProcessedElement, args: &Args) {
     if let Some(first_node) = element.nodes().next() {
         let x = first_node.x;
         let z = first_node.z;
         let ground_y = if args.terrain { editor.get_ground_level(x, z) } else { 0 };
-        
+
         let tower_height = (25.0 * V_SCALE) as i32;
         let tank_height = (8.0 * V_SCALE) as i32;
 
@@ -405,11 +406,11 @@ fn generate_water_tower(editor: &mut WorldEditor, element: &ProcessedElement, ar
         }
 
         for y in (7..tower_height).step_by(7) {
-            for dx in -2..=2 {
+            for dx in -2i32..=2i32 {
                 editor.set_block_absolute(STONE_BRICKS, x + dx, ground_y + y, z - 3, None, None);
                 editor.set_block_absolute(STONE_BRICKS, x + dx, ground_y + y, z + 3, None, None);
             }
-            for dz in -2..=2 {
+            for dz in -2i32..=2i32 {
                 editor.set_block_absolute(STONE_BRICKS, x - 3, ground_y + y, z + dz, None, None);
                 editor.set_block_absolute(STONE_BRICKS, x + 3, ground_y + y, z + dz, None, None);
             }
@@ -446,7 +447,7 @@ pub fn generate_man_made_nodes(editor: &mut WorldEditor, node: &ProcessedNode, a
             "water_tower" => generate_water_tower(editor, &element, args),
             "street_cabinet" => generate_street_cabinet(editor, &element, args),
             "utility_pole" => generate_utility_pole(editor, &element, args),
-            _ => {} 
+            _ => {}
         }
     }
 }

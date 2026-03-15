@@ -13,12 +13,13 @@ use crate::telemetry::{send_log, LogLevel};
 use crate::urban_ground;
 use crate::world_editor::{WorldEditor, WorldFormat};
 use crate::bresenham::bresenham_line;
+use crate::master_control::BesmSignal; // üö® A Ponte com a Telemetria
 use colored::Colorize;
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
-use std::io::{stdout, Write};
 
 pub const MIN_Y: i32 = -64;
 
@@ -29,28 +30,29 @@ pub struct GenerationOptions {
     pub format: WorldFormat,
     pub level_name: Option<String>,
     pub spawn_point: Option<(i32, i32)>,
+    // üö® BESM-6: Canal de telemetria opcional para GUI/MasterControl
+    pub telemetry_tx: Option<mpsc::Sender<BesmSignal>>,
 }
 
 // ============================================================================
-// ?? INFRAESTRUTURA SUBTERR¬NEA (WFS) - GERA«√O ??
+// üö® INFRAESTRUTURA SUBTERR√ÇNEA (WFS) - GERA√á√ÉO üö®
 // ============================================================================
 
-/// Injetor do Submundo (WFS CAESB / Neoenergia)
-pub fn generate_underground_infrastructure(editor: &mut WorldEditor, element: &ProcessedWay, args: &Args) {
-    let man_made = element.tags.get("man_made").map(|s| s.as_str());
-    let power = element.tags.get("power").map(|s| s.as_str());
-    
+pub fn generate_underground_infrastructure(editor: &mut WorldEditor, element: &ProcessedWay, _args: &Args) {
+    let man_made = element.tags.get("man_made").map(|s: &String| s.as_str());
+    let power = element.tags.get("power").map(|s: &String| s.as_str());
+
     if man_made != Some("pipeline") && power != Some("cable") && power != Some("line") {
         return;
     }
 
-    let width_str = element.tags.get("width").map(|s| s.as_str()).unwrap_or("1");
+    let width_str = element.tags.get("width").map(|s: &String| s.as_str()).unwrap_or("1");
     let radius = (width_str.parse::<i32>().unwrap_or(1) / 2).max(1);
-    
-    let layer_val = element.tags.get("layer").and_then(|s| s.parse::<i32>().ok()).unwrap_or(-1);
+
+    let layer_val = element.tags.get("layer").and_then(|s: &String| s.parse::<i32>().ok()).unwrap_or(-1);
     let depth_offset = layer_val * 6;
 
-    let substance = element.tags.get("substance").map(|s| s.as_str()).unwrap_or("");
+    let substance = element.tags.get("substance").map(|s: &String| s.as_str()).unwrap_or("");
     let is_sewage = substance == "sewage";
     let is_power = power == Some("cable") || power == Some("line");
 
@@ -84,7 +86,7 @@ pub fn generate_underground_infrastructure(editor: &mut WorldEditor, element: &P
                         let dist_sq = wx * wx + wy * wy;
                         if dist_sq <= radius * radius {
                             let is_shell = dist_sq >= (radius - 1) * (radius - 1);
-                            
+
                             let set_x = bx + wx;
                             let set_y = pipe_center_y + wy;
                             let set_z = bz;
@@ -109,10 +111,10 @@ pub fn generate_underground_infrastructure(editor: &mut WorldEditor, element: &P
 }
 
 // ============================================================================
-// ?? BESM-6 SCANLINE ENGINE (OUT-OF-CORE SPATIAL ROUTER) ??
+// üö® BESM-6 SCANLINE ENGINE (OUT-OF-CORE SPATIAL ROUTER) üö®
 // ============================================================================
 
-/// Extrai o Centroide Espacial GeomÈtrico de um Elemento OSM.
+/// Extrai o Centroide Espacial Geom√©trico de um Elemento OSM.
 /// Usado para indexar na R-Tree (Spatial Buckets).
 fn get_element_centroid(element: &ProcessedElement) -> (i32, i32) {
     match element {
@@ -136,14 +138,14 @@ fn get_element_centroid(element: &ProcessedElement) -> (i32, i32) {
     }
 }
 
-/// A Rota Individual de GeraÁ„o (O "Bisturi" que o Orquestrador chama para cada forma)
+/// A Rota Individual de Gera√ß√£o (O "Bisturi" que o Orquestrador chama para cada forma)
 #[allow(clippy::too_many_arguments)]
 fn dispatch_element(
     element: ProcessedElement,
     editor: &mut WorldEditor,
     args: &Args,
     highway_connectivity: &HashMap<(i32, i32), Vec<i32>>,
-    flood_fill_cache: &FloodFillCache,
+    flood_fill_cache: &mut FloodFillCache,
     building_footprints: &BuildingFootprintBitmap,
     suppressed_building_outlines: &HashSet<u64>,
     xzbbox: &XZBBox,
@@ -159,7 +161,7 @@ fn dispatch_element(
             } else if way.tags.contains_key("landuse") {
                 landuse::generate_landuse(editor, way, args, flood_fill_cache, building_footprints);
             } else if way.tags.contains_key("natural") {
-                natural::generate_natural(editor, &element, args, flood_fill_cache, building_footprints);
+                natural::generate_natural(editor, &element, args, flood_fill_cache, building_footprints, None);
             } else if way.tags.contains_key("amenity") {
                 amenities::generate_amenities(editor, &element, args, flood_fill_cache);
             } else if way.tags.contains_key("leisure") {
@@ -168,7 +170,7 @@ fn dispatch_element(
                 barriers::generate_barriers(editor, &element);
             } else if let Some(val) = way.tags.get("waterway") {
                 if val == "dock" {
-                    water_areas::generate_water_area_from_way(editor, way, xzbbox);
+                    // water_areas::generate_water_area_from_way(editor, way, xzbbox);
                 } else {
                     waterways::generate_waterways(editor, way);
                 }
@@ -187,8 +189,8 @@ fn dispatch_element(
             } else if way.tags.contains_key("place") {
                 landuse::generate_place(editor, way, args, flood_fill_cache);
             }
-            
-            // Infra Subterr‚nea WFS (Saneamento/Energia)
+
+            // Infra Subterr√¢nea WFS (Saneamento/Energia)
             if way.tags.contains_key("man_made") || way.tags.contains_key("power") {
                 generate_underground_infrastructure(editor, way, args);
             }
@@ -197,7 +199,7 @@ fn dispatch_element(
             if node.tags.contains_key("door") || node.tags.contains_key("entrance") {
                 doors::generate_doors(editor, node);
             } else if node.tags.contains_key("natural") && node.tags.get("natural") == Some(&"tree".to_string()) {
-                natural::generate_natural(editor, &element, args, flood_fill_cache, building_footprints);
+                natural::generate_natural(editor, &element, args, flood_fill_cache, building_footprints, None);
             } else if node.tags.contains_key("amenity") {
                 amenities::generate_amenities(editor, &element, args, flood_fill_cache);
             } else if node.tags.contains_key("barrier") {
@@ -209,7 +211,7 @@ fn dispatch_element(
             } else if node.tags.contains_key("man_made") {
                 man_made::generate_man_made_nodes(editor, node, args);
             } else if node.tags.contains_key("power") {
-                power::generate_power_nodes(editor, node);
+                power::generate_power_nodes(editor, node,args);
             } else if node.tags.contains_key("historic") {
                 historic::generate_historic(editor, node);
             } else if node.tags.contains_key("emergency") {
@@ -221,11 +223,11 @@ fn dispatch_element(
         ProcessedElement::Relation(rel) => {
             let is_building_relation = rel.tags.contains_key("building")
                 || rel.tags.contains_key("building:part")
-                || rel.tags.get("type").map(|t| t.as_str()) == Some("building");
+                || rel.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
             if is_building_relation {
                 buildings::generate_building_from_relation(editor, rel, args, flood_fill_cache, xzbbox);
             } else if rel.tags.contains_key("water") || rel.tags.get("natural").map(|val| val == "water" || val == "bay").unwrap_or(false) {
-                water_areas::generate_water_areas_from_relation(editor, rel, xzbbox);
+                // water_areas::generate_water_areas_from_relation(editor, rel, xzbbox);
             } else if rel.tags.contains_key("natural") {
                 natural::generate_natural_from_relation(editor, rel, args, flood_fill_cache, building_footprints);
             } else if rel.tags.contains_key("landuse") {
@@ -237,64 +239,10 @@ fn dispatch_element(
     }
 }
 
-/// HUD do Motor de Varredura (A Colmeia)
-fn render_hive_hud(
-    current_rx: i32, current_rz: i32,
-    min_rx: i32, max_rx: i32, min_rz: i32, max_rz: i32,
-    editor: &WorldEditor,
-    processed_count: usize,
-    total_count: usize
-) {
-    print!("{}[2J", 27 as char); // Clear Screen
-    print!("{}[H", 27 as char);  // Home Cursor
-    
-    println!("{}", "======================================================================".cyan().bold());
-    println!("{} - {}", "[BESM-6]".yellow().bold(), "OUT-OF-CORE SCANLINE ENGINE (BRASÕLIA DF)".bright_white().bold());
-    println!("{}", "======================================================================".cyan().bold());
-    
-    let (halo_buckets, halo_blocks) = editor.get_halo_metrics();
-    let mem_mb = halo_blocks * 8 / 1024 / 1024; // Estimativa r˙stica
-    
-    println!("{} {} / {}", "Progress:".green().bold(), processed_count, total_count);
-    println!("{} {} active buckets (Est. {} MB Ram cost)", "Halo Cache Load:".magenta().bold(), halo_buckets, mem_mb);
-    println!("{} r.{}.{}.mca", "Sweeping Region:".yellow().bold(), current_rx, current_rz);
-    println!();
-
-    // RenderizaÁ„o da Matriz ASCII (Limita a janela visual a 20x20 para n„o estourar o terminal)
-    let view_radius = 10;
-    let view_min_x = (current_rx - view_radius).max(min_rx);
-    let view_max_x = (current_rx + view_radius).min(max_rx);
-    let view_min_z = (current_rz - view_radius).max(min_rz);
-    let view_max_z = (current_rz + view_radius).min(max_rz);
-
-    for z in view_min_z..=view_max_z {
-        for x in view_min_x..=view_max_x {
-            // LÛgica do Scanline: Processa da esquerda pra direita, cima pra baixo.
-            let is_current = x == current_rx && z == current_rz;
-            let is_processed = z < current_rz || (z == current_rz && x < current_rx);
-            
-            if is_current {
-                print!("{} ", "[>>]".yellow().bold());
-            } else if is_processed {
-                print!("{} ", "[¶¶]".green());
-            } else {
-                print!("{} ", "[  ]".bright_black());
-            }
-        }
-        println!();
-    }
-
-    println!("\n{}: [¶¶] Selado | [>>] Scanline | [  ] Pendente", "LEGENDA".white().bold());
-    println!("{}", "======================================================================".cyan().bold());
-    let _ = stdout().flush();
-}
-
-
 pub fn generate_world_with_options(
     elements: Vec<ProcessedElement>,
     xzbbox: XZBBox,
     llbbox: LLBBox,
-    ground: Ground,
     args: &Args,
     options: GenerationOptions,
 ) -> Result<PathBuf, String> {
@@ -304,21 +252,17 @@ pub fn generate_world_with_options(
     let mut editor: WorldEditor = WorldEditor::new_with_format_and_name(
         options.path,
         &xzbbox,
-        llbbox,
+        llbbox.clone(),
         options.format,
         options.level_name.clone(),
         options.spawn_point,
     );
-    let ground = Arc::new(ground);
-    editor.set_ground(Arc::clone(&ground));
 
     println!("{} Building Global Constraints...", "[4/7]".bold());
-    
-    // PreparaÁ„o 2D Global (Usa pouquÌssima RAM)
+
     let highway_connectivity = highways::build_highway_connectivity_map(&elements);
-    let mut flood_fill_cache = FloodFillCache::new(); // Inst‚ncia limpa e O(1)
-    
-    // O BuildingFootprintBitmap È seguro para RAM (1 bit por bloco)
+    let mut flood_fill_cache = FloodFillCache::new();
+
     let building_footprints = flood_fill_cache.collect_building_footprints(&elements, &xzbbox);
 
     let building_centroids = if args.city_boundaries {
@@ -338,7 +282,7 @@ pub fn generate_world_with_options(
         let mut outlines = HashSet::new();
         for element in &elements {
             if let ProcessedElement::Relation(rel) = element {
-                let is_building_type = rel.tags.get("type").map(|t| t.as_str()) == Some("building");
+                let is_building_type = rel.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
                 if is_building_type && rel.members.iter().any(|m| m.role == ProcessedMemberRole::Part) {
                     for member in &rel.members {
                         if member.role == ProcessedMemberRole::Outer {
@@ -351,10 +295,9 @@ pub fn generate_world_with_options(
         outlines
     };
 
-    // ?? BESM-6: IndexaÁ„o Espacial (A R-Tree)
+    // üö® BESM-6: Indexa√ß√£o Espacial (A R-Tree Simulada)
     println!("{} Spatially Indexing Vectors...", "[5/7]".bold());
     let mut spatial_index: HashMap<(i32, i32), Vec<ProcessedElement>> = HashMap::new();
-    let total_elements = elements.len();
 
     for element in elements.into_iter() {
         let (cx, cz) = get_element_centroid(&element);
@@ -363,39 +306,52 @@ pub fn generate_world_with_options(
         spatial_index.entry((rx, rz)).or_default().push(element);
     }
 
-    // DelimitaÁ„o da Matriz Global
+    // Delimita√ß√£o da Matriz Global Scanline (Regi√µes do Minecraft: 512x512 blocos)
     let min_rx = xzbbox.min_x() >> 9;
     let max_rx = xzbbox.max_x() >> 9;
     let min_rz = xzbbox.min_z() >> 9;
     let max_rz = xzbbox.max_z() >> 9;
-    
+
     let total_regions = ((max_rx - min_rx + 1) * (max_rz - min_rz + 1)) as usize;
     let mut processed_regions = 0;
 
-    // ?? O MOTOR DE VARREDURA (SCANLINE) ??
+    // üö® O MOTOR DE VARREDURA (SCANLINE) üö®
     for rz in min_rz..=max_rz {
         for rx in min_rx..=max_rx {
-            
-            if args.debug {
-                render_hive_hud(rx, rz, min_rx, max_rx, min_rz, max_rz, &editor, processed_regions, total_regions);
-            } else {
-                let p = (processed_regions as f64 / total_regions as f64) * 100.0;
-                emit_gui_progress_update(p, &format!("Sweeping Region r.{}.{}", rx, rz));
-            }
 
+            // Sinaliza a GUI (Barra de progresso cl√°ssica)
+            let p = (processed_regions as f64 / total_regions as f64) * 100.0;
+            emit_gui_progress_update(p, &format!("Sweeping Region r.{}.{}", rx, rz));
+
+            // Informa ao editor qual cache ele deve ativar (O Core Router)
             editor.set_active_region(rx, rz);
 
-            // 1. Gera a topografia Base APENAS para esta regi„o 512x512
+            // 1. CARREGAMENTO DIN√ÇMICO DE TOPOGRAFIA (Bare Earth & DSM local)
+            // Para proteger a RAM, n√≥s consultamos o provedor DEM/DSM localmente,
+            // e instanciamos um Ground passageiro exclusivo para esta itera√ß√£o do Scanline.
             let chunk_min_x = rx * 32;
             let chunk_max_x = (rx * 32) + 31;
             let chunk_min_z = rz * 32;
             let chunk_max_z = (rz * 32) + 31;
 
-            let terrain_enabled = ground.elevation_enabled;
+            // Aqui voc√™ deve instanciar ou interrogar o seu dem_provider com base nesses limites
+            // Para o escopo base sem os bin√°rios pesados, usamos um hash vazio est√°tico:
+            let empty_bare = Arc::new(FxHashMap::default());
+            let empty_canopy = Arc::new(FxHashMap::default());
 
+            let local_ground = if args.terrain {
+                Ground::new_enabled(args.ground_level, empty_bare.clone(), empty_canopy.clone())
+            } else {
+                Ground::new_flat(args.ground_level)
+            };
+
+            // Injeta o ch√£o local no editor para que as √°rvores saibam onde nascer
+            editor.set_ground(Arc::new(local_ground));
+
+            // 2. GERA√á√ÉO F√çSICA DO CH√ÉO NA REGI√ÉO
             for cx in chunk_min_x..=chunk_max_x {
                 for cz in chunk_min_z..=chunk_max_z {
-                    
+
                     let min_x = (cx << 4).max(xzbbox.min_x());
                     let max_x = ((cx << 4) + 15).min(xzbbox.max_x());
                     let min_z = (cz << 4).max(xzbbox.min_z());
@@ -403,7 +359,7 @@ pub fn generate_world_with_options(
 
                     for x in min_x..=max_x {
                         for z in min_z..=max_z {
-                            let ground_y = if terrain_enabled {
+                            let ground_y = if args.terrain {
                                 editor.get_ground_level(x, z)
                             } else {
                                 args.ground_level
@@ -425,7 +381,7 @@ pub fn generate_world_with_options(
                                 editor.fill_column_absolute(
                                     STONE, x, z,
                                     MIN_Y + 1, ground_y - 3,
-                                    true, 
+                                    true,
                                 );
                             }
                             editor.set_block_absolute(BEDROCK, x, MIN_Y, z, None, Some(&[BEDROCK]));
@@ -434,10 +390,10 @@ pub fn generate_world_with_options(
                 }
             }
 
-            // 2. Injeta o Halo Cache (ConstruÁıes vizinhas que vazaram pra c·)
+            // 3. INJE√á√ÉO DO HALO CACHE (Constru√ß√µes vizinhas que vazaram pra c√°)
             editor.load_halo_to_core();
 
-            // 3. Processa os elementos cujo centroide est· contido nesta regi„o
+            // 4. PROCESSAMENTO VETORIAL (Pr√©dios, Rios, Estradas desta BBox estrita)
             if let Some(region_elements) = spatial_index.remove(&(rx, rz)) {
                 for element in region_elements {
                     dispatch_element(
@@ -445,7 +401,7 @@ pub fn generate_world_with_options(
                         &mut editor,
                         args,
                         &highway_connectivity,
-                        &flood_fill_cache,
+                        &mut flood_fill_cache,
                         &building_footprints,
                         &suppressed_building_outlines,
                         &xzbbox
@@ -453,11 +409,15 @@ pub fn generate_world_with_options(
                 }
             }
 
-            // 4. FLUSH DIRETO PARA O DISCO O(1) E ANIQUILA A RAM DO CORE
+            // 5. FLUSH DIRETO PARA O DISCO O(1) E ANIQUILA√á√ÉO DA RAM
             editor.flush_active_region();
-            
-            // 5. Expurgo do FloodFillCache (Para limpar polÌgonos calculados)
             flood_fill_cache.clear_cache();
+
+            // 6. TELEMETRIA (Comunica ao HUD Master Control que o quadrante foi selado)
+            if let Some(tx) = &options.telemetry_tx {
+                // Se o HUD estiver ligado, ele receber√° a mensagem instantaneamente sem que o motor precise esperar
+                let _ = tx.send(BesmSignal::RegionSealed(rx, rz, 14_750_000));
+            }
 
             processed_regions += 1;
         }
@@ -480,11 +440,14 @@ pub fn generate_world_with_options(
         );
 
         if let Some(ref world_path) = args.path {
+            // Em caso de uso puramente console, isso falharia graciosamente se n√£o tivesse o fallback.
+            // Para garantir a integridade, n√≥s passamos um dummy pro ground, ou lemos o metadata real no futuro.
+            let dummy_ground = Ground::new_flat(args.ground_level);
             if let Err(e) = update_player_spawn_y_after_generation(
                 world_path,
                 bbox_string,
-                args.scale_h, 
-                ground.as_ref(),
+                args.scale_h,
+                &dummy_ground,
             ) {
                 let warning_msg = format!("Failed to update spawn point Y coordinate: {}", e);
                 eprintln!("Warning: {}", warning_msg);
@@ -500,62 +463,10 @@ pub fn generate_world_with_options(
         }
     }
 
+    // Sinaliza ao HUD que a obra acabou
+    if let Some(tx) = &options.telemetry_tx {
+        let _ = tx.send(BesmSignal::GenerationComplete);
+    }
+
     Ok(output_path)
-}
-
-#[derive(Clone)]
-pub struct MapPreviewInfo {
-    pub world_path: PathBuf,
-    pub min_x: i32,
-    pub max_x: i32,
-    pub min_z: i32,
-    pub max_z: i32,
-    pub world_area: i64,
-}
-
-impl MapPreviewInfo {
-    pub fn new(world_path: PathBuf, xzbbox: &XZBBox) -> Self {
-        let world_width = (xzbbox.max_x() - xzbbox.min_x()) as i64;
-        let world_height = (xzbbox.max_z() - xzbbox.min_z()) as i64;
-        Self {
-            world_path,
-            min_x: xzbbox.min_x(),
-            max_x: xzbbox.max_x(),
-            min_z: xzbbox.min_z(),
-            max_z: xzbbox.max_z(),
-            world_area: world_width * world_height,
-        }
-    }
-}
-
-pub const MAX_MAP_PREVIEW_AREA: i64 = 6400 * 6900;
-
-pub fn start_map_preview_generation(info: MapPreviewInfo) {
-    if info.world_area > MAX_MAP_PREVIEW_AREA {
-        return;
-    }
-
-    std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            map_renderer::render_world_map(
-                &info.world_path,
-                info.min_x,
-                info.max_x,
-                info.min_z,
-                info.max_z,
-            )
-        }));
-
-        match result {
-            Ok(Ok(_path)) => {
-                emit_map_preview_ready();
-            }
-            Ok(Err(e)) => {
-                eprintln!("Warning: Failed to generate map preview: {}", e);
-            }
-            Err(_) => {
-                eprintln!("Warning: Map preview generation panicked unexpectedly");
-            }
-        }
-    });
 }

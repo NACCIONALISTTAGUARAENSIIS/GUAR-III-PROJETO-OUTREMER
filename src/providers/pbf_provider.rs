@@ -9,8 +9,8 @@ use rustc_hash::FxHashMap; // BESM-6: Hash O(1) de extrema performance
 use osmpbf::{ElementReader, Element, RelMemberType};
 
 /// Provedor PBF (Protocolbuffer Binary Format) Local de Alta Performance.
-/// Lê arquivos gigantescos do OSM (.osm.pbf) diretamente do SSD.
-/// Implementa Streaming com Early-Z Culling BBox para não estourar a RAM.
+/// Lï¿½ arquivos gigantescos do OSM (.osm.pbf) diretamente do SSD.
+/// Implementa Streaming com Early-Z Culling BBox para nÃ£o estourar a RAM.
 pub struct PbfProvider {
     pub file_path: PathBuf,
     pub scale_h: f64,
@@ -49,6 +49,7 @@ impl PbfProvider {
 }
 
 impl DataProvider for PbfProvider {
+    fn priority(&self) -> u8 { self.priority }
     fn name(&self) -> &str {
         "Local OSM PBF (Ultra-Fast Binary Stream)"
     }
@@ -63,28 +64,29 @@ impl DataProvider for PbfProvider {
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
 
         let mut features = Vec::new();
-        let mut next_id = 6_000_000_000; // Offset dedicado para PBF
+        let mut next_id: u64 = 6_000_000_000; // Offset em u64 para evitar overflow
 
         // ?? BESM-6 Tweak: BBox Expandida (Buffer)
-        // Expandimos a área de captura em ~2km (0.02 graus) para garantir que vias e 
-        // superquadras que começam fora da BBox mas cruzam para dentro não sejam decepadas.
+        // Expandimos a ï¿½rea de captura em ~2km (0.02 graus) para garantir que vias e 
+        // superquadras que comeï¿½am fora da BBox mas cruzam para dentro nï¿½o sejam decepadas.
         let min_lat = bbox.min().lat() - 0.02;
         let max_lat = bbox.max().lat() + 0.02;
         let min_lng = bbox.min().lng() - 0.02;
         let max_lng = bbox.max().lng() + 0.02;
 
-        // Memória Cache ultrarrápida exclusiva para elementos que passam no Culling
+        // Memï¿½ria Cache ultrarrï¿½pida exclusiva para elementos que passam no Culling
         let mut node_cache: FxHashMap<i64, XZPoint> = FxHashMap::default();
         let mut way_cache: FxHashMap<i64, Vec<XZPoint>> = FxHashMap::default();
 
-        // Passagem Única em Streaming PBF (O formato garante a ordem: Nodes -> Ways -> Relations)
+        // Passagem ï¿½nica em Streaming PBF (O formato garante a ordem: Nodes -> Ways -> Relations)
         let _ = reader.for_each(|element| {
             match element {
+                osmpbf::Element::DenseNode(_) => {},
                 Element::Node(node) => {
                     let lat = node.lat();
                     let lon = node.lon();
 
-                    // Culling Geográfico Cruel: Só guarda na RAM se estiver na região do jogador
+                    // Culling Geogrï¿½fico Cruel: Sï¿½ guarda na RAM se estiver na regiï¿½o do jogador
                     if lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             let xz = transformer.transform_point(llpoint);
@@ -109,11 +111,11 @@ impl DataProvider for PbfProvider {
                     let mut coords = Vec::with_capacity(way.refs().count());
                     let mut is_completely_outside = true;
 
-                    // Monta a geometria buscando os nós no cache
+                    // Monta a geometria buscando os nï¿½s no cache
                     for node_id in way.refs() {
                         if let Some(&xz) = node_cache.get(&node_id) {
                             coords.push(xz);
-                            is_completely_outside = false; // Tem pelo menos um vértice no mapa
+                            is_completely_outside = false; // Tem pelo menos um vï¿½rtice no mapa
                         }
                     }
 
@@ -147,8 +149,8 @@ impl DataProvider for PbfProvider {
                 Element::Relation(rel) => {
                     let tags: HashMap<String, String> = rel.tags().map(|(k, v)| (k.to_string(), v.to_string())).collect();
                     
-                    // Multipolygons são críticos para construções massivas com pátios internos
-                    if tags.get("type").map(|s| s.as_str()) == Some("multipolygon") {
+                    // Multipolygons sï¿½o crï¿½ticos para construï¿½ï¿½es massivas com pï¿½tios internos
+                    if tags.get("type").map(|s: &String| s.as_str()) == Some("multipolygon") {
                         if let Some(semantic_group) = Self::get_semantic_group(&tags) {
                             let mut outer_rings = Vec::new();
                             let mut inner_rings = Vec::new();
@@ -182,7 +184,7 @@ impl DataProvider for PbfProvider {
         });
 
         features.shrink_to_fit();
-        println!("[INFO] ? Varredura PBF concluída em O(1): {} blocos extraídos para o motor.", features.len());
+        println!("[INFO] ? Varredura PBF concluï¿½da em O(1): {} blocos extraï¿½dos para o motor.", features.len());
         Ok(features)
     }
 }

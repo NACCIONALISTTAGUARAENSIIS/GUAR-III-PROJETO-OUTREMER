@@ -57,7 +57,7 @@ type ColorBlockMapping = (ColorTuple, BlockOptions);
 
 #[derive(Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Debug)]
 pub struct Block {
-    id: u16, // Aumentado para u16 para garantir espaço futuro
+    id: u16, // Aumentado para u16 para garantir espaÃ§o futuro
 }
 
 // Extended block with dynamic properties
@@ -82,7 +82,7 @@ impl BlockWithProperties {
 
 impl Block {
     #[inline(always)]
-    const fn new(id: u16) -> Self {
+    pub const fn new(id: u16) -> Self {
         Self { id }
     }
 
@@ -113,7 +113,7 @@ impl Block {
             12 => "cobblestone_wall",
             13 => "cobblestone",
             14 => "polished_blackstone_bricks",
-            15 => "cracked_stone_bricks", 
+            15 => "cracked_stone_bricks",
             16 => "crimson_planks",
             17 => "cut_sandstone",
             18 => "cyan_concrete",
@@ -219,7 +219,7 @@ impl Block {
             127 => "iron_ore",
             128 => "coal_ore",
             129 => "gold_ore",
-            130 => "copper_block", 
+            130 => "copper_block",
             131 => "clay",
             132 => "dirt_path",
             133 => "ice",
@@ -327,8 +327,36 @@ impl Block {
             246 => "potted_red_tulip",
             247 => "potted_dandelion",
             248 => "potted_blue_orchid",
-            249 => "black_stained_glass", 
-            250 => "copper_grate", // ?? BESM-6 Tweak: Cobogó Element para UnB e Fachadas Antigas
+            249 => "black_stained_glass",
+            250 => "copper_grate", // ðŸš¨ BESM-6 Tweak: CobogÃ³ Element para UnB e Fachadas Antigas
+            251 => "diorite_wall",
+            252 => "azalea_leaves",
+            253 => "spruce_fence",
+            254 => "dark_oak_fence",
+            255 => "flowering_azalea",
+            256 => "quartz_slab",
+            257 => "spruce_slab",
+            258 => "iron_trapdoor",
+            259 => "iron_door",
+            260 => "oak_fence_gate",
+            261 => "oak_leaves",
+            262 => "stone_stairs",
+            263 => "tall_grass",
+            264 => "moss_carpet",
+            265 => "copper_ore",
+            266 => "green_terracotta",
+            267 => "light_weighted_pressure_plate",
+            268 => "grindstone",
+            269 => "cactus",
+            270 => "lily_pad",
+            271 => "pink_tulip",
+            272 => "allium",
+            273 => "red_tulip",
+            274 => "orange_tulip",
+            275 => "dark_oak_slab",
+            276 => "cyan_terracotta",
+            277 => "acacia_fence",
+            278 => "jungle_fence",
             _ => panic!("Invalid id: {}", self.id),
         }
     }
@@ -612,6 +640,11 @@ impl Block {
                 map.insert("half".to_string(), Value::String("top".to_string()));
                 map
             })),
+            256 => Some(Value::Compound({
+                let mut map = HashMap::new();
+                map.insert("type".to_string(), Value::String("bottom".to_string()));
+                map
+            })),
             _ => None,
         }
     }
@@ -778,7 +811,7 @@ pub const COARSE_DIRT: Block = Block::new(126);
 pub const IRON_ORE: Block = Block::new(127);
 pub const COAL_ORE: Block = Block::new(128);
 pub const GOLD_ORE: Block = Block::new(129);
-pub const COPPER_BLOCK: Block = Block::new(130); 
+pub const COPPER_BLOCK: Block = Block::new(130);
 pub const CLAY: Block = Block::new(131);
 pub const DIRT_PATH: Block = Block::new(132);
 pub const ICE: Block = Block::new(133);
@@ -888,8 +921,38 @@ pub const BRICK_SLAB: Block = Block::new(245);
 pub const POTTED_RED_TULIP: Block = Block::new(246);
 pub const POTTED_DANDELION: Block = Block::new(247);
 pub const POTTED_BLUE_ORCHID: Block = Block::new(248);
-pub const BLACK_STAINED_GLASS: Block = Block::new(249); 
-pub const COPPER_GRATE: Block = Block::new(250);
+pub const BLACK_STAINED_GLASS: Block = Block::new(249);
+pub const COPPER_GRATE: Block = Block::new(250); // ðŸš¨ BESM-6 Tweak: CobogÃ³ Element para UnB e Fachadas Antigas
+
+// ðŸš¨ BLOCOS ADICIONAIS NECESSÃRIOS PELO SISTEMA
+pub const DIORITE_WALL: Block = Block::new(251);
+pub const AZALEA_LEAVES: Block = Block::new(252);
+pub const SPRUCE_FENCE: Block = Block::new(253);
+pub const DARK_OAK_FENCE: Block = Block::new(254);
+pub const FLOWERING_AZALEA: Block = Block::new(255);
+pub const QUARTZ_SLAB_BOTTOM: Block = Block::new(256);
+pub const SPRUCE_SLAB: Block = Block::new(257);
+pub const IRON_TRAPDOOR: Block = Block::new(258);
+pub const IRON_DOOR: Block = Block::new(259);
+pub const OAK_FENCE_GATE: Block = Block::new(260);
+pub const LEAVES: Block = Block::new(261);
+pub const STONE_STAIRS: Block = Block::new(262);
+pub const TALL_GRASS: Block = Block::new(263);
+pub const MOSS_CARPET: Block = Block::new(264);
+pub const COPPER_ORE: Block = Block::new(265);
+pub const GREEN_TERRACOTTA: Block = Block::new(266);
+pub const LIGHT_WEIGHTED_PRESSURE_PLATE: Block = Block::new(267);
+pub const GRINDSTONE: Block = Block::new(268);
+pub const CACTUS: Block = Block::new(269);
+pub const LILY_PAD: Block = Block::new(270);
+pub const PINK_TULIP: Block = Block::new(271);
+pub const ALLIUM: Block = Block::new(272);
+pub const RED_TULIP: Block = Block::new(273);
+pub const ORANGE_TULIP: Block = Block::new(274);
+pub const DARK_OAK_SLAB: Block = Block::new(275);
+pub const CYAN_TERRACOTTA: Block = Block::new(276);
+pub const ACACIA_FENCE: Block = Block::new(277);
+pub const JUNGLE_FENCE: Block = Block::new(278);
 
 #[inline]
 pub fn get_stair_block_for_material(material: Block) -> Block {
@@ -999,7 +1062,7 @@ pub fn get_floor_block_with_rng(rng: &mut impl rand::Rng) -> Block {
     FLOOR_BLOCK_OPTIONS[rng.random_range(0..FLOOR_BLOCK_OPTIONS.len())]
 }
 
-// --- BRASÍLIA DEFINED COLORS & MAPPING ---
+// --- BRASÃLIA DEFINED COLORS & MAPPING ---
 
 static DEFINED_COLORS: &[ColorBlockMapping] = &[
     // 1. Terra Vermelha do Cerrado (Latossolo)
@@ -1007,36 +1070,36 @@ static DEFINED_COLORS: &[ColorBlockMapping] = &[
 
     // 2. Telhados Coloniais / Barro (Laranja Fundo/Terracota)
     ((180, 80, 45), &[ORANGE_TERRACOTTA, BRICK, GRANITE]),
-    
-    // 3. Vegetação de Cerrado Seco / Áreas Verdes (Grass, Moss e Podzol para áreas secas)
+
+    // 3. VegetaÃ§Ã£o de Cerrado Seco / Ãreas Verdes (Grass, Moss e Podzol para Ã¡reas secas)
     ((85, 95, 65), &[GRASS_BLOCK, MOSS_BLOCK, PODZOL]),
-    
+
     // 4. Concreto Monumental (Off-white / Cinza Claro Poeira)
     ((185, 185, 180), &[POLISHED_ANDESITE, SMOOTH_STONE, LIGHT_GRAY_CONCRETE]),
 
     // 5. Brutalismo Raiz (Concreto Envelhecido / Fachadas UnB)
     ((140, 140, 135), &[GRAY_TERRACOTTA, LIGHT_GRAY_TERRACOTTA, STONE]),
-    
+
     // 6. Asfalto Urbano (Eixos e EPTG)
     ((90, 90, 95), &[GRAY_CONCRETE, BLACK_CONCRETE, POLISHED_BASALT]),
-    
-    // 7. Branco Institucional (Palácios / Catedral)
+
+    // 7. Branco Institucional (PalÃ¡cios / Catedral)
     ((240, 240, 235), &[WHITE_CONCRETE, QUARTZ_BLOCK, SMOOTH_QUARTZ]),
 
-    // 8. Casas do DF / Pastel Bege (Típico Residencial Guará/Taguatinga)
+    // 8. Casas do DF / Pastel Bege (TÃ­pico Residencial GuarÃ¡/Taguatinga)
     ((235, 220, 190), &[SMOOTH_SANDSTONE, WHITE_TERRACOTTA, SANDSTONE]),
 
-    // 9. Casas Pastel Amarelo Clássico
+    // 9. Casas Pastel Amarelo ClÃ¡ssico
     ((240, 230, 150), &[YELLOW_TERRACOTTA, END_STONE_BRICKS]),
-    
-    // 10. Ipê Amarelo
+
+    // 10. IpÃª Amarelo
     ((255, 210, 0), &[YELLOW_CONCRETE, YELLOW_WOOL]),
-    
-    // 11. Ipê Rosa / Roxo
+
+    // 11. IpÃª Rosa / Roxo
     ((255, 105, 180), &[MAGENTA_CONCRETE]),
     ((160, 32, 240), &[PURPLE_CONCRETE]),
 
-    // --- PADRÕES TÉCNICOS ---
+    // --- PADRÃ•ES TÃ‰CNICOS ---
     ((233, 107, 57), &[BRICK, NETHER_BRICK]),
     ((159, 82, 36), &[BROWN_CONCRETE, MUD_BRICKS, BRICK]),
     ((255, 255, 255), &[WHITE_CONCRETE, QUARTZ_BLOCK]),
@@ -1063,13 +1126,13 @@ pub fn get_fallback_building_block() -> Block {
     let mut rng = rand::rng();
     let fallback_options = [
         WHITE_CONCRETE,
-        WHITE_TERRACOTTA,       
         WHITE_TERRACOTTA,
-        SMOOTH_SANDSTONE,       
+        WHITE_TERRACOTTA,
+        SMOOTH_SANDSTONE,
         LIGHT_GRAY_CONCRETE,
         LIGHT_GRAY_TERRACOTTA,
         POLISHED_ANDESITE,
-        BRICK,                  
+        BRICK,
         MUD_BRICKS,
     ];
     fallback_options[rng.random_range(0..fallback_options.len())]
@@ -1093,34 +1156,34 @@ pub fn get_castle_wall_block() -> Block {
 }
 
 // ============================================================================
-// ?? BESM-6: TRADUTOR SEMÂNTICO DE MATERIAIS AVANÇADOS (Gov-Tier) ??
+// ðŸš¨ BESM-6: TRADUTOR SEMÃ‚NTICO DE MATERIAIS AVANÃ‡ADOS (Gov-Tier) ðŸš¨
 // ============================================================================
 
 /// Recebe um conjunto de tags (como tipo, estilo, material e idade) e retorna o bloco exato.
-/// Elimina a dependência exclusiva de cores mapeadas do OSM.
+/// Elimina a dependÃªncia exclusiva de cores mapeadas do OSM.
 pub fn resolve_advanced_material(tags: &HashMap<String, String>, default_block: Block) -> Block {
-    // 1. Verificamos a Era de Construção (Temporal Inference)
+    // 1. Verificamos a Era de ConstruÃ§Ã£o (Temporal Inference)
     let is_classic = if let Some(year_str) = tags.get("start_date").or_else(|| tags.get("year_built")) {
-        // Se foi construído antes da inauguração de Brasília (1960) ou é taggeado como histórico
+        // Se foi construÃ­do antes da inauguraÃ§Ã£o de BrasÃ­lia (1960) ou Ã© taggeado como histÃ³rico
         year_str.parse::<i32>().unwrap_or(2000) < 1960 || tags.contains_key("historic")
     } else {
         tags.contains_key("historic")
     };
 
     if is_classic {
-        // Arquitetura Colonial / Fazendas do Planalto Central pré-JK
+        // Arquitetura Colonial / Fazendas do Planalto Central prÃ©-JK
         if tags.get("building") == Some(&"church".to_string()) {
             return SMOOTH_SANDSTONE; // Igrejinhas antigas
         }
-        return BRICK; // Casas bandeirantes ou galpões velhos
+        return BRICK; // Casas bandeirantes ou galpÃµes velhos
     }
 
-    // 2. Verificamos se há um material de construção explicitamente declarado no GDF ou OSM
+    // 2. Verificamos se hÃ¡ um material de construÃ§Ã£o explicitamente declarado no GDF ou OSM
     if let Some(material) = tags.get("building:material").or_else(|| tags.get("material")) {
         let mat_lower = material.to_lowercase();
-        
+
         if mat_lower.contains("glass") || mat_lower.contains("vidro") {
-            return CYAN_STAINED_GLASS; // Prédios empresariais modernos
+            return CYAN_STAINED_GLASS; // PrÃ©dios empresariais modernos
         } else if mat_lower.contains("brick") || mat_lower.contains("tijolo") {
             return BRICK;
         } else if mat_lower.contains("concrete") || mat_lower.contains("concreto") {
@@ -1128,21 +1191,21 @@ pub fn resolve_advanced_material(tags: &HashMap<String, String>, default_block: 
         } else if mat_lower.contains("wood") || mat_lower.contains("madeira") {
             return OAK_PLANKS;
         } else if mat_lower.contains("stone") || mat_lower.contains("pedra") {
-            return SMOOTH_STONE; // Fundações e muradas
+            return SMOOTH_STONE; // FundaÃ§Ãµes e muradas
         }
     }
 
-    // 3. Se não houver material explícito, usamos a Arquitetura por Tipologia
-    let b_type = tags.get("building").map(|s| s.as_str()).unwrap_or("yes");
+    // 3. Se nÃ£o houver material explÃ­cito, usamos a Arquitetura por Tipologia
+    let b_type = tags.get("building").map(|s: &String| s.as_str()).unwrap_or("yes");
 
     if b_type == "hospital" || b_type == "clinic" {
-        return WHITE_CONCRETE; // Sanitário e limpo
+        return WHITE_CONCRETE; // SanitÃ¡rio e limpo
     } else if b_type == "industrial" || b_type == "warehouse" {
-        return GRAY_TERRACOTTA; // Brutalismo utilitário (SIA/SCIA)
+        return GRAY_TERRACOTTA; // Brutalismo utilitÃ¡rio (SIA/SCIA)
     } else if b_type == "commercial" || b_type == "office" {
-        return LIGHT_GRAY_CONCRETE; // Base corporativa padrão (SCS/SBS)
+        return LIGHT_GRAY_CONCRETE; // Base corporativa padrÃ£o (SCS/SBS)
     } else if b_type == "church" || b_type == "cathedral" {
-        return SMOOTH_QUARTZ; // Monumental (Catedral de Brasília)
+        return SMOOTH_QUARTZ; // Monumental (Catedral de BrasÃ­lia)
     } else if b_type == "ruins" {
         return MOSSY_COBBLESTONE;
     }

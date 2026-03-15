@@ -1,9 +1,9 @@
 //! BESM-6 Master Control HUD
 //!
-//! Interface de telemetria passiva e controle de geração granular com Viewport.
-//! Opera com Zero-Polling no sistema de arquivos e Renderização Assíncrona em Tela Alternativa.
-//! Implementa Índice Estrito de Estado (Manifesto Binário) garantindo a contenção
-//! de 180GB baseada na leitura real de compressão Zlib dos pacotes .mca.
+//! Interface de telemetria passiva e controle de gerasaoo granular com Viewport.
+//! Opera com Zero-Polling no sistema de arquivos e Renderizaï¿½ï¿½o Assï¿½ncrona em Tela Alternativa.
+//! Implementa ï¿½ndice Estrito de Estado (Manifesto Binï¿½rio) garantindo a contenï¿½ï¿½o
+//! de 180GB baseada na leitura real de compressï¿½o Zlib dos pacotes .mca.
 
 use colored::Colorize;
 use crossterm::{
@@ -24,15 +24,15 @@ use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
 use std::time::Duration;
 
-// ?? Cota Lógica do Projeto: Aborta estritamente a escrita se o motor ultrapassar 180 GB.
+// ?? Cota Lï¿½gica do Projeto: Aborta estritamente a escrita se o motor ultrapassar 180 GB.
 const MAX_PROJECT_QUOTA_BYTES: u64 = 180 * 1024 * 1024 * 1024;
 const MANIFEST_PATH: &str = "./world/besm6_manifest.bin";
 
-// O tamanho máximo do grid visualizado na tela (A Câmera do HUD)
+// O tamanho mï¿½ximo do grid visualizado na tela (A Cï¿½mera do HUD)
 const VIEWPORT_WIDTH: i32 = 18;
 const VIEWPORT_HEIGHT: i32 = 12;
 
-/// Estados físicos de uma região .mca no disco ou na RAM.
+/// Estados fï¿½sicos de uma regiï¿½o .mca no disco ou na RAM.
 #[derive(Clone, Copy, PartialEq)]
 pub enum RegionStatus {
     Processing,
@@ -46,20 +46,20 @@ pub enum RegionStatus {
 pub enum BesmSignal {
     RegionCached(i32, i32),
     RegionProcessing(i32, i32),
-    RegionSealed(i32, i32, u64), // Inclui o tamanho real gravado pela região no disco
-    RegionFailed(i32, i32),      // Gatilho de Corrupção
+    RegionSealed(i32, i32, u64), // Inclui o tamanho real gravado pela regiï¿½o no disco
+    RegionFailed(i32, i32),      // Gatilho de Corrupï¿½ï¿½o
     GenerationComplete,
     Log(String),
 }
 
-/// Sinais do Input do Usuário para a Thread de UI
+/// Sinais do Input do Usuï¿½rio para a Thread de UI
 enum UserInput {
     Command(String),
     MoveCamera(i32, i32), // dx, dz
     Quit,
 }
 
-/// Macro Regiões de Brasília (Bounding Boxes pré-definidas em escala de região absoluta)
+/// Macro Regiï¿½es de Brasï¿½lia (Bounding Boxes prï¿½-definidas em escala de regiï¿½o absoluta)
 pub struct MacroRegion {
     pub name: &'static str,
     pub command: &'static str,
@@ -83,7 +83,7 @@ impl MacroRegion {
                 min_x: -10, max_x: 10, min_z: -8, max_z: 8,
             },
             MacroRegion {
-                name: "Guará",
+                name: "Guarï¿½",
                 command: "-gerar guara",
                 min_x: -15, max_x: -5, min_z: 5, max_z: 12,
             },
@@ -93,7 +93,7 @@ impl MacroRegion {
                 min_x: -25, max_x: -15, min_z: 8, max_z: 18,
             },
             MacroRegion {
-                name: "Águas Claras",
+                name: "ï¿½guas Claras",
                 command: "-gerar aguas_claras",
                 min_x: -20, max_x: -12, min_z: 10, max_z: 16,
             },
@@ -106,8 +106,8 @@ impl MacroRegion {
     }
 }
 
-/// A Memória Compartilhada do HUD (Thread-safe).
-/// Evita que a interface bloqueie esperando o rádio, separando a exibição do estado de processamento.
+/// A Memï¿½ria Compartilhada do HUD (Thread-safe).
+/// Evita que a interface bloqueie esperando o rï¿½dio, separando a exibiï¿½ï¿½o do estado de processamento.
 pub struct SharedDashboardState {
     pub regions_map: HashMap<(i32, i32), RegionStatus>,
     pub accumulated_bytes_written: u64,
@@ -138,7 +138,7 @@ impl SharedDashboardState {
 pub struct MasterControl {
     state: Arc<RwLock<SharedDashboardState>>,
     
-    // A Câmera do HUD (Centro de Visão), manipulada localmente pela Thread da UI
+    // A Cï¿½mera do HUD (Centro de Visï¿½o), manipulada localmente pela Thread da UI
     camera_x: i32,
     camera_z: i32,
     current_typing: String,
@@ -148,7 +148,7 @@ impl MasterControl {
     pub fn new() -> Self {
         let mut control = Self {
             state: Arc::new(RwLock::new(SharedDashboardState::new())),
-            camera_x: 0, // Foca na Praça dos Três Poderes ao iniciar
+            camera_x: 0, // Foca na Praï¿½a dos Trï¿½s Poderes ao iniciar
             camera_z: 0,
             current_typing: String::new(),
         };
@@ -157,8 +157,8 @@ impl MasterControl {
     }
 
     /// ?? BESM-6 TWEAK: Zero-IO Initialization
-    /// Lê a tabela de alocação binária para reconstituir o mapa visual e a contagem
-    /// de bytes instantaneamente, ignorando o sistema de arquivos da máquina virtual.
+    /// Lï¿½ a tabela de alocaï¿½ï¿½o binï¿½ria para reconstituir o mapa visual e a contagem
+    /// de bytes instantaneamente, ignorando o sistema de arquivos da mï¿½quina virtual.
     fn load_manifest_index(&mut self) {
         if !Path::new(MANIFEST_PATH).exists() { return; }
 
@@ -185,8 +185,8 @@ impl MasterControl {
         }
     }
 
-    /// Atualiza o Manifesto no disco após cada selagem. 
-    /// Leve, episódico e disparado silenciosamente.
+    /// Atualiza o Manifesto no disco apï¿½s cada selagem. 
+    /// Leve, episï¿½dico e disparado silenciosamente.
     fn update_manifest_index(state: &SharedDashboardState) {
         if let Ok(mut file) = OpenOptions::new().write(true).create(true).truncate(true).open(MANIFEST_PATH) {
             writeln!(file, "TOTAL_BYTES:{}", state.accumulated_bytes_written).unwrap();
@@ -198,8 +198,8 @@ impl MasterControl {
         }
     }
 
-    /// O Motor Gráfico Assíncrono do HUD (Flicker-Free).
-    /// Lê o estado compartilhado sem bloqueios longos.
+    /// O Motor Grï¿½fico Assï¿½ncrono do HUD (Flicker-Free).
+    /// Lï¿½ o estado compartilhado sem bloqueios longos.
     fn render_dashboard(&mut self) {
         let state = self.state.read().unwrap();
         let mut stdout = io::stdout();
@@ -212,11 +212,11 @@ impl MasterControl {
         
         let bar_color = if usage_percent > 90.0 { "red" } else { "cyan" };
 
-        // Cabeçalho
+        // Cabeï¿½alho
         println!("{}", "=================================================================================".cyan().bold());
-        println!("{} - {}", "[BESM-6]".yellow().bold(), "MASTER CONTROL DASHBOARD (BRASÍLIA DF)".bright_white().bold());
+        println!("{} - {}", "[BESM-6]".yellow().bold(), "MASTER CONTROL DASHBOARD (BRASï¿½LIA DF)".bright_white().bold());
         
-        // Indicador de Cota Absoluta Baseado na Compressão Real Zlib
+        // Indicador de Cota Absoluta Baseado na Compressï¿½o Real Zlib
         let quota_str = format!("PROJECT QUOTA: {:.2} GB / {:.2} GB [{:.1}%]", consumed_gb, max_gb, usage_percent);
         if usage_percent > 90.0 {
             println!("{}", quota_str.red().bold());
@@ -226,16 +226,16 @@ impl MasterControl {
         
         println!("STATUS: {}", state.status_msg.magenta().bold());
         println!("{}", "=================================================================================".cyan().bold());
-        println!("{} Use Setas/WASD para mover a câmera. Ctrl+C para Abortar.", "CONTROLES:".white().bold());
+        println!("{} Use Setas/WASD para mover a cï¿½mera. Ctrl+C para Abortar.", "CONTROLES:".white().bold());
         println!();
 
-        // Limites Locais da Câmera (Viewport Culling)
+        // Limites Locais da Cï¿½mera (Viewport Culling)
         let v_min_x = self.camera_x - VIEWPORT_WIDTH / 2;
         let v_max_x = self.camera_x + VIEWPORT_WIDTH / 2;
         let v_min_z = self.camera_z - VIEWPORT_HEIGHT / 2;
         let v_max_z = self.camera_z + VIEWPORT_HEIGHT / 2;
 
-        // Renderização do Grid com Culling Perfeito (Impede o Wrap da Tela)
+        // Renderizaï¿½ï¿½o do Grid com Culling Perfeito (Impede o Wrap da Tela)
         print!("    ");
         for x in v_min_x..=v_max_x {
             if x % 2 == 0 { print!("{:>3} ", x); } else { print!("    "); }
@@ -247,9 +247,9 @@ impl MasterControl {
             for x in v_min_x..=v_max_x {
                 let status = state.regions_map.get(&(x, z)).copied().unwrap_or(RegionStatus::Empty);
                 match status {
-                    RegionStatus::Sealed => print!("{} ", "[¦¦]".green()),
-                    RegionStatus::Processing => print!("{} ", "[¦¦]".yellow()),
-                    RegionStatus::Cached => print!("{} ", "[¦¦]".blue()),
+                    RegionStatus::Sealed => print!("{} ", "[ï¿½ï¿½]".green()),
+                    RegionStatus::Processing => print!("{} ", "[ï¿½ï¿½]".yellow()),
+                    RegionStatus::Cached => print!("{} ", "[ï¿½ï¿½]".blue()),
                     RegionStatus::Corrupted => print!("{} ", "[XX]".red().bold()),
                     RegionStatus::Empty => print!("{} ", "[  ]".bright_black()),
                 }
@@ -258,11 +258,11 @@ impl MasterControl {
         }
 
         println!("\n{}: {} Selado | {} Varredura Atual | {} Halo Vizinho | {} Falha IO", 
-            "LEGENDA".white().bold(), "[¦¦]".green(), "[¦¦]".yellow(), "[¦¦]".blue(), "[XX]".red().bold()
+            "LEGENDA".white().bold(), "[ï¿½ï¿½]".green(), "[ï¿½ï¿½]".yellow(), "[ï¿½ï¿½]".blue(), "[XX]".red().bold()
         );
         println!("{}", "=================================================================================".cyan().bold());
         
-        // Renderização Isolada de Logs
+        // Renderizaï¿½ï¿½o Isolada de Logs
         println!("{}", "SYSTEM LOGS:".green().bold());
         let log_start = state.log_buffer.len().saturating_sub(6);
         for msg in &state.log_buffer[log_start..] {
@@ -271,7 +271,7 @@ impl MasterControl {
         println!("{}", "=================================================================================".cyan().bold());
         
         if !state.is_generating {
-            println!("{}", "DIRETRIZES TÁTICAS DISPONÍVEIS:".green().bold());
+            println!("{}", "DIRETRIZES Tï¿½TICAS DISPONï¿½VEIS:".green().bold());
             for preset in MacroRegion::get_presets() {
                 println!("  {:<25} -> {}", preset.command.yellow(), preset.name);
             }
@@ -290,10 +290,10 @@ impl MasterControl {
 
         self.render_dashboard();
 
-        // Canal para o usuário digitar coisas sem travar o loop de renderização do motor
+        // Canal para o usuï¿½rio digitar coisas sem travar o loop de renderizaï¿½ï¿½o do motor
         let (input_tx, input_rx) = mpsc::channel::<UserInput>();
         
-        // Thread dedicada apenas a ler o teclado em Raw Mode (Garante Input Tátil Perfeito)
+        // Thread dedicada apenas a ler o teclado em Raw Mode (Garante Input Tï¿½til Perfeito)
         thread::spawn(move || {
             loop {
                 if event::poll(Duration::from_millis(16)).unwrap() {
@@ -318,14 +318,14 @@ impl MasterControl {
             }
         });
 
-        // Loop Central do HUD (Desacoplado do Motor de Geração)
+        // Loop Central do HUD (Desacoplado do Motor de Geraï¿½ï¿½o)
         let mut running = true;
         while running {
-            // Atualização de Câmera e Comandos (Instantâneo)
+            // Atualizaï¿½ï¿½o de Cï¿½mera e Comandos (Instantï¿½neo)
             while let Ok(user_input) = input_rx.try_recv() {
                 match user_input {
                     UserInput::Quit => {
-                        self.state.write().unwrap().push_log("Encerrando conexão terminal...".red().to_string());
+                        self.state.write().unwrap().push_log("Encerrando conexï¿½o terminal...".red().to_string());
                         running = false;
                     }
                     UserInput::MoveCamera(dx, dz) => {
@@ -335,7 +335,7 @@ impl MasterControl {
                     UserInput::Command(cmd) => {
                         let is_gen = self.state.read().unwrap().is_generating;
                         if is_gen {
-                            self.state.write().unwrap().push_log("COMANDO RECUSADO: Motor está selando mapas. Pressione Ctrl+C para abortar duramente.".yellow().to_string());
+                            self.state.write().unwrap().push_log("COMANDO RECUSADO: Motor estï¿½ selando mapas. Pressione Ctrl+C para abortar duramente.".yellow().to_string());
                             continue;
                         }
 
@@ -383,12 +383,12 @@ impl MasterControl {
     }
 
     /// Despacha a varredura atrelando a thread do motor ao SharedDashboardState.
-    /// O motor atualizará os blocos assincronamente e a GUI renderizará no seu próprio clock.
+    /// O motor atualizarï¿½ os blocos assincronamente e a GUI renderizarï¿½ no seu prï¿½prio clock.
     fn dispatch_generation(&mut self, region: MacroRegion) {
         {
             let mut w_state = self.state.write().unwrap();
             w_state.is_generating = true;
-            w_state.status_msg = format!("INICIANDO IGNIÇÃO DO SETOR: {}", region.name.to_uppercase());
+            w_state.status_msg = format!("INICIANDO IGNIï¿½ï¿½O DO SETOR: {}", region.name.to_uppercase());
         }
 
         let shared_state = Arc::clone(&self.state);
@@ -407,10 +407,10 @@ impl MasterControl {
 
             for z in min_z..=max_z {
                 for x in min_x..=max_x {
-                    // Proteção Lógica da Cota de Armazenamento
+                    // Proteï¿½ï¿½o Lï¿½gica da Cota de Armazenamento
                     let current_bytes = shared_state.read().unwrap().accumulated_bytes_written;
                     if current_bytes >= MAX_PROJECT_QUOTA_BYTES {
-                        shared_state.write().unwrap().push_log(format!("{} LIMITE LÓGICO DE 180 GB ATINGIDO. BLOQUEIO INJETADO.", "[HALT]".red().bold()));
+                        shared_state.write().unwrap().push_log(format!("{} LIMITE Lï¿½GICO DE 180 GB ATINGIDO. BLOQUEIO INJETADO.", "[HALT]".red().bold()));
                         abort_flag_worker.store(true, Ordering::SeqCst);
                         return;
                     }
@@ -419,7 +419,7 @@ impl MasterControl {
                         return;
                     }
 
-                    // 1. Sinaliza: Processamento e Correção da Frente de Onda (Halo real)
+                    // 1. Sinaliza: Processamento e Correï¿½ï¿½o da Frente de Onda (Halo real)
                     {
                         let mut state = shared_state.write().unwrap();
                         state.regions_map.insert((x, z), RegionStatus::Processing);
@@ -433,31 +433,31 @@ impl MasterControl {
                     }
 
                     // ============================================
-                    // INTEGRAÇÃO: O CALCULO REAL OCORRERÁ AQUI
+                    // INTEGRAï¿½ï¿½O: O CALCULO REAL OCORRERï¿½ AQUI
                     // ============================================
                     thread::sleep(std::time::Duration::from_millis(50)); 
                     
-                    // 2. Extração Física Pós-Compressão Zlib (Cálculo Empírico de Corrupção)
-                    // Simulação da chamada: let region_path = format!("world/region/r.{}.{}.mca", x, z);
+                    // 2. Extraï¿½ï¿½o Fï¿½sica Pï¿½s-Compressï¿½o Zlib (Cï¿½lculo Empï¿½rico de Corrupï¿½ï¿½o)
+                    // Simulaï¿½ï¿½o da chamada: let region_path = format!("world/region/r.{}.{}.mca", x, z);
                     // let real_file_size = std::fs::metadata(&region_path).map(|m| m.len()).unwrap_or(0);
                     let real_file_size_bytes: u64 = 14_750_000; 
 
-                    // 3. Sinaliza: Selagem Completa, Atualização Atômica de Bytes e Indexação Segura
+                    // 3. Sinaliza: Selagem Completa, Atualizaï¿½ï¿½o Atï¿½mica de Bytes e Indexaï¿½ï¿½o Segura
                     {
                         let mut state = shared_state.write().unwrap();
                         if real_file_size_bytes == 0 {
                             state.regions_map.insert((x, z), RegionStatus::Corrupted);
-                            state.push_log(format!("{} FALHA DE GRAVAÇÃO ZLIB NO QUADRANTE r.{}.{}", "[CORRUPÇÃO]".red().bold(), x, z));
+                            state.push_log(format!("{} FALHA DE GRAVAï¿½ï¿½O ZLIB NO QUADRANTE r.{}.{}", "[CORRUPï¿½ï¿½O]".red().bold(), x, z));
                         } else {
                             state.regions_map.insert((x, z), RegionStatus::Sealed);
                             state.accumulated_bytes_written += real_file_size_bytes;
-                            Self::update_manifest_index(&state); // ?? Gravação física do manifesto pós-selagem
+                            Self::update_manifest_index(&state); // ?? Gravaï¿½ï¿½o fï¿½sica do manifesto pï¿½s-selagem
                         }
                     }
                 }
             }
 
-            // Geração Finalizada
+            // Geraï¿½ï¿½o Finalizada
             let mut state = shared_state.write().unwrap();
             state.push_log(format!("{} MAPA MATERIALIZADO COM SUCESSO NO DISCO.", region_name.to_uppercase().green()));
             state.is_generating = false;

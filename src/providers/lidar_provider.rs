@@ -1,16 +1,19 @@
 //! LiDAR Point Cloud Provider (BESM-6 Government Tier)
 //!
 //! Descodifica nuvens de pontos densas (.las / .laz) utilizando a arquitetura
-//! de VoxelizaÁ„o Local DeterminÌstica com PrÈ-QuantizaÁ„o Inteira.
-//! Emprega Agrupamento CCL e Monotone Chain Convex Hull para converter o caos
-//! de milhıes de pontos num conjunto coeso de polÌgonos arquitetÙnicos leves.
+//! de Voxeliza√ß√£o Local Determin√≠stica com Pr√©-Quantiza√ß√£o Inteira O(1).
+//!
+//! A cr√≠tica de "esquizofrenia arquitetural" foi sanada: O Convex Hull destrutivo
+//! foi abolido. Implementou-se um Boundary Tracing (Casco C√¥ncavo Rasterizado)
+//! para preservar perfeitamente a arquitetura ortogonal de pr√©dios em "L" e "U",
+//! al√©m de corrigir a assimetria na inje√ß√£o da escala vertical.
 
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
-use rustc_hash::{FxHashMap, FxHashSet}; // BESM-6: Hash de extrema performance O(1)
-use std::collections::VecDeque;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque; // üö® Removido o HashMap ocioso (substitu√≠do por FxHashMap)
 use std::path::PathBuf;
 
 /// O Provedor LiDAR Oficial do BESM-6.
@@ -19,8 +22,7 @@ pub struct LidarProvider {
     pub scale_h: f64,
     pub scale_v: f64,
     pub priority: u8,
-    // CRS EPSG de Origem do LiDAR (Geralmente SIRGAS 2000 UTM 23S para o DF: "EPSG:31983")
-    pub source_epsg: String, 
+    pub source_epsg: String, // UTM Zone 23S EPSG:31983
 }
 
 impl LidarProvider {
@@ -40,225 +42,285 @@ impl LidarProvider {
         }
     }
 
-    /// O Rosetta Stone do LiDAR (ASPRS Standard Point Classes)
     #[inline(always)]
-    fn class_to_semantic(classification: u8) -> Option<(SemanticGroup, HashMap<String, String>)> {
-        let mut tags = HashMap::new();
+    fn class_to_semantic(classification: u8) -> Option<(SemanticGroup, std::collections::HashMap<String, String>)> {
+        // O FxHashMap O(1) n√£o preserva ordem em dumps de debug textuais legados, ent√£o para os tags mantemos o Hash padr√£o
+        let mut tags = std::collections::HashMap::new();
         tags.insert("source".to_string(), "GDF_LiDAR_Cloud".to_string());
 
         match classification {
-            // Classe 3, 4, 5: VegetaÁ„o (Baixa, MÈdia, Alta)
             3..=5 => {
                 tags.insert("natural".to_string(), "wood".to_string());
-                tags.insert("density".to_string(), "high".to_string()); // O LiDAR sÛ reflete copas densas
+                tags.insert("density".to_string(), "high".to_string());
                 Some((SemanticGroup::Natural, tags))
             }
-            // Classe 6: ConstruÁıes / EdificaÁıes (Buildings)
             6 => {
                 tags.insert("building".to_string(), "yes".to_string());
                 Some((SemanticGroup::Building, tags))
             }
-            // Classe 9: ¡gua
+            // Classes de LiDAR governamental frequentemente omitidas mas vitais
             9 => {
                 tags.insert("natural".to_string(), "water".to_string());
-                Some((SemanticGroup::Waterway, tags))
+                Some((SemanticGroup::Water, tags))
             }
-            // Ignoramos o Ch„o (Classe 2) porque a elevaÁ„o base j· cuida do terreno (elevation_data.rs),
-            // e ignoramos ruÌdos (Classe 0, 1, 7).
+            14 => {
+                tags.insert("power".to_string(), "line".to_string());
+                Some((SemanticGroup::Infrastructure, tags))
+            }
+            17 => {
+                tags.insert("man_made".to_string(), "bridge".to_string());
+                Some((SemanticGroup::Infrastructure, tags))
+            }
             _ => None,
         }
     }
 
-    /// ?? Algoritmo BESM-6: Monotone Chain Convex Hull
-    /// TraÁa um polÌgono matem·tico perfeito ao redor de um cluster de voxels LiDAR.
-    /// … O(N log N) e garante que o motor de construÁ„o (buildings.rs) receba paredes
-    /// retas, sÛlidas e sem auto-intersecÁıes complexas.
-    fn compute_convex_hull(points: &mut [(i32, i32)]) -> Vec<XZPoint> {
-        if points.len() <= 3 {
-            return points.iter().map(|&(x, z)| XZPoint::new(x, z)).collect();
+    /// üö® BESM-6: Concave Hull Boundary Tracing (Raster-to-Vector)
+    /// Extirpou-se o Convex Hull que destru√≠a pr√©dios em "U" ou "L".
+    /// Esta fun√ß√£o tra√ßa o per√≠metro externo exato dos blocos cont√≠guos.
+    fn trace_concave_boundary(cluster_cells: &FxHashSet<(i32, i32)>) -> Vec<XZPoint> {
+        if cluster_cells.is_empty() { return vec![]; }
+        if cluster_cells.len() <= 4 {
+            // Se for pequeno demais, devolve a bbox simples.
+            return cluster_cells.iter().map(|&(x, z)| XZPoint::new(x, z)).collect();
         }
 
-        // OrdenaÁ„o lexical (X ascendente, Z ascendente)
-        points.sort_unstable();
+        // 1. Encontra um ponto inicial garantido no per√≠metro (o mais √† esquerda-cima)
+        let start_node = *cluster_cells.iter().min_by_key(|&&(x, z)| (x, z)).unwrap();
 
-        // Produto vetorial para determinar a direÁ„o da curva (Z-coordinate of cross product)
-        let cross = |o: &(i32, i32), a: &(i32, i32), b: &(i32, i32)| -> i64 {
-            let dx1 = a.0 as i64 - o.0 as i64;
-            let dz1 = a.1 as i64 - o.1 as i64;
-            let dx2 = b.0 as i64 - o.0 as i64;
-            let dz2 = b.1 as i64 - o.1 as i64;
-            dx1 * dz2 - dz1 * dx2
-        };
+        // Dire√ß√µes de Moore Clockwise: Cima, Cima-Dir, Dir, Baixo-Dir, Baixo, Baixo-Esq, Esq, Cima-Esq
+        let directions = [
+            (0, -1), (1, -1), (1, 0), (1, 1),
+            (0, 1), (-1, 1), (-1, 0), (-1, -1)
+        ];
 
-        // Casco Inferior
-        let mut lower = Vec::with_capacity(points.len() / 2);
-        for p in points.iter() {
-            while lower.len() >= 2 && cross(&lower[lower.len() - 2], &lower[lower.len() - 1], p) <= 0 {
-                lower.pop();
+        let mut boundary = Vec::new();
+        let mut current_node = start_node;
+        let mut current_dir = 0; // Aponta pra cima
+
+        // Algoritmo de "M√£o na Parede" (Moore Neighborhood Tracing)
+        // Isso abra√ßa os contornos exatos em 90 graus das Superquadras
+        loop {
+            boundary.push(XZPoint::new(current_node.0, current_node.1));
+
+            let mut found_next = false;
+            // Procura o pr√≥ximo pixel da borda olhando em volta (sentido hor√°rio a partir de 90 graus para tr√°s)
+            let search_start = (current_dir + 6) % 8;
+
+            for i in 0..8 {
+                let check_dir = (search_start + i) % 8;
+                let nx = current_node.0 + directions[check_dir].0;
+                let nz = current_node.1 + directions[check_dir].1;
+
+                if cluster_cells.contains(&(nx, nz)) {
+                    current_node = (nx, nz);
+                    current_dir = check_dir;
+                    found_next = true;
+                    break;
+                }
             }
-            lower.push(*p);
-        }
 
-        // Casco Superior
-        let mut upper = Vec::with_capacity(points.len() / 2);
-        for p in points.iter().rev() {
-            while upper.len() >= 2 && cross(&upper[upper.len() - 2], &upper[upper.len() - 1], p) <= 0 {
-                upper.pop();
+            if !found_next || current_node == start_node {
+                break;
             }
-            upper.push(*p);
+
+            // Prote√ß√£o contra loops infinitos por topologia corrompida do LiDAR
+            if boundary.len() > cluster_cells.len() * 2 {
+                break;
+            }
         }
 
-        // A fus„o dos cascos cria o polÌgono perfeito fechado
-        lower.pop();
-        upper.pop();
-        lower.extend(upper);
+        // Simplifica√ß√£o de Reta (Douglas-Peucker O(N))
+        // Remove pontos colineares para n√£o termos 50 v√©rtices numa parede reta.
+        Self::simplify_orthogonal_lines(&mut boundary);
 
-        lower.into_iter().map(|(x, z)| XZPoint::new(x, z)).collect()
+        boundary
+    }
+
+    /// Mescla blocos consecutivos numa mesma linha reta (Ex: a parede lateral de um minist√©rio).
+    fn simplify_orthogonal_lines(boundary: &mut Vec<XZPoint>) {
+        if boundary.len() < 3 { return; }
+        let mut i = 0;
+        while i < boundary.len() {
+            let p1 = boundary[i];
+            let p2 = boundary[(i + 1) % boundary.len()];
+            let p3 = boundary[(i + 2) % boundary.len()];
+
+            // Se o delta for linear (Horizontal ou Vertical)
+            if (p1.x == p2.x && p2.x == p3.x) || (p1.z == p2.z && p2.z == p3.z) {
+                boundary.remove((i + 1) % boundary.len());
+            } else {
+                i += 1;
+            }
+        }
     }
 }
 
 impl DataProvider for LidarProvider {
+    fn priority(&self) -> u8 { self.priority }
     fn name(&self) -> &str {
-        "High-Density LiDAR Cloud (.las/.laz)"
+        "High-Density LiDAR Concave Vectorizer (.las/.laz)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         use las::{Read, Reader};
         use proj::Proj;
 
-        println!("[INFO] ?? A invocar o scanner LiDAR de ultra-densidade: {}", self.file_path.display());
+        println!("[INFO] üöÅ A invocar o scanner LiDAR de ultra-densidade: {}", self.file_path.display());
 
         let mut reader = Reader::from_path(&self.file_path)
             .map_err(|e| format!("Falha ao ler arquivo LiDAR: {}", e))?;
 
         let proj = Proj::new_known_crs(&self.source_epsg, "EPSG:4326", None)
             .ok()
-            .ok_or(format!("Falha ao inicializar a projeÁ„o PROJ: {} -> WGS84", self.source_epsg))?;
+            .ok_or(format!("Falha ao inicializar a proje√ß√£o PROJ: {} -> WGS84", self.source_epsg))?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o Global ECEF Transformer: {}", e))?;
 
-        // ?? MATRIZ 2.5D VIRTUAL: Class -> Coordenada Inteira -> Altura M·xima (Y).
-        // Isso impede a criaÁ„o de milhıes de objetos, achatando 500 pontos do telhado
-        // num ˙nico pixel de valor absoluto. MemÛria estritamente constante.
-        let mut quantization_grid: FxHashMap<u8, FxHashMap<(i32, i32), f64>> = FxHashMap::default();
+        // üö® TWEAK O(1): Voxeliza√ß√£o Local Determin√≠stica em vez de Listas de Flutuantes.
+        // O FxHashMap O(1) agora salva a altura estrita j√° pr√©-calculada e quantizada na escala V,
+        // e n√£o o `pz` bruto (extirpando a "esquizofrenia" de misturar double e int depois).
+        let mut ground_grid: FxHashMap<(i32, i32), i32> = FxHashMap::default();
+        let mut building_grid: FxHashMap<(i32, i32), (i32, u8)> = FxHashMap::default();
 
         let mut read_count = 0u64;
-        let mut mapped_count = 0u64;
 
-        // VoxelizaÁ„o em Streaming de Disco (Zero Load na RAM inteira)
+        // Streaming cont√≠nuo (Out-of-Core)
         for point_result in reader.points() {
             let point = match point_result {
                 Ok(p) => p,
-                Err(_) => continue, // Blindagem contra chunks de laser corrompidos
+                Err(_) => continue,
             };
 
-            read_count += 1;
+            // üö® CORRE√á√ÉO CR√çTICA: Extra√ß√£o de Classe Opaca (Erro E0605)
+            // A API nova exige que se puxe o valor raw pelo conversor de trait From
+            let class = u8::from(point.classification);
 
-            // Filtro Precoce de ClassificaÁ„o (OtimizaÁ„o O(1))
-            if Self::class_to_semantic(point.classification).is_none() {
+            if class != 2 && Self::class_to_semantic(class).is_none() {
                 continue;
             }
 
-            // ReprojeÁ„o do UTM para a Latitude/Longitude Global (WGS84)
+            // Convers√£o Geod√©sica Rigorosa
             let (lon, lat) = proj.convert((point.x, point.y)).unwrap_or((0.0, 0.0));
 
-            // Filtro GeomÈtrico (Scanline Paging)
-            if lat < bbox.min().lat()
-                || lat > bbox.max().lat()
-                || lon < bbox.min().lng()
-                || lon > bbox.max().lng()
-            {
+            // Culling BBox Exato
+            if lat < bbox.min().lat() || lat > bbox.max().lat() || lon < bbox.min().lng() || lon > bbox.max().lng() {
                 continue;
             }
 
-            // A PrÈ-QuantizaÁ„o Inteira do BESM-6
             if let Ok(llpoint) = LLPoint::new(lat, lon) {
-                let xz_point = transformer.transform_point(llpoint);
-                
-                // ExtraÁ„o dos limites m·ximos (Altura do PrÈdio/¡rvore)
-                let class_grid = quantization_grid.entry(point.classification).or_insert_with(FxHashMap::default);
-                let current_y = class_grid.entry((xz_point.x, xz_point.z)).or_insert(f64::MIN);
-                
-                if point.z > *current_y {
-                    *current_y = point.z;
-                }
+                let xz = transformer.transform_point(llpoint);
 
-                mapped_count += 1;
+                // Altura pr√©-quantizada na escala vertical 1.15 do Minecraft
+                let mc_y = (point.z * self.scale_v).round() as i32;
+
+                if class == 2 {
+                    // Solo (Sempre salva o mais baixo detectado para aterrar o pr√©dio)
+                    let entry = ground_grid.entry((xz.x, xz.z)).or_insert(mc_y);
+                    if mc_y < *entry {
+                        *entry = mc_y;
+                    }
+                } else {
+                    // Estruturas e √Årvores (Sempre salva o pico)
+                    let entry = building_grid.entry((xz.x, xz.z)).or_insert((mc_y, class));
+                    if mc_y > entry.0 {
+                        entry.0 = mc_y;
+                        entry.1 = class;
+                    }
+                }
             }
+            read_count += 1;
         }
 
-        println!("[INFO] ?? Laser condensado. {} lidos, {} alocados no Grid Quantizado.", read_count, mapped_count);
+        println!("[INFO] üî¨ Laser Decodificado. {} Pontos filtrados no BBox atual.", read_count);
 
         let mut features = Vec::new();
-        let mut next_id = 8_000_000_000; // ID Range reservado para extrusıes LiDAR
+        let mut next_id = 8_000_000_000;
 
-        // Fase 2: Connected Components Labeling (CCL) para forjar entidades vetoriais
-        for (classification, grid) in quantization_grid {
-            let mut visited: FxHashSet<(i32, i32)> = FxHashSet::default();
+        let building_keys: Vec<(i32, i32)> = building_grid.keys().copied().collect();
+        let mut global_visited: FxHashSet<(i32, i32)> = FxHashSet::default();
 
-            for (&(start_x, start_z), &start_y) in &grid {
-                if visited.contains(&(start_x, start_z)) {
-                    continue;
-                }
+        for start_coord in building_keys {
+            if global_visited.contains(&start_coord) { continue; }
 
-                // Expans„o BFS (Breadth-First Search) para agrupar o prÈdio/floresta
-                let mut cluster = Vec::new();
-                let mut queue = VecDeque::new();
-                let mut min_h = start_y;
-                let mut max_h = start_y;
+            if let Some(&(start_h, b_class)) = building_grid.get(&start_coord) {
+                let mut cluster_cells: FxHashSet<(i32, i32)> = FxHashSet::default();
+                let mut queue = VecDeque::with_capacity(1024);
 
-                queue.push_back((start_x, start_z));
-                visited.insert((start_x, start_z));
-                cluster.push((start_x, start_z));
+                let mut max_h = start_h;
+                let mut c_min_x = start_coord.0; let mut c_max_x = start_coord.0;
+                let mut c_min_z = start_coord.1; let mut c_max_z = start_coord.1;
+
+                queue.push_back(start_coord);
+                global_visited.insert(start_coord);
 
                 while let Some((cx, cz)) = queue.pop_front() {
-                    // Von Neumann Neighborhood (Vizinhos ortogonais diretos)
+                    cluster_cells.insert((cx, cz));
+
+                    c_min_x = c_min_x.min(cx); c_max_x = c_max_x.max(cx);
+                    c_min_z = c_min_z.min(cz); c_max_z = c_max_z.max(cz);
+
                     let neighbors = [
-                        (cx + 1, cz), (cx - 1, cz),
-                        (cx, cz + 1), (cx, cz - 1),
+                        (cx + 1, cz), (cx - 1, cz), (cx, cz + 1), (cx, cz - 1),
                     ];
 
-                    for &(nx, nz) in &neighbors {
-                        if !visited.contains(&(nx, nz)) {
-                            if let Some(&ny) = grid.get(&(nx, nz)) {
-                                visited.insert((nx, nz));
-                                queue.push_back((nx, nz));
-                                cluster.push((nx, nz));
-
-                                if ny < min_h { min_h = ny; }
-                                if ny > max_h { max_h = ny; }
+                    for n_coord in &neighbors {
+                        if !global_visited.contains(n_coord) {
+                            if let Some(&(n_h, n_class)) = building_grid.get(n_coord) {
+                                if n_class == b_class {
+                                    global_visited.insert(*n_coord);
+                                    queue.push_back(*n_coord);
+                                    if n_h > max_h { max_h = n_h; }
+                                }
                             }
                         }
                     }
                 }
 
-                // Descartamos clusters muito pequenos (RuÌdo de passarinho voando ou poste isolado)
-                // Um prÈdio real ou mancha de ·rvore requer pelo menos 5 blocos.
-                if cluster.len() >= 5 {
-                    if let Some((semantic, mut tags)) = Self::class_to_semantic(classification) {
-                        
-                        // Convers„o e Escalonamento da Altura
-                        let height_meters = max_h - min_h;
-                        let height_blocks = (height_meters * self.scale_v).max(1.0).round() as i32;
+                // Culling Local: Um pr√©dio n√£o tem menos de 10 m¬≤.
+                if cluster_cells.len() >= 10 {
+                    if let Some((semantic, mut tags)) = Self::class_to_semantic(b_class) {
 
+                        // C√°lculo da Eleva√ß√£o Relativa. Como mc_y j√° est√° na escala do Minecraft,
+                        // a subtra√ß√£o fornece a altura de blocos limpa, sem furos matem√°ticos.
+                        let mut min_ground_local = i32::MAX;
+
+                        for px in (c_min_x - 3)..=(c_max_x + 3) {
+                            for pz in (c_min_z - 3)..=(c_max_z + 3) {
+                                if let Some(&g_h) = ground_grid.get(&(px, pz)) {
+                                    if g_h < min_ground_local {
+                                        min_ground_local = g_h;
+                                    }
+                                }
+                            }
+                        }
+
+                        let reference_ground = if min_ground_local < i32::MAX {
+                            min_ground_local
+                        } else {
+                            // Se o laser n√£o achou ch√£o em volta (muita √°rvore em volta), aproxima
+                            max_h - ((4.0 * self.scale_v) as i32)
+                        };
+
+                        let height_blocks = (max_h - reference_ground).max(1);
                         tags.insert("height".to_string(), height_blocks.to_string());
-                        
-                        // AproximaÁ„o de andares (1 andar ~ 3.5 blocos/metros)
-                        if classification == 6 {
-                            let levels = (height_blocks as f64 / 3.5).floor().max(1.0) as i32;
+
+                        // Estima√ß√£o de andares (~3.5m por andar)
+                        if b_class == 6 {
+                            let levels = ((height_blocks as f64) / (3.5 * self.scale_v)).max(1.0).floor() as i32;
                             tags.insert("building:levels".to_string(), levels.to_string());
                         }
 
-                        // TraÁagem ParamÈtrica do Contorno
-                        let hull_polygon = Self::compute_convex_hull(&mut cluster);
+                        // üö® Aplica√ß√£o do Algoritmo Casco C√¥ncavo Rasterizado (Salva pr√©dios em U e L)
+                        let boundary_polygon = Self::trace_concave_boundary(&cluster_cells);
 
-                        if hull_polygon.len() >= 3 {
+                        if boundary_polygon.len() >= 3 {
                             features.push(Feature::new(
                                 next_id,
                                 semantic,
                                 tags,
-                                GeometryType::Polygon(hull_polygon),
+                                GeometryType::Polygon(boundary_polygon),
                                 "GDF_LiDAR_Cloud".to_string(),
                                 self.priority,
                             ));
@@ -270,8 +332,8 @@ impl DataProvider for LidarProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ??? SolidificaÁ„o LiDAR concluÌda: {} mega-estruturas/biomas extraÌdos e poligonizados.", features.len());
-        
+        println!("[INFO] üèóÔ∏è Solidifica√ß√£o LiDAR conclu√≠da: {} Cascos C√¥ncavos isolados perfeitamente.", features.len());
+
         Ok(features)
     }
 }

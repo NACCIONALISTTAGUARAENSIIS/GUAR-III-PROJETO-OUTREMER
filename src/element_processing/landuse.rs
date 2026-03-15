@@ -7,6 +7,10 @@ use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
 use rand::prelude::IndexedRandom;
+use crate::providers::vegetation_provider::{
+    BIOME_NONE, BIOME_MATA_GALERIA, BIOME_CERRADAO, BIOME_CERRADO_SS,
+    BIOME_CAMPO_SUJO, BIOME_VEREDA, BIOME_CAMPO_RUPESTRE, MASK_APP_SICAR
+};
 use rand::Rng;
 
 pub fn generate_landuse(

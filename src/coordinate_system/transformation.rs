@@ -1,26 +1,26 @@
 use super::cartesian::{XZBBox, XZPoint};
 use super::geographic::{LLBBox, LLPoint};
 
-// Constantes do Elipsoide de Referência WGS84 (Tier Governamental / Geodésico)
+// Constantes do Elipsoide de Referencia WGS84 (Tier Governamental / Geodï¿½sico)
 const WGS84_A: f64 = 6378137.0; // Raio Semi-maior (Equador) em metros
 const WGS84_E2: f64 = 0.00669437999014; // Excentricidade ao quadrado
 
-// ?? BESM-6 TWEAK: MARCO ZERO ABSOLUTO DE BRASÍLIA
-// Este é o mastro da Praça dos Três Poderes. 
-// Isso garante que todos os bairros/cidades-satélites gerados em exportações separadas 
-// convirjam perfeitamente no mesmo mundo sem sobreposições.
+// ?? BESM-6 TWEAK: MARCO ZERO ABSOLUTO DE BRASï¿½LIA
+// Este ï¿½ o mastro da Praï¿½a dos Trï¿½s Poderes.
+// Isso garante que todos os bairros/cidades-satï¿½lites gerados em exportaï¿½ï¿½es separadas
+// convirjam perfeitamente no mesmo mundo sem sobreposiï¿½ï¿½es.
 const DF_ORIGIN_LAT: f64 = -15.8000;
 const DF_ORIGIN_LON: f64 = -47.8600;
 
-/// Transform geographic space to a highly accurate 
-/// local tangential cartesian space (ENU) anchored to the Brasília Absolute Zero.
+/// Transform geographic space to a highly accurate
+/// local tangential cartesian space (ENU) anchored to the Brasï¿½lia Absolute Zero.
 pub struct CoordTransformer {
-    scale: f64, // BESM-6 Tweak: Blocks per meter (sempre 1.33 para Brasília)
-    
-    // Parâmetros ECEF -> ENU (Earth-Centered Earth-Fixed -> East-North-Up)
+    scale: f64, // BESM-6 Tweak: Blocks per meter (sempre 1.33 para Brasï¿½lia)
+
+    // Parï¿½metros ECEF -> ENU (Earth-Centered Earth-Fixed -> East-North-Up)
     origin_ecef: (f64, f64, f64),
-    
-    // Matriz de Rotação Pré-computada ancorada na Praça dos Três Poderes
+
+    // Matriz de Rotaï¿½ï¿½o Prï¿½-computada ancorada na Praï¿½a dos Trï¿½s Poderes
     rot_matrix: [[f64; 3]; 3],
 }
 
@@ -29,7 +29,7 @@ impl CoordTransformer {
         self.scale
     }
 
-    /// Converte Coordenadas Geográficas (Graus) para ECEF (Metros 3D baseados no núcleo da Terra)
+    /// Converte Coordenadas Geogrï¿½ficas (Graus) para ECEF (Metros 3D baseados no nï¿½cleo da Terra)
     #[inline(always)]
     fn ll_to_ecef(lat_rad: f64, lon_rad: f64, h: f64) -> (f64, f64, f64) {
         let n = WGS84_A / (1.0 - WGS84_E2 * lat_rad.sin().powi(2)).sqrt();
@@ -41,25 +41,25 @@ impl CoordTransformer {
 
     pub fn llbbox_to_xzbbox(
         llbbox: &LLBBox,
-        _scale: f64, // Ignorado. Nós forçamos o H_SCALE interno
+        _scale: f64, // Ignorado. Nï¿½s forï¿½amos o H_SCALE interno
     ) -> Result<(CoordTransformer, XZBBox), String> {
         let err_header = "Construct LLBBox to XZBBox transformation failed".to_string();
 
         let len_lat = llbbox.max().lat() - llbbox.min().lat();
         let len_lng = llbbox.max().lng() - llbbox.min().lng();
 
-        // Proteção Crítica contra Divisão por Zero e Coordenadas Singulares
+        // Proteï¿½ï¿½o Crï¿½tica contra Divisï¿½o por Zero e Coordenadas Singulares
         if len_lat <= f64::EPSILON || len_lng <= f64::EPSILON {
             return Err(format!("{}: BBox covers zero area (min and max coordinates are identical).", &err_header));
         }
 
-        // 1. O Centro de Referência é SEMPRE o Marco Zero de Brasília, nunca o centro da BBox.
+        // 1. O Centro de Referï¿½ncia ï¿½ SEMPRE o Marco Zero de Brasï¿½lia, nunca o centro da BBox.
         let origin_lat_rad = DF_ORIGIN_LAT.to_radians();
         let origin_lon_rad = DF_ORIGIN_LON.to_radians();
-        
+
         let origin_ecef = Self::ll_to_ecef(origin_lat_rad, origin_lon_rad, 0.0);
 
-        // 2. Matriz de Rotação fixada no Plano Piloto
+        // 2. Matriz de Rotaï¿½ï¿½o fixada no Plano Piloto
         let sin_lat = origin_lat_rad.sin();
         let cos_lat = origin_lat_rad.cos();
         let sin_lon = origin_lon_rad.sin();
@@ -71,7 +71,7 @@ impl CoordTransformer {
             [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat],
         ];
 
-        // 3. Descobrir os limites do recorte atual (BBox) no espaço Global ENU
+        // 3. Descobrir os limites do recorte atual (BBox) no espaï¿½o Global ENU
         // ?? BESM-6: Amostragem Curva (Evita que o achatamento do ENU corte pontos extremos do arco do elipsoide)
         let mid_lat = (llbbox.min().lat() + llbbox.max().lat()) / 2.0;
         let mid_lon = (llbbox.min().lng() + llbbox.max().lng()) / 2.0;
@@ -90,12 +90,12 @@ impl CoordTransformer {
 
         let mut min_enu_x = f64::MAX;
         let mut max_enu_x = f64::MIN;
-        let mut min_enu_n = f64::MAX; 
+        let mut min_enu_n = f64::MAX;
         let mut max_enu_n = f64::MIN;
 
         for (lat, lon) in &control_points {
             let ecef = Self::ll_to_ecef(lat.to_radians(), lon.to_radians(), 0.0);
-            
+
             let dx = ecef.0 - origin_ecef.0;
             let dy = ecef.1 - origin_ecef.1;
             let dz = ecef.2 - origin_ecef.2;
@@ -112,18 +112,18 @@ impl CoordTransformer {
         // ?? BESM-6 Tweak: A Escala Horizontal (1.33) Governamental Global
         let h_scale = 1.33;
 
-        // O XZ_BBox é instanciado em coordenadas globais absolutas, não relativas ao tamanho do corte.
+        // O XZ_BBox ï¿½ instanciado em coordenadas globais absolutas, nï¿½o relativas ao tamanho do corte.
         let min_mc_x = (min_enu_x * h_scale).round() as i32;
         let max_mc_x = (max_enu_x * h_scale).round() as i32;
-        
-        // Z é invertido no Minecraft (Norte é -Z, Sul é +Z)
-        let min_mc_z = (-max_enu_n * h_scale).round() as i32; 
+
+        // Z ï¿½ invertido no Minecraft (Norte ï¿½ -Z, Sul ï¿½ +Z)
+        let min_mc_z = (-max_enu_n * h_scale).round() as i32;
         let max_mc_z = (-min_enu_n * h_scale).round() as i32;
 
-        // ?? BESM-6 Tweak: Construtor Estrutural Absoluto 
-        // Substituímos o duplo construtor instável (`rect_from_xz_lengths` + `new`)
-        // por uma alocação direta. Isso evita que validações internas do Arnis (como 
-        // impedir que um bbox tenha offset global negativo) quebrem a compilação.
+        // ?? BESM-6 Tweak: Construtor Estrutural Absoluto
+        // Substituï¿½mos o duplo construtor instï¿½vel (`rect_from_xz_lengths` + `new`)
+        // por uma alocaï¿½ï¿½o direta. Isso evita que validaï¿½ï¿½es internas do Arnis (como
+        // impedir que um bbox tenha offset global negativo) quebrem a compilaï¿½ï¿½o.
         let final_bbox = XZBBox::new(min_mc_x, max_mc_x, min_mc_z, max_mc_z);
 
         Ok((
@@ -147,9 +147,9 @@ impl CoordTransformer {
         let enu_x = self.rot_matrix[0][0] * dx + self.rot_matrix[0][1] * dy + self.rot_matrix[0][2] * dz;
         let enu_n = self.rot_matrix[1][0] * dx + self.rot_matrix[1][1] * dy + self.rot_matrix[1][2] * dz;
 
-        // Distância direta do Marco Zero x Escala (Z invertido para bater com o Norte=Z negativo do MC)
+        // Distï¿½ncia direta do Marco Zero x Escala (Z invertido para bater com o Norte=Z negativo do MC)
         let final_x = enu_x * self.scale;
-        let final_z = -enu_n * self.scale; 
+        let final_z = -enu_n * self.scale;
 
         XZPoint::new(final_x.round() as i32, final_z.round() as i32)
     }

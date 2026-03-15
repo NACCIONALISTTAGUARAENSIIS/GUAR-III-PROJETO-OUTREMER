@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 /// Provedor de Dados Governamentais via GeoJSON.
-/// LÍ arquivos locais .geojson, aplica o Rosetta Stone para traduzir atributos do GDF para OSM,
+/// L√™ arquivos locais .geojson, aplica o Rosetta Stone para traduzir atributos do GDF para OSM,
 /// e projeta as geometrias (WGS84) para a malha Voxel do Minecraft com escala controlada.
 pub struct GeoJsonProvider {
     pub file_path: PathBuf,
@@ -38,7 +38,7 @@ impl GeoJsonProvider {
                     Value::String(s) => s.trim().to_string(),
                     Value::Number(n) => n.to_string(),
                     Value::Bool(b) => b.to_string(),
-                    _ => continue, // Ignora arrays ou objetos aninhados (n„o padr„o para atributos simples)
+                    _ => continue, // Ignora arrays ou objetos aninhados (n√£o padr√£o para atributos simples)
                 };
 
                 if val_str.is_empty() {
@@ -47,7 +47,7 @@ impl GeoJsonProvider {
 
                 let col = key.to_uppercase();
 
-                // Mapeamento HeurÌstico (Baseado no padr„o SEDUH/SITURB/CODEPLAN)
+                // Mapeamento Heur√≠stico (Baseado no padr√£o SEDUH/SITURB/CODEPLAN)
                 match col.as_str() {
                     "PAVIMENTOS" | "GABARITO" | "N_PAV" | "LEVELS" => {
                         tags.insert("building:levels".to_string(), val_str);
@@ -83,14 +83,14 @@ impl GeoJsonProvider {
                         tags.insert("natural".to_string(), val_str.to_lowercase());
                     }
                     _ => {
-                        // MantÈm atributos crus para expans„o futura
+                        // Mant√©m atributos crus para expans√£o futura
                         tags.insert(format!("gdf:{}", col.to_lowercase()), val_str);
                     }
                 }
             }
         }
 
-        // Fallback: Se n„o identificou nada, assume prÈdio (˙til para footprints brutos da Codeplan)
+        // Fallback: Se n√£o identificou nada, assume pr√©dio (√∫til para footprints brutos da Codeplan)
         if !tags.contains_key("building") && !tags.contains_key("highway") && !tags.contains_key("natural") {
             tags.insert("building".to_string(), "yes".to_string());
         }
@@ -99,14 +99,14 @@ impl GeoJsonProvider {
         tags
     }
 
-    /// Processa uma ˙nica coordenada GeoJSON `[lon, lat]`
+    /// Processa uma √∫nica coordenada GeoJSON `[lon, lat]`
     #[inline(always)]
     fn parse_coord(coord: &Value, bbox: &LLBBox, transformer: &CoordTransformer, is_completely_outside: &mut bool) -> Option<XZPoint> {
         if let Some(arr) = coord.as_array() {
             if arr.len() >= 2 {
                 let lon = arr[0].as_f64()?;
                 let lat = arr[1].as_f64()?;
-                
+
                 if let Ok(llpoint) = LLPoint::new(lat, lon) {
                     if bbox.contains(&llpoint) {
                         *is_completely_outside = false;
@@ -120,13 +120,14 @@ impl GeoJsonProvider {
 }
 
 impl DataProvider for GeoJsonProvider {
+    fn priority(&self) -> u8 { self.priority }
     fn name(&self) -> &str {
         "GDF GeoJSON (Geoportal / OpenData)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] Carregando e parseando GeoJSON na RAM: {}", self.file_path.display());
-        
+        println!("[INFO] üåê Carregando e parseando GeoJSON na RAM: {}", self.file_path.display());
+
         let json_data = fs::read_to_string(&self.file_path)
             .map_err(|e| format!("Falha ao ler o arquivo GeoJSON {}: {}", self.file_path.display(), e))?;
 
@@ -135,15 +136,15 @@ impl DataProvider for GeoJsonProvider {
 
         let feature_array = geojson.get("features")
             .and_then(|f| f.as_array())
-            .ok_or("GeoJSON inv·lido: objeto principal n„o contÈm array 'features'")?;
+            .ok_or("GeoJSON inv√°lido: objeto principal n√£o cont√©m array 'features'")?;
 
-        // Inicializa o Transformador de ProjeÁ„o Mestre do Arnis (ECEF / ENU)
-        // GeoJSON nativamente usa EPSG:4326, ent„o n„o precisamos do proj-sys aqui, sÛ alinhar para a BBox XZ.
+        // Inicializa o Transformador de Proje√ß√£o Mestre do Arnis (ECEF / ENU)
+        // GeoJSON nativamente usa EPSG:4326, ent√£o n√£o precisamos do proj-sys aqui, s√≥ alinhar para a BBox XZ.
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
 
         let mut features = Vec::with_capacity(feature_array.len());
-        let mut next_id = 3_000_000_000; // Offset dedicado para GeoJSON para evitar colis„o (Shapefile=1BI, WFS=2BI)
+        let mut next_id = 3_000_000_000; // Offset dedicado para GeoJSON para evitar colis√£o (Shapefile=1BI, WFS=2BI)
 
         for feat in feature_array {
             let properties = feat.get("properties").unwrap_or(&Value::Null);
@@ -154,7 +155,10 @@ impl DataProvider for GeoJsonProvider {
             }
 
             let geom_obj = geometry_json.unwrap();
+
+            // üö® CORRE√á√ÉO CR√çTICA: Extra√ß√£o pura de valor JSON para str sem tipagem for√ßada em infer√™ncia de closure.
             let geom_type = geom_obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
             let coords = geom_obj.get("coordinates").unwrap_or(&Value::Null);
 
             let tags = Self::translate_attributes(properties);
@@ -196,20 +200,20 @@ impl DataProvider for GeoJsonProvider {
                                     outer.push(pt);
                                 }
                             }
-                            
-                            // Garante fechamento do polÌgono
+
+                            // Garante fechamento do pol√≠gono
                             if outer.len() > 2 && outer.first() != outer.last() {
                                 let first = outer[0];
                                 outer.push(first);
                             }
-                            
+
                             if outer.len() < 4 { continue; }
                             GeometryType::Polygon(outer)
                         } else { continue; }
                     } else { continue; }
                 }
                 "MultiPolygon" => {
-                    // Pega o primeiro polÌgono, primeiro anel externo para n„o complexificar a engine voxel
+                    // Pega o primeiro pol√≠gono, primeiro anel externo para n√£o complexificar a engine voxel
                     if let Some(multipoly) = coords.as_array() {
                         if let Some(first_poly) = multipoly.first().and_then(|p| p.as_array()) {
                             if let Some(exterior_ring) = first_poly.first().and_then(|r| r.as_array()) {
@@ -219,22 +223,22 @@ impl DataProvider for GeoJsonProvider {
                                         outer.push(pt);
                                     }
                                 }
-                                
+
                                 if outer.len() > 2 && outer.first() != outer.last() {
                                     let first = outer[0];
                                     outer.push(first);
                                 }
-                                
+
                                 if outer.len() < 4 { continue; }
                                 GeometryType::Polygon(outer)
                             } else { continue; }
                         } else { continue; }
                     } else { continue; }
                 }
-                _ => continue, // FeatureCollection ou GeometryCollection aninhadas s„o ignoradas
+                _ => continue, // FeatureCollection ou GeometryCollection aninhadas s√£o ignoradas
             };
 
-            // Early-Z Culling Geogr·fico: N„o importa a feature na malha se ela estiver no Rio de Janeiro
+            // Early-Z Culling Geogr√°fico: N√£o importa a feature na malha se ela estiver no Rio de Janeiro
             if is_completely_outside {
                 continue;
             }
@@ -253,7 +257,7 @@ impl DataProvider for GeoJsonProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ? GeoJSON processado com sucesso: {} geometrias extraÌdas.", features.len());
+        println!("[INFO] ‚úÖ GeoJSON processado com sucesso: {} geometrias extra√≠das.", features.len());
         Ok(features)
     }
 }

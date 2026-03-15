@@ -1,9 +1,9 @@
 //! DEM (Digital Elevation Model) Provider (BESM-6 Government Tier)
 //!
-//! Especializado na leitura de dados matriciais de elevação do terreno nu (Bare Earth),
+//! Especializado na leitura de dados matriciais de elevaï¿½ï¿½o do terreno nu (Bare Earth),
 //! suportando formatos como GeoTIFF (Copernicus DEM, ALOS AW3D, SRTM, ANADEM).
-//! Emprega a Voxelização Local Determinística com Pré-Quantização Inteira, mapeando
-//! diretamente as cotas geográficas para o Grid Global Absoluto em O(1).
+//! Emprega a VoxelizaÃ§Ã£o Local Determinï¿½stica com Prï¿½-Quantizaï¿½ï¿½o Inteira, mapeando
+//! diretamente as cotas geogrï¿½ficas para o Grid Global Absoluto em O(1).
 
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
@@ -12,8 +12,8 @@ use std::fs::File;
 use std::path::PathBuf;
 use tiff::decoder::{Decoder, DecodingResult};
 
-/// Provedor de Modelos Digitais de Elevação (DEM).
-/// Diferente dos provedores vetoriais (OSM/CityGML), o DEM não gera Features (Polígonos),
+/// Provedor de Modelos Digitais de Elevaï¿½ï¿½o (DEM).
+/// Diferente dos provedores vetoriais (OSM/CityGML), o DEM nï¿½o gera Features (Polï¿½gonos),
 /// mas sim um mapa de altura (Heightmap) absoluto e quantizado para ancoragem do motor Scanline.
 pub struct DemProvider {
     pub file_path: PathBuf,
@@ -52,7 +52,7 @@ impl DemProvider {
         }
     }
 
-    /// Extrai a matriz quantizada de elevação para uma Bounding Box específica.
+    /// Extrai a matriz quantizada de elevaï¿½ï¿½o para uma Bounding Box especï¿½fica.
     /// Retorna um FxHashMap mapeando a coordenada absoluta (X, Z) para a altura Y (Voxelizada),
     /// impedindo o colapso da RAM com arrays 2D gigantes e vazios.
     pub fn fetch_quantized_elevation(
@@ -71,17 +71,17 @@ impl DemProvider {
             .map_err(|e| format!("Falha ao inicializar descodificador DEM GeoTIFF: {}", e))?;
 
         let (width, height) = decoder.dimensions()
-            .map_err(|e| format!("Falha ao ler dimensões do DEM GeoTIFF: {}", e))?;
+            .map_err(|e| format!("Falha ao ler dimensï¿½es do DEM GeoTIFF: {}", e))?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o Global ECEF Transformer: {}", e))?;
 
-        // ?? BESM-6: Matriz Virtual de Alta Performance (Prevenção OOM)
+        // ?? BESM-6: Matriz Virtual de Alta Performance (Prevenï¿½ï¿½o OOM)
         let mut quantization_grid: FxHashMap<(i32, i32), i32> = FxHashMap::default();
         let mut read_count = 0u64;
         let mut mapped_count = 0u64;
 
-        // Limites de Culling (Apenas processa a caixa geográfica estrita do motor)
+        // Limites de Culling (Apenas processa a caixa geogrï¿½fica estrita do motor)
         let start_x = ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees_x).max(0.0) as u32;
         let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees_x).min(width as f64) as u32;
         
@@ -89,13 +89,13 @@ impl DemProvider {
         let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees_y).min(height as f64) as u32;
 
         if start_x >= width || start_y >= height || start_x >= end_x || start_y >= end_y {
-            println!("[AVISO] O DEM GeoTIFF está fora da Bounding Box atual. Retornando grid de elevação vazio.");
+            println!("[AVISO] O DEM GeoTIFF estï¿½ fora da Bounding Box atual. Retornando grid de elevaï¿½ï¿½o vazio.");
             return Ok(quantization_grid);
         }
 
         match decoder.read_image() {
             Ok(DecodingResult::F32(image_data)) => {
-                // Suporte para DEMs de precisão em ponto flutuante 32-bit (Copernicus DEM, ALOS)
+                // Suporte para DEMs de precisï¿½o em ponto flutuante 32-bit (Copernicus DEM, ALOS)
                 for y in start_y..end_y {
                     for x in start_x..end_x {
                         read_count += 1;
@@ -114,10 +114,10 @@ impl DemProvider {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
                                 
-                                // Voxelização Local Determinística com Pré-Quantização Inteira
+                                // Voxelizaï¿½ï¿½o Local Determinï¿½stica com Prï¿½-Quantizaï¿½ï¿½o Inteira
                                 let voxel_y = self.ground_level_offset + (elevation as f64 * self.scale_v).round() as i32;
                                 
-                                // O(1) Hash Map: Sobrescreve mantendo sempre o pico geodésico daquele bloco de 1x1m
+                                // O(1) Hash Map: Sobrescreve mantendo sempre o pico geodï¿½sico daquele bloco de 1x1m
                                 let entry = quantization_grid.entry((xz_point.x, xz_point.z)).or_insert(voxel_y);
                                 if voxel_y > *entry {
                                     *entry = voxel_y;
@@ -129,7 +129,7 @@ impl DemProvider {
                 }
             }
             Ok(DecodingResult::U16(image_data)) => {
-                // Suporte para DEMs em 16-bit Unsigned (comum em variações do ALOS AW3D)
+                // Suporte para DEMs em 16-bit Unsigned (comum em variaï¿½ï¿½es do ALOS AW3D)
                 for y in start_y..end_y {
                     for x in start_x..end_x {
                         read_count += 1;
@@ -159,7 +159,7 @@ impl DemProvider {
                 }
             }
             Ok(DecodingResult::I16(image_data)) => {
-                // Suporte para DEMs em 16-bit Signed (Padrão ouro do SRTM)
+                // Suporte para DEMs em 16-bit Signed (Padrï¿½o ouro do SRTM)
                 for y in start_y..end_y {
                     for x in start_x..end_x {
                         read_count += 1;
@@ -189,11 +189,11 @@ impl DemProvider {
                 }
             }
             _ => {
-                return Err("Formato de codificação do DEM GeoTIFF não suportado. Esperado matriz F32, I16 ou U16.".to_string());
+                return Err("Formato de codificaï¿½ï¿½o do DEM GeoTIFF nï¿½o suportado. Esperado matriz F32, I16 ou U16.".to_string());
             }
         }
 
-        // Limpeza de capacidade excedente antes de devolver à thread principal
+        // Limpeza de capacidade excedente antes de devolver ï¿½ thread principal
         quantization_grid.shrink_to_fit();
         
         println!(

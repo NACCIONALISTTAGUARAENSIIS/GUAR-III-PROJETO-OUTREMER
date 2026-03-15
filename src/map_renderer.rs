@@ -2,7 +2,7 @@
 //
 // Generates a PNG image of the generated world,
 // showing the topmost visible block at each position.
-// ?? BESM-6 TWEAK: Proteção Dinâmica de Memória (Downsampling) contra Mapas Governamentais Massivos.
+// ?? BESM-6 TWEAK: Proteï¿½ï¿½o Dinï¿½mica de Memï¿½ria (Downsampling) contra Mapas Governamentais Massivos.
 
 use fastanvil::Region;
 use fastnbt::{from_bytes, Value};
@@ -14,7 +14,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Mutex;
 
-/// Limite rígido da dimensão máxima da imagem na RAM (Largura ou Altura)
+/// Limite regido da dimensï¿½o mï¿½xima da imagem na RAM (Largura ou Altura)
 /// 32768 x 32768 x 3 bytes (RGB) = ~3 Gigabytes de RAM apenas para a foto.
 const MAX_IMAGE_DIMENSION: u32 = 32768;
 
@@ -37,8 +37,8 @@ pub fn render_world_map(
         return Err("Invalid world bounds".to_string());
     }
 
-    // ?? BESM-6 Tweak: Auto-Downsampling (Proteção contra OOM do O.S.)
-    // Se a imagem passar de ~3GB na RAM (o que é trivial no DF inteiro), reduzimos a escala.
+    // ?? BESM-6 Tweak: Auto-Downsampling (Proteï¿½ï¿½o contra OOM do O.S.)
+    // Se a imagem passar de ~3GB na RAM (o que ï¿½ trivial no DF inteiro), reduzimos a escala.
     let mut downsample_factor = 1;
     while raw_width / downsample_factor > MAX_IMAGE_DIMENSION || raw_height / downsample_factor > MAX_IMAGE_DIMENSION {
         downsample_factor *= 2;
@@ -47,7 +47,7 @@ pub fn render_world_map(
     let width = raw_width / downsample_factor;
     let height = raw_height / downsample_factor;
 
-    println!("[INFO] ?? Iniciando renderização do minimapa: {}x{} pixels (Downsample: {}x)", width, height, downsample_factor);
+    println!("[INFO] ?? Iniciando renderizaï¿½ï¿½o do minimapa: {}x{} pixels (Downsample: {}x)", width, height, downsample_factor);
 
     // Use Mutex for thread-safe image access
     let img = Mutex::new(RgbImage::from_pixel(width, height, Rgb([255, 255, 255])));
@@ -91,7 +91,7 @@ pub fn render_world_map(
                 if !pixels.is_empty() {
                     let mut img_guard = img.lock().unwrap();
                     for (x, z, color) in pixels {
-                        // Verifica limites para não crachar a matriz do `image` crate
+                        // Verifica limites para nï¿½o crachar a matriz do `image` crate
                         if x < img_guard.width() && z < img_guard.height() {
                             img_guard.put_pixel(x, z, color);
                         }
@@ -103,7 +103,7 @@ pub fn render_world_map(
 
     // Save the image
     let output_path = world_dir.join("arnis_world_map.png");
-    println!("[INFO] ?? Salvando preview cartográfico em: {}", output_path.display());
+    println!("[INFO] ?? Salvando preview cartogrï¿½fico em: {}", output_path.display());
     
     img.into_inner()
         .unwrap()

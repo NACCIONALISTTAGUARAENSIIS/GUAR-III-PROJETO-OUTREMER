@@ -465,8 +465,8 @@ fn generate_church_layout(
     }
 
     if is_catedral {
-        for dx in -3..=3 {
-            for dz in -3..=3 {
+        for dx in -3i32..=3i32 {
+            for dz in -3i32..=3i32 {
                 let dist = dx*dx + dz*dz;
                 if dist <= 9 {
                     editor.set_block_absolute(SMOOTH_QUARTZ, cx + dx, y + offset, cz + dz, None, None);
@@ -801,8 +801,8 @@ fn generate_residential_layout(
         editor.set_block_absolute(OAK_DOOR, min_x + 4, y + 1 + offset, min_z + 3, None, None);
         editor.set_block_absolute(OAK_DOOR, min_x + 4, y + 1 + offset, max_z - 3, None, None);
 
-        for dx in 1..=2 {
-            for dz in 1..=3 {
+        for dx in 1i32..=2i32 {
+            for dz in 1i32..=3i32 {
                 for h in y..forro_y {
                     let is_wall = dx == 2 || dz == 3 || dz == 1;
                     let block = if is_wall { WHITE_CONCRETE } else { AIR };
@@ -824,8 +824,8 @@ fn generate_residential_layout(
         editor.set_block_absolute(AIR, meio_x - 1, y + 1 + offset, meio_z, None, None);
         editor.set_block_absolute(AIR, meio_x - 1, y + 2 + offset, meio_z, None, None);
 
-        for dx in 0..=2 {
-            for dz in 0..=3 {
+        for dx in 0i32..=2i32 {
+            for dz in 0i32..=3i32 {
                 for h in y..forro_y {
                     let is_wall = dx == 0 || dx == 2 || dz == 3;
                     if is_wall {
@@ -860,7 +860,7 @@ fn generate_residential_layout(
                 editor.set_block_absolute(WHITE_CONCRETE, x, h + offset, meio_z, None, None);
             }
         }
-        for dx in -1..=1 {
+        for dx in -1i32..=1i32 {
             editor.set_block_absolute(AIR, meio_x + dx, y + 1 + offset, meio_z, None, None);
             editor.set_block_absolute(AIR, meio_x + dx, y + 2 + offset, meio_z, None, None);
         }
@@ -868,8 +868,8 @@ fn generate_residential_layout(
         let suite_x = min_x + terco * 2 + 1;
         suite_z_bound = max_z - 4;
 
-        for dx in 0..=3 {
-            for dz in 0..=3 {
+        for dx in 0i32..=3i32 {
+            for dz in 0i32..=3i32 {
                 for h in y..forro_y {
                     let is_wall = dx == 0 || dx == 3 || dz == 0 || dz == 3;
                     if is_wall {
@@ -886,8 +886,8 @@ fn generate_residential_layout(
 
     if bairro == Bairro::Guara || bairro == Bairro::Samambaia {
         if prof_m > 7.0 {
-            for dx in 0..=4 {
-                for dz in 0..=4 {
+            for dx in 0i32..=4i32 {
+                for dz in 0i32..=4i32 {
                     if kitchen_z + dz < suite_z_bound {
                         for h in y..forro_y {
                             let is_wall = dx == 0 || dz == 4;
@@ -903,7 +903,7 @@ fn generate_residential_layout(
             editor.set_block_absolute(FURNACE, max_x - 2, y + 1 + offset, kitchen_z + 2, None, None);
         }
     } else {
-        for dz in 1..=3 {
+        for dz in 1i32..=3i32 {
             editor.set_block_absolute(SMOOTH_QUARTZ, kitchen_x_start, y + 1 + offset, kitchen_z + dz, None, None);
         }
         editor.set_block_absolute(FURNACE, max_x - 2, y + 1 + offset, kitchen_z + 1, None, None);
@@ -924,8 +924,8 @@ fn generate_residential_layout(
         let patamar_y = y + (alt_andar / 2);
 
         if escada_x + 3 < max_x && escada_z + 5 < max_z {
-            for dx in 0..=2 {
-                for dz in 0..=5 {
+            for dx in 0i32..=2i32 {
+                for dz in 0i32..=5i32 {
                     for h in forro_y..=(ceiling + 1) {
                         editor.set_block_absolute(AIR, escada_x + dx, h + offset, escada_z + dz, None, None);
                     }
@@ -947,8 +947,8 @@ fn generate_residential_layout(
             }
 
             if escada_z + degraus_lance1 + 1 < max_z {
-                for dx in 0..=1 {
-                    for dz in 0..=1 {
+                for dx in 0i32..=1i32 {
+                    for dz in 0i32..=1i32 {
                         editor.set_block_absolute(SMOOTH_STONE_SLAB, escada_x + dx, patamar_y + offset, escada_z + degraus_lance1 + dz, None, None);
                     }
                 }

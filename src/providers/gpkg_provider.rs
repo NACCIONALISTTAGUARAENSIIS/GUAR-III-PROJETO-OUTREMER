@@ -11,9 +11,9 @@ use geozero::ToGeo;
 use geo::Geometry;
 use proj::Proj;
 
-/// Provedor de Banco de Dados GeoPackage (OGC Padrão Moderno).
-/// Varre todas as tabelas espaciais do DB SQLite, decodifica a geometria binária WKB proprietária,
-/// reprojeta de qualquer EPSG dinâmico para WGS84 e injeta as Features Voxelizadas no motor.
+/// Provedor de Banco de Dados GeoPackage (OGC Padrï¿½o Moderno).
+/// Varre todas as tabelas espaciais do DB SQLite, decodifica a geometria binï¿½ria WKB proprietï¿½ria,
+/// reprojeta de qualquer EPSG dinamico para WGS84 e injeta as Features Voxelizadas no motor.
 pub struct GpkgProvider {
     pub file_path: PathBuf,
     pub scale_h: f64,
@@ -43,7 +43,7 @@ impl GpkgProvider {
 
             let col = key.to_uppercase();
 
-            // Mapeamento Heurístico (Baseado no padrão SEDUH/SITURB do DF / IBGE)
+            // Mapeamento Heurï¿½stico (Baseado no padrï¿½o SEDUH/SITURB do DF / IBGE)
             match col.as_str() {
                 "PAVIMENTOS" | "GABARITO" | "N_PAV" | "LEVELS" => {
                     tags.insert("building:levels".to_string(), val_str.clone());
@@ -79,7 +79,7 @@ impl GpkgProvider {
                     tags.insert("natural".to_string(), val_str.to_lowercase());
                 }
                 _ => {
-                    // Mantém atributos crus para expansão ou telemetria
+                    // Mantï¿½m atributos crus para expansï¿½o ou telemetria
                     tags.insert(format!("gdf:{}", col.to_lowercase()), val_str.clone());
                 }
             }
@@ -95,17 +95,18 @@ impl GpkgProvider {
 }
 
 impl DataProvider for GpkgProvider {
+    fn priority(&self) -> u8 { self.priority }
     fn name(&self) -> &str {
         "GDF GeoPackage (SQLite Spatial DB)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ??? Abrindo conexão SQLite/GeoPackage em: {}", self.file_path.display());
+        println!("[INFO] ??? Abrindo conexï¿½o SQLite/GeoPackage em: {}", self.file_path.display());
 
         let conn = Connection::open(&self.file_path)
             .map_err(|e| format!("Falha ao abrir GeoPackage SQLite: {}", e))?;
 
-        // 1. Interrogar o índice mestre para encontrar todas as tabelas e colunas com Geometria
+        // 1. Interrogar o ï¿½ndice mestre para encontrar todas as tabelas e colunas com Geometria
         let mut stmt_geom_cols = conn.prepare("SELECT table_name, column_name, srs_id FROM gpkg_geometry_columns")
             .map_err(|e| format!("Falha ao ler gpkg_geometry_columns: {}", e))?;
         
@@ -117,27 +118,27 @@ impl DataProvider for GpkgProvider {
             ))
         }).map_err(|e| format!("Erro de query SQLite: {}", e))?;
 
-        // Mestre de Transformação para a Malha Voxel Minecraft
+        // Mestre de Transformaï¿½ï¿½o para a Malha Voxel Minecraft
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
 
-        // Sistema de cache para projeções EPSG dinâmicas
+        // Sistema de cache para projeï¿½ï¿½es EPSG dinï¿½micas
         let mut proj_cache: HashMap<u32, Proj> = HashMap::new();
 
         let mut features = Vec::new();
-        let mut next_id = 5_000_000_000; // Offset dedicado (Evita colisão com Shapefile e OSM)
+        let mut next_id = 5_000_000_000; // Offset dedicado (Evita colisï¿½o com Shapefile e OSM)
 
         for table_res in tables_iter {
             if let Ok((table_name, geom_column, srs_id)) = table_res {
                 println!("[INFO] Inspecionando tabela espacial: {} (EPSG:{})", table_name, srs_id);
 
-                // Prepara a projeção geográfica específica desta tabela
+                // Prepara a projeï¿½ï¿½o geogrï¿½fica especï¿½fica desta tabela
                 if !proj_cache.contains_key(&srs_id) && srs_id != 4326 {
                     let proj_str = format!("EPSG:{}", srs_id);
                     if let Ok(proj) = Proj::new_known_crs(&proj_str, "EPSG:4326", None) {
                         proj_cache.insert(srs_id, proj);
                     } else {
-                        eprintln!("[AVISO] EPSG:{} não suportado. Pulando tabela {}.", srs_id, table_name);
+                        eprintln!("[AVISO] EPSG:{} nï¿½o suportado. Pulando tabela {}.", srs_id, table_name);
                         continue;
                     }
                 }
@@ -162,13 +163,13 @@ impl DataProvider for GpkgProvider {
                 };
 
                 while let Ok(Some(row)) = rows.next() {
-                    // Tenta puxar o binário (BLOB) da geometria
+                    // Tenta puxar o binï¿½rio (BLOB) da geometria
                     let geom_ref = match row.get_ref(geom_idx) {
                         Ok(ValueRef::Blob(b)) => b,
                         _ => continue,
                     };
 
-                    // Decodifica a formatação Binária GPKG -> geo::Geometry
+                    // Decodifica a formataï¿½ï¿½o Binï¿½ria GPKG -> geo::Geometry
                     let geo_geom = match GpkgWkb(geom_ref.to_vec()).to_geo() {
                         Ok(g) => g,
                         Err(_) => continue,
@@ -198,13 +199,13 @@ impl DataProvider for GpkgProvider {
                         else { SemanticGroup::Other }
                     });
 
-                    // 3. Helper de Projeção Interna e Early-Z Culling
+                    // 3. Helper de Projeï¿½ï¿½o Interna e Early-Z Culling
                     let proj_ref = proj_cache.get(&srs_id);
                     let mut is_completely_outside = true;
 
                     let mut process_coord = |x: f64, y: f64| -> Option<XZPoint> {
                         let (lon, lat) = if srs_id == 4326 {
-                            (x, y) // Já é WGS84
+                            (x, y) // Jï¿½ ï¿½ WGS84
                         } else {
                             proj_ref?.convert((x, y)).ok()?
                         };
@@ -255,7 +256,7 @@ impl DataProvider for GpkgProvider {
                             GeometryType::Polygon(outer)
                         }
                         Geometry::MultiPolygon(mp) => {
-                            // Extrai o anel principal do primeiro polígono do conjunto para Voxel
+                            // Extrai o anel principal do primeiro polï¿½gono do conjunto para Voxel
                             if let Some(poly) = mp.0.first() {
                                 let ext = poly.exterior();
                                 let mut outer = Vec::with_capacity(ext.0.len());
@@ -274,10 +275,10 @@ impl DataProvider for GpkgProvider {
                                 GeometryType::Polygon(outer)
                             } else { continue; }
                         }
-                        _ => continue, // Multipoint, GeometryCollection, etc não são suportados.
+                        _ => continue, // Multipoint, GeometryCollection, etc nï¿½o sï¿½o suportados.
                     };
 
-                    // O Early-Z Culling impede que o IBGE carregue o Mato Grosso se a sua BBox for só Brasília
+                    // O Early-Z Culling impede que o IBGE carregue o Mato Grosso se a sua BBox for sï¿½ Brasï¿½lia
                     if is_completely_outside {
                         continue;
                     }
@@ -298,7 +299,7 @@ impl DataProvider for GpkgProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ? GeoPackage varrido com sucesso: {} blocos espaciais extraídos.", features.len());
+        println!("[INFO] ? GeoPackage varrido com sucesso: {} blocos espaciais extraï¿½dos.", features.len());
         Ok(features)
     }
 }

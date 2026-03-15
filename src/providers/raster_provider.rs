@@ -9,16 +9,16 @@ use std::fs::File;
 use tiff::decoder::{Decoder, DecodingResult};
 
 /// Provedor de Dados Matriciais (Raster / GeoTIFF).
-/// Projetado para ler classificações de satélite (MapBiomas, SISDIA, NDWI para rios e NDVI para vegetação).
-/// Varre ficheiros TIFF onde 1 pixel = 1 metro e converte a natureza orgânica em matrizes Voxel exatas.
+/// Projetado para ler classificaÃ§oes de satï¿½lite (MapBiomas, SISDIA, NDWI para rios e NDVI para vegetaï¿½ï¿½o).
+/// Varre ficheiros TIFF onde 1 pixel = 1 metro e converte a natureza orgï¿½nica em matrizes Voxel exatas.
 pub struct RasterProvider {
     pub file_path: PathBuf,
     pub scale_h: f64,
     pub priority: u8,
-    // Parâmetros de georreferenciação do TIFF (Assumindo WGS84 ou UTM fornecido externamente)
+    // Parï¿½metros de georreferenciaï¿½ï¿½o do TIFF (Assumindo WGS84 ou UTM fornecido externamente)
     pub top_left_lat: f64,
     pub top_left_lon: f64,
-    pub pixel_size_degrees: f64, // Resolução do pixel em graus (ex: 0.00001 para ~1 metro)
+    pub pixel_size_degrees: f64, // Resoluï¿½ï¿½o do pixel em graus (ex: 0.00001 para ~1 metro)
 }
 
 impl RasterProvider {
@@ -40,50 +40,51 @@ impl RasterProvider {
         }
     }
 
-    /// O "Rosetta Stone" Natural: Converte o valor numérico do pixel (Classificação do Satélite)
-    /// numa tag semântica orgânica para o motor de geração.
+    /// O "Rosetta Stone" Natural: Converte o valor numï¿½rico do pixel (Classificaï¿½ï¿½o do Satï¿½lite)
+    /// numa tag semï¿½ntica orgï¿½nica para o motor de geraï¿½ï¿½o.
     #[inline(always)]
     fn pixel_value_to_tags(pixel_val: u8) -> Option<(SemanticGroup, HashMap<String, String>)> {
         let mut tags = HashMap::new();
         tags.insert("source".to_string(), "GDF_Raster_GeoTIFF".to_string());
 
-        // Tabela de Classificação Padrão (Exemplo adaptado do MapBiomas / IBAMA)
+        // Tabela de Classificaï¿½ï¿½o Padrï¿½o (Exemplo adaptado do MapBiomas / IBAMA)
         match pixel_val {
             1..=5 => {
-                // Formações Florestais (Mata de Galeria, Cerradão)
+                // Formaï¿½ï¿½es Florestais (Mata de Galeria, Cerradï¿½o)
                 tags.insert("natural".to_string(), "wood".to_string());
                 tags.insert("leaf_type".to_string(), "broadleaved".to_string());
                 tags.insert("density".to_string(), "high".to_string()); // Floresta densa
                 Some((SemanticGroup::Natural, tags))
             }
             10..=13 => {
-                // Formações Savânicas e Campestres (Cerrado Ralo)
+                // Formaï¿½ï¿½es Savï¿½nicas e Campestres (Cerrado Ralo)
                 tags.insert("natural".to_string(), "scrub".to_string());
                 Some((SemanticGroup::Natural, tags))
             }
             33 => {
-                // Corpos d'Água (Rios, Lago Paranoá, Ribeirões)
+                // Corpos d'ï¿½gua (Rios, Lago Paranoï¿½, Ribeirï¿½es)
                 tags.insert("natural".to_string(), "water".to_string());
                 tags.insert("water".to_string(), "river".to_string());
                 Some((SemanticGroup::Waterway, tags))
             }
             34 => {
-                // Zonas Húmidas / Várzeas
+                // Zonas Hï¿½midas / Vï¿½rzeas
                 tags.insert("natural".to_string(), "wetland".to_string());
                 Some((SemanticGroup::Terrain, tags))
             }
-            _ => None, // Classes urbanas (24, 25) são ignoradas aqui pois os vetores são melhores
+            _ => None, // Classes urbanas (24, 25) sï¿½o ignoradas aqui pois os vetores sï¿½o melhores
         }
     }
 }
 
 impl DataProvider for RasterProvider {
+    fn priority(&self) -> u8 { self.priority }
     fn name(&self) -> &str {
         "Nature Raster GeoTIFF (MapBiomas / SISDIA)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ?? A abrir malha de satélite GeoTIFF (Natureza 1m): {}", self.file_path.display());
+        println!("[INFO] ?? A abrir malha de satï¿½lite GeoTIFF (Natureza 1m): {}", self.file_path.display());
 
         let file = File::open(&self.file_path)
             .map_err(|e| format!("Falha ao abrir ficheiro TIFF: {}", e))?;
@@ -92,7 +93,7 @@ impl DataProvider for RasterProvider {
             .map_err(|e| format!("Falha ao inicializar descodificador TIFF: {}", e))?;
 
         let (width, height) = decoder.dimensions()
-            .map_err(|e| format!("Falha ao ler dimensões do TIFF: {}", e))?;
+            .map_err(|e| format!("Falha ao ler dimensï¿½es do TIFF: {}", e))?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
@@ -100,22 +101,22 @@ impl DataProvider for RasterProvider {
         let mut features = Vec::new();
         let mut next_id = 9_000_000_000; // Offset dedicado para Natureza Rasterizada
 
-        // ?? BESM-6 Tweak: Lemos a imagem nativamente. Para não rebentar a RAM com imagens
-        // de satélite de 40.000 x 40.000 pixéis, o processamento deve ser estritamente matemático.
+        // ?? BESM-6 Tweak: Lemos a imagem nativamente. Para nï¿½o rebentar a RAM com imagens
+        // de satï¿½lite de 40.000 x 40.000 pixï¿½is, o processamento deve ser estritamente matemï¿½tico.
         if let Ok(DecodingResult::U8(image_data)) = decoder.read_image() {
-            println!("[INFO] TIFF carregado na memória. Resolução: {}x{} pixéis.", width, height);
+            println!("[INFO] TIFF carregado na memï¿½ria. Resoluï¿½ï¿½o: {}x{} pixï¿½is.", width, height);
 
-            // Calcula os limites dos pixéis que caem dentro da BBox do jogador
-            // Early-Culling Matemático (Ignora loops desnecessários)
+            // Calcula os limites dos pixï¿½is que caem dentro da BBox do jogador
+            // Early-Culling Matemï¿½tico (Ignora loops desnecessï¿½rios)
             let start_x = ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees).max(0.0) as u32;
             let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees).min(width as f64) as u32;
             
-            // Latitude diminui à medida que descemos na imagem
+            // Latitude diminui ï¿½ medida que descemos na imagem
             let start_y = ((self.top_left_lat - bbox.max().lat()) / self.pixel_size_degrees).max(0.0) as u32;
             let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees).min(height as f64) as u32;
 
             if start_x >= width || start_y >= height || start_x >= end_x || start_y >= end_y {
-                println!("[AVISO] O GeoTIFF está fora da Bounding Box atual. Saltando.");
+                println!("[AVISO] O GeoTIFF estï¿½ fora da Bounding Box atual. Saltando.");
                 return Ok(features);
             }
 
@@ -133,7 +134,7 @@ impl DataProvider for RasterProvider {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
 
-                                // Renderiza cada pixel natural de 1m como um bloco/polígono de 1x1
+                                // Renderiza cada pixel natural de 1m como um bloco/polï¿½gono de 1x1
                                 let voxel_poly = vec![
                                     XZPoint::new(xz_point.x, xz_point.z),
                                     XZPoint::new(xz_point.x + 1, xz_point.z),
@@ -156,11 +157,11 @@ impl DataProvider for RasterProvider {
                 }
             }
         } else {
-            eprintln!("[AVISO] Formato de cor do TIFF não é U8 nativo. Apenas matrizes de classificação suportadas.");
+            eprintln!("[AVISO] Formato de cor do TIFF nï¿½o ï¿½ U8 nativo. Apenas matrizes de classificaï¿½ï¿½o suportadas.");
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ? Processamento Raster concluído: {} voxels orgânicos injetados.", features.len());
+        println!("[INFO] ? Processamento Raster concluï¿½do: {} voxels orgï¿½nicos injetados.", features.len());
         Ok(features)
     }
 }

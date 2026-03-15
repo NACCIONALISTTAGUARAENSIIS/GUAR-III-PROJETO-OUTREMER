@@ -1,11 +1,11 @@
 use crate::coordinate_system::geographic::LLBBox;
 use crate::coordinate_system::cartesian::XZPoint;
-use crate::osm_parser::{fetch_osm_data, parse_osm_data, ProcessedElement};
+use crate::osm_parser::{parse_osm_data, ProcessedElement};
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
 
 /// Provedor Nativo do OpenStreetMap (Baseado na Overpass API)
-/// Respons·vel por converter os "ProcessedElements" legados para as novas "Features" Governamentais.
+/// Respons√°vel por converter os "ProcessedElements" legados para as novas "Features" Governamentais.
 pub struct OSMProvider {
     pub scale_h: f64,
 }
@@ -15,30 +15,30 @@ impl OSMProvider {
         Self { scale_h }
     }
 
-    /// Classifica a feature do OSM no Grupo Sem‚ntico correto
+    /// Classifica a feature do OSM no Grupo Sem√¢ntico correto
     /// O(1) Fast-fail checks order based on statistical probability of elements in urban areas.
     fn determine_semantic_group(tags: &HashMap<String, String>) -> SemanticGroup {
         if tags.contains_key("building") || tags.contains_key("building:part") || tags.contains_key("historic") {
             return SemanticGroup::Building;
-        } 
+        }
         if tags.contains_key("highway") || tags.contains_key("railway") || tags.contains_key("aeroway") {
             return SemanticGroup::Highway;
-        } 
+        }
         if tags.contains_key("waterway") || tags.contains_key("water") || tags.get("natural").map_or(false, |v| v == "water" || v == "bay") {
             return SemanticGroup::Waterway;
-        } 
+        }
         if tags.contains_key("landuse") || tags.contains_key("leisure") || tags.contains_key("natural") {
             return SemanticGroup::Landuse;
-        } 
+        }
         if tags.contains_key("power") || tags.contains_key("amenity") || tags.contains_key("barrier") {
             return SemanticGroup::Infrastructure;
         }
-        
+
         SemanticGroup::Other
     }
 
-    /// Verifica se uma sÈrie de pontos forma um polÌgono (mesmo se o OSM n„o os conectou perfeitamente).
-    /// Toler‚ncia de fechamento para compensar a escala H_SCALE e erros de mapeadores.
+    /// Verifica se uma s√©rie de pontos forma um pol√≠gono (mesmo se o OSM n√£o os conectou perfeitamente).
+    /// Toler√¢ncia de fechamento para compensar a escala H_SCALE e erros de mapeadores.
     #[inline]
     fn is_nearly_closed(pts: &[XZPoint]) -> bool {
         if pts.len() < 3 {
@@ -47,59 +47,64 @@ impl OSMProvider {
         // Safety: pts.len() >= 3 ensures [0] and last() exist without panicking
         let first = &pts[0];
         let last = &pts[pts.len() - 1];
-        
+
         let dx = (first.x - last.x).abs();
         let dz = (first.z - last.z).abs();
 
-        // Se a dist‚ncia entre o primeiro e o ˙ltimo ponto for menor que 2 blocos, assumimos polÌgono fechado.
+        // Se a dist√¢ncia entre o primeiro e o √∫ltimo ponto for menor que 2 blocos, assumimos pol√≠gono fechado.
         dx <= 2 && dz <= 2
     }
 }
 
-// ImplementaÁ„o do Contrato Universal (Trait)
+// Implementa√ß√£o do Contrato Universal (Trait)
 impl DataProvider for OSMProvider {
+    fn priority(&self) -> u8 { 10 }
     fn name(&self) -> &str {
         "OpenStreetMap (Overpass API)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         // 1. Usa o sistema legado do Arnis para baixar o JSON
-        let osm_json = fetch_osm_data(bbox, None, "requests")
+        // üö® BESM-6 TWEAK: Chamada corrigida para o novo retrieve_data.rs
+        let osm_json = crate::retrieve_data::fetch_data_from_overpass(*bbox, false, "requests", None)
             .map_err(|e| format!("Falha na Overpass API: {}", e))?;
 
         // 2. Usa o sistema legado para parsear em "ProcessedElements"
-        let processed_elements = parse_osm_data(&osm_json, bbox, self.scale_h);
+        let processed_elements = parse_osm_data(osm_json, *bbox, self.scale_h, false);
 
-        // BESM-6 Tweak: PrÈ-alocaÁ„o exata da memÛria. 
-        // Impede a re-alocaÁ„o din‚mica do vetor no Heap que estrangula o processador.
-        let mut features = Vec::with_capacity(processed_elements.len());
+        // BESM-6 Tweak: Pr√©-aloca√ß√£o exata da mem√≥ria.
+        // Impede a re-aloca√ß√£o din√¢mica do vetor no Heap que estrangula o processador.
+        let mut features = Vec::with_capacity(processed_elements.0.len());
 
-        // 3. A GRANDE TRADU«√O: Converte Elements legados para a nova Feature Tier-Gov
-        for element in processed_elements {
-            let (id, tags, geometry) = match element {
+        // 3. A GRANDE TRADU√á√ÉO: Converte Elements legados para a nova Feature Tier-Gov
+        for element in processed_elements.0 {
+            // üö® BESM-6 Tweak: Adapta√ß√£o para o ARC rigoroso do ProcessedElement
+            let tags_owned = element.tags().clone();
+            let id = element.id();
+
+            let geometry = match element {
                 ProcessedElement::Node(node) => {
-                    let geom = GeometryType::Point(XZPoint::new(node.x, node.z));
-                    (node.id, node.tags, geom)
+                    GeometryType::Point(XZPoint::new(node.x, node.z))
                 }
                 ProcessedElement::Way(way) => {
-                    // ProteÁ„o contra Ways degeneradas do OSM (Dados Corrompidos)
+                    // Prote√ß√£o contra Ways degeneradas do OSM (Dados Corrompidos)
                     if way.nodes.is_empty() {
                         continue;
                     }
 
-                    // Se a via sÛ tem 1 ponto, ela È logicamente um Node. Fazemos o downgrade gracioso.
+                    // Se a via s√≥ tem 1 ponto, ela √© logicamente um Node. Fazemos o downgrade gracioso.
                     if way.nodes.len() == 1 {
                         let pt = XZPoint::new(way.nodes[0].x, way.nodes[0].z);
-                        (way.id, way.tags, GeometryType::Point(pt))
+                        GeometryType::Point(pt)
                     } else {
-                        // PrÈ-alocaÁ„o com +1 de sobra caso precisemos fechar o anel
+                        // Pr√©-aloca√ß√£o com +1 de sobra caso precisemos fechar o anel
                         let mut pts: Vec<XZPoint> = Vec::with_capacity(way.nodes.len() + 1);
                         for n in &way.nodes {
                             pts.push(XZPoint::new(n.x, n.z));
                         }
-                        
-                        // Toler‚ncia geomÈtrica e Fechamento Autom·tico
-                        let geom = if Self::is_nearly_closed(&pts) {
+
+                        // Toler√¢ncia geom√©trica e Fechamento Autom√°tico
+                        if Self::is_nearly_closed(&pts) {
                             let first = pts[0];
                             if pts.last().unwrap() != &first {
                                 pts.push(first);
@@ -107,18 +112,16 @@ impl DataProvider for OSMProvider {
                             GeometryType::Polygon(pts)
                         } else {
                             GeometryType::LineString(pts) // Rua/Rio/Caminho aberto
-                        };
-                        
-                        (way.id, way.tags, geom)
+                        }
                     }
                 }
                 ProcessedElement::Relation(rel) => {
-                    // Relations (MultiPolygons) do OSM s„o complexas.
-                    // NÛs extraÌmos os "Outer rings" (Bordas) e "Inner rings" (Buracos).
-                    
-                    // PrÈ-alocaÁ„o baseada na quantidade de membros da relaÁ„o
+                    // Relations (MultiPolygons) do OSM s√£o complexas.
+                    // N√≥s extra√≠mos os "Outer rings" (Bordas) e "Inner rings" (Buracos).
+
+                    // Pr√©-aloca√ß√£o baseada na quantidade de membros da rela√ß√£o
                     let mut outer = Vec::with_capacity(rel.members.len());
-                    let mut inner = Vec::new(); // Inners s„o mais raros, instanciamento leve
+                    let mut inner = Vec::new(); // Inners s√£o mais raros, instanciamento leve
 
                     for member in &rel.members {
                         if member.way.nodes.is_empty() {
@@ -130,7 +133,7 @@ impl DataProvider for OSMProvider {
                             pts.push(XZPoint::new(n.x, n.z));
                         }
 
-                        // Auto-cicatrizaÁ„o geomÈtrica de Relation Rings
+                        // Auto-cicatriza√ß√£o geom√©trica de Relation Rings
                         if Self::is_nearly_closed(&pts) {
                             let first = pts[0];
                             if pts.last().unwrap() != &first {
@@ -145,24 +148,23 @@ impl DataProvider for OSMProvider {
                         }
                     }
 
-                    // Se a Relation for inv·lida ou n„o tiver anÈis exteriores estruturais, descarta.
+                    // Se a Relation for inv√°lida ou n√£o tiver an√©is exteriores estruturais, descarta.
                     if outer.is_empty() {
                         continue;
                     }
 
-                    let geom = GeometryType::MultiPolygon { outer, inner };
-                    (rel.id, rel.tags, geom)
+                    GeometryType::MultiPolygon { outer, inner }
                 }
             };
 
-            let semantic_group = Self::determine_semantic_group(&tags);
+            let semantic_group = Self::determine_semantic_group(&tags_owned);
 
-            // A Prioridade do OSM È 10 (Baixa). Shapefiles locais ter„o prioridade 1 (Alta).
-            // O Feature::new ir· automaticamente calcular e fazer o cache da AABB (Axis-Aligned Bounding Box).
+            // A Prioridade do OSM √© 10 (Baixa). Shapefiles locais ter√£o prioridade 1 (Alta).
+            // O Feature::new ir√° automaticamente calcular e fazer o cache da AABB (Axis-Aligned Bounding Box).
             let feature = Feature::new(
                 id,
                 semantic_group,
-                tags,
+                tags_owned,
                 geometry,
                 "osm".to_string(),
                 10,
@@ -171,7 +173,7 @@ impl DataProvider for OSMProvider {
             features.push(feature);
         }
 
-        // Limpa qualquer capacidade em excesso deixada no Heap (Gest„o Militar de RAM)
+        // Limpa qualquer capacidade em excesso deixada no Heap (Gest√£o Militar de RAM)
         features.shrink_to_fit();
 
         Ok(features)

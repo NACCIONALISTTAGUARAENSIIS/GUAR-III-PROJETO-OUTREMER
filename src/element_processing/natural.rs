@@ -1,14 +1,19 @@
 use crate::args::Args;
 use crate::block_definitions::*;
 use crate::deterministic_rng::element_rng;
-use crate::element_processing::trees::{Tree, TreeType}; // Atualizado para chamar o seu trees.rs governamental
+use crate::element_processing::tree::{Tree, TreeType}; // Atualizado para chamar o seu trees.rs governamental
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedElement, ProcessedMemberRole, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
+
+// üö® Importa√ß√µes Espec√≠ficas do Cerrado (Corrigindo o Erro E0425)
+use crate::element_processing::tree::{SHORT_GRASS, MOSS_CARPET, AZALEA_LEAVES, FLOWERING_AZALEA};
+
 use rand::{prelude::IndexedRandom, Rng};
 use std::collections::HashSet;
+use std::sync::Arc;
 
-// ?? BESM-6: Motor BiolÛgico de DistribuiÁ„o Espacial (Perlin Fake)
+// üö® BESM-6: Motor Biol√≥gico de Distribui√ß√£o Espacial (Perlin Fake)
 #[inline(always)]
 fn organic_density_noise(x: i32, z: i32, scale: f64) -> f64 {
     let xf = x as f64 * scale;
@@ -16,43 +21,43 @@ fn organic_density_noise(x: i32, z: i32, scale: f64) -> f64 {
     ((xf.sin() * zf.cos()) + (xf * 0.5 + zf * 0.3).sin() * 0.5).abs() / 1.5
 }
 
-// ?? BESM-6: Topografia BiomÈtrica (Gradiente 2D & Busca de LenÁol Fre·tico)
-// O Cerrado possui declives e veios d'·gua que determinam a flora.
+// üö® BESM-6: Topografia Biom√©trica (Gradiente 2D & Busca de Len√ßol Fre√°tico)
+// O Cerrado possui declives e veios d'√°gua que determinam a flora.
 #[inline]
 fn determine_cerrado_biome(x: i32, z: i32, ground_y: i32, editor: &WorldEditor) -> &'static str {
-    // 1. Busca de ¡gua (Octogonal expandida para Veredas reais)
+    // 1. Busca de √°gua (Octogonal expandida para Veredas reais)
     // Usamos um raio maior para detectar corredores fluviais (Mata de Galeria)
     let water_radius = 8;
-    let has_water = 
+    let has_water =
         editor.check_for_block_absolute(x + water_radius, ground_y, z, Some(&[WATER]), None) ||
-        editor.check_for_block_absolute(x - water_radius, ground_y, z, Some(&[WATER]), None) ||
-        editor.check_for_block_absolute(x, ground_y, z + water_radius, Some(&[WATER]), None) ||
-        editor.check_for_block_absolute(x, ground_y, z - water_radius, Some(&[WATER]), None) ||
-        editor.check_for_block_absolute(x + 4, ground_y, z + 4, Some(&[WATER]), None) ||
-        editor.check_for_block_absolute(x - 4, ground_y, z - 4, Some(&[WATER]), None);
-    
+            editor.check_for_block_absolute(x - water_radius, ground_y, z, Some(&[WATER]), None) ||
+            editor.check_for_block_absolute(x, ground_y, z + water_radius, Some(&[WATER]), None) ||
+            editor.check_for_block_absolute(x, ground_y, z - water_radius, Some(&[WATER]), None) ||
+            editor.check_for_block_absolute(x + 4, ground_y, z + 4, Some(&[WATER]), None) ||
+            editor.check_for_block_absolute(x - 4, ground_y, z - 4, Some(&[WATER]), None);
+
     if has_water {
         return "mata_galeria";
     }
 
-    // 2. Calcula Slope 2D (Gradiente Topogr·fico) para detectar Campos Rupestres
-    // O cÛdigo legado olhava apenas Norte-Sul. Agora olhamos os eixos cardeais.
+    // 2. Calcula Slope 2D (Gradiente Topogr√°fico) para detectar Campos Rupestres
+    // O c√≥digo legado olhava apenas Norte-Sul. Agora olhamos os eixos cardeais.
     let y_north = editor.get_ground_level(x, z - 4);
     let y_south = editor.get_ground_level(x, z + 4);
     let y_east = editor.get_ground_level(x + 4, z);
     let y_west = editor.get_ground_level(x - 4, z);
-    
+
     let slope_z = (y_north - y_south).abs();
     let slope_x = (y_east - y_west).abs();
-    
+
     // Gradiente resultante
     let total_slope = ((slope_x * slope_x + slope_z * slope_z) as f64).sqrt();
 
-    // Se o morro cai mais de 3.5 blocos em 8 metros (Alta inclinaÁ„o)
+    // Se o morro cai mais de 3.5 blocos em 8 metros (Alta inclina√ß√£o)
     if total_slope > 3.5 {
         "campo_rupestre" // Morros pedregosos e secos
     } else {
-        "cerrado_ss" // Cerrado Stricto Sensu (TÌpico e Plano)
+        "cerrado_ss" // Cerrado Stricto Sensu (T√≠pico e Plano)
     }
 }
 
@@ -62,7 +67,7 @@ pub fn generate_natural(
     args: &Args,
     flood_fill_cache: &FloodFillCache,
     building_footprints: &BuildingFootprintBitmap,
-    exclusion_mask: Option<&HashSet<(i32, i32)>>, // ?? BESM-6: O Veto Booleano (Inners)
+    exclusion_mask: Option<&HashSet<(i32, i32)>>, // üö® BESM-6: O Veto Booleano (Inners)
 ) {
     if let Some(natural_type) = element.tags().get("natural") {
         if natural_type == "tree" {
@@ -70,17 +75,17 @@ pub fn generate_natural(
                 let x: i32 = node.x;
                 let z: i32 = node.z;
 
-                // Bloqueia a ·rvore se ela caiu exatamente dentro de um lago interno
+                // Bloqueia a √°rvore se ela caiu exatamente dentro de um lago interno
                 if let Some(mask) = exclusion_mask {
                     if mask.contains(&(x, z)) { return; }
                 }
 
                 let mut trees_ok_to_generate: Vec<TreeType> = vec![];
                 if let Some(species) = element.tags().get("species") {
-                    if species.contains("IpÍ") || species.contains("Handroanthus") { trees_ok_to_generate.push(TreeType::IpeAmarelo); }
-                    if species.contains("CopaÌba") { trees_ok_to_generate.push(TreeType::Copaiba); }
+                    if species.contains("Ip√™") || species.contains("Handroanthus") { trees_ok_to_generate.push(TreeType::IpeAmarelo); }
+                    if species.contains("Copa√≠ba") { trees_ok_to_generate.push(TreeType::Copaiba); }
                 } else {
-                    // Expurgagem de EspÈcies ExÛticas, ForÁa IpÍ e Sucupira
+                    // Expurgagem de Esp√©cies Ex√≥ticas, For√ßa Ip√™ e Sucupira
                     trees_ok_to_generate.push(TreeType::Sucupira);
                     trees_ok_to_generate.push(TreeType::IpeAmarelo);
                 }
@@ -92,16 +97,16 @@ pub fn generate_natural(
                 let mut rng = element_rng(element.id());
                 let tree_type = *trees_ok_to_generate.choose(&mut rng).unwrap_or(&TreeType::Acacia);
 
-                // BESM-6 Tweak: GROUND AWARE (¡rvores n„o voam nem ficam soterradas)
+                // BESM-6 Tweak: GROUND AWARE (√Årvores n√£o voam nem ficam soterradas)
                 let ground_y = editor.get_ground_level(x, z);
-                
-                // Protege estradas e ·guas de receberem ·rvores se o OSM errar 1 metro
+
+                // Protege estradas e √°guas de receberem √°rvores se o OSM errar 1 metro
                 if !editor.check_for_block_absolute(x, ground_y, z, Some(&[BLACK_CONCRETE, POLISHED_BASALT, YELLOW_CONCRETE, RED_CONCRETE, WATER, POLISHED_ANDESITE]), None) {
                     Tree::create_of_type(editor, (x, ground_y + 1, z), tree_type, Some(building_footprints));
                 }
             }
         } else {
-            // BESM-6 Tweak: CorreÁ„o na InconsistÍncia de Blocos org‚nicos.
+            // BESM-6 Tweak: Corre√ß√£o na Inconsist√™ncia de Blocos org√¢nicos.
             let block_type: Block = match natural_type.as_str() {
                 "scrub" | "grassland" | "wood" | "heath" | "tree_row" => GRASS_BLOCK,
                 "sand" | "dune" | "beach" | "shoal" => SAND,
@@ -122,13 +127,13 @@ pub fn generate_natural(
             let trees_ok_to_generate: Vec<TreeType> = vec![TreeType::Sucupira, TreeType::Acacia];
             let mut rng = element_rng(way.id);
 
-            // Aplica Densidade de VegetaÁ„o baseada na Escala HÌbrida
+            // üö® BESM-6: Aplica Densidade de Vegeta√ß√£o baseada na Escala H√≠brida (Fixado erro sintaxe)
             let scale_area_multiplier = args.scale_h * args.scale_h;
             let base_tree_chance = (6.0 / scale_area_multiplier).clamp(2.0, 10.0) as u32;
 
-            // ?? PREENCHIMENTO DA ¡REA INTERNA (CORE E BORDAS via Scanline)
+            // üö® PREENCHIMENTO DA √ÅREA INTERNA (CORE E BORDAS via Scanline)
             for &(x, z) in &filled_area {
-                // ?? O Veto Booleano (O Algo do Pintor Morreu Aqui)
+                // üö® O Veto Booleano (O Algo do Pintor Morreu Aqui)
                 // Se a coordenada caiu num lago (Inner), o motor aborta instantaneamente.
                 if let Some(mask) = exclusion_mask {
                     if mask.contains(&(x, z)) { continue; }
@@ -136,14 +141,14 @@ pub fn generate_natural(
 
                 let ground_y = editor.get_ground_level(x, z);
 
-                // Culling HÌbrido: A natureza n„o sobrepıe a cidade. Se h· concreto sob os pÈs, recua.
+                // Culling H√≠brido: A natureza n√£o sobrep√µe a cidade. Se h√° concreto sob os p√©s, recua.
                 if editor.check_for_block_absolute(x, ground_y, z, Some(&[BLACK_CONCRETE, POLISHED_BASALT, YELLOW_CONCRETE, RED_CONCRETE, WHITE_CONCRETE, POLISHED_ANDESITE]), None) {
-                    continue; 
+                    continue;
                 }
 
                 let biome_class = determine_cerrado_biome(x, z, ground_y, editor);
 
-                // Pedras e terras ·ridas nos morros (Campo Rupestre)
+                // Pedras e terras √°ridas nos morros (Campo Rupestre)
                 let final_block = if biome_class == "campo_rupestre" && rng.random_range(0..100) < 40 {
                     if rng.random_bool(0.5) { COARSE_DIRT } else { GRAVEL }
                 } else if block_type == ANDESITE && rng.random_range(0..100) < 30 {
@@ -154,13 +159,13 @@ pub fn generate_natural(
 
                 editor.set_block_absolute(final_block, x, ground_y, z, Some(&[GRASS_BLOCK, DIRT, PODZOL, COARSE_DIRT, STONE, GRAVEL]), None);
 
-                // Pula decoraÁ„o se for ·gua pura ou gelo
+                // Pula decora√ß√£o se for √°gua pura ou gelo
                 if block_type == WATER || block_type == PACKED_ICE {
                     continue;
                 }
 
-                // Noise Macro-BiolÛgico para evitar florestas xadrez
-                let bio_noise = organic_density_noise(x, z, 0.1); 
+                // Noise Macro-Biol√≥gico para evitar florestas xadrez
+                let bio_noise = organic_density_noise(x, z, 0.1);
 
                 match natural_type.as_str() {
                     "grassland" | "heath" => {
@@ -168,7 +173,7 @@ pub fn generate_natural(
                             editor.set_block_absolute(PODZOL, x, ground_y, z, Some(&[GRASS_BLOCK]), None);
                         }
                         if rng.random_range(0..100) < 40 {
-                            editor.set_block_if_absent_absolute(GRASS, x, ground_y + 1, z);
+                            editor.set_block_if_absent_absolute(SHORT_GRASS, x, ground_y + 1, z);
                         } else if rng.random_range(0..100) < 55 {
                             editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z); // Seca do Cerrado
                         }
@@ -180,14 +185,14 @@ pub fn generate_natural(
                             if rng.random_range(0..100) < 8 { editor.set_block_absolute(COARSE_DIRT, x, ground_y, z, Some(&[GRASS_BLOCK]), None); }
                             else if rng.random_range(0..100) < 25 { editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z); }
                             else if rng.random_range(0..100) < 40 { editor.set_block_if_absent_absolute(ACACIA_LEAVES, x, ground_y + 1, z); }
-                            else if rng.random_range(0..100) < 70 { editor.set_block_if_absent_absolute(GRASS, x, ground_y + 1, z); }
+                            else if rng.random_range(0..100) < 70 { editor.set_block_if_absent_absolute(SHORT_GRASS, x, ground_y + 1, z); }
                         }
                     }
                     "wood" | "tree_row" => {
                         // Matas de Galeria vs Cerrado Ralo
                         if biome_class == "mata_galeria" {
                             if bio_noise > 0.2 && rng.random_range(0..100) < (base_tree_chance * 3) {
-                                let tree_type = if rng.gen_bool(0.3) { TreeType::Buriti } else { TreeType::Copaiba };
+                                let tree_type = if rng.random_bool(0.3) { TreeType::Buriti } else { TreeType::Copaiba };
                                 Tree::create_of_type(editor, (x, ground_y + 1, z), tree_type, Some(building_footprints));
                             }
                         } else {
@@ -210,7 +215,7 @@ pub fn generate_natural(
                         if rng.random_bool(0.3) {
                             editor.set_block_absolute(WATER, x, ground_y, z, Some(&[MUD, MOSS_BLOCK]), None);
                         } else if rng.random_bool(0.6) {
-                            editor.set_block_if_absent_absolute(GRASS, x, ground_y + 1, z);
+                            editor.set_block_if_absent_absolute(SHORT_GRASS, x, ground_y + 1, z);
                         }
                     }
                     _ => {}
@@ -228,9 +233,9 @@ pub fn generate_natural_from_relation(
     building_footprints: &BuildingFootprintBitmap,
 ) {
     if rel.tags.contains_key("natural") {
-        
-        // ?? BESM-6: Geometria de Exclus„o (Inner Polygons)
-        // Extrai a matem·tica dos buracos (Lagos, clareiras, pedreiras) antes de pintar o mato.
+
+        // üö® BESM-6: Geometria de Exclus√£o (Inner Polygons)
+        // Extrai a matem√°tica dos buracos (Lagos, clareiras, pedreiras) antes de pintar o mato.
         let mut exclusion_mask: HashSet<(i32, i32)> = HashSet::new();
 
         for member in &rel.members {
@@ -246,6 +251,7 @@ pub fn generate_natural_from_relation(
 
         for member in &rel.members {
             if member.role == ProcessedMemberRole::Outer {
+                // üö® TWEAK: Usando Arc::new como requerido pela nossa nova assinatura do ProcessedElement
                 let way_with_rel_tags = ProcessedWay {
                     id: member.way.id,
                     nodes: member.way.nodes.clone(),
@@ -253,11 +259,11 @@ pub fn generate_natural_from_relation(
                 };
                 generate_natural(
                     editor,
-                    &ProcessedElement::Way(way_with_rel_tags),
+                    &ProcessedElement::Way(Arc::new(way_with_rel_tags)),
                     args,
                     flood_fill_cache,
                     building_footprints,
-                    exclusion_ref, // Passa o Veto Booleano para o pintor do n˙cleo
+                    exclusion_ref, // Passa o Veto Booleano para o pintor do n√∫cleo
                 );
             }
         }

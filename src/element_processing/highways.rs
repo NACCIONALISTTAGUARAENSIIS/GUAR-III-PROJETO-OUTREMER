@@ -35,7 +35,7 @@ const SAFE_FOR_SIDEWALK: &[Block] = &[
 enum DFRoadType {
     Eixao,                // DF-002 (Pistas separadas por canteiro)
     W3,                   // Comercial (Estacionamentos espinha de peixe)
-    L2_L4,                // Residenciais Largas
+    L2L4,                 // Residenciais Largas
     Monumental,           // Eixo Monumental (S1/N1)
     ExpressaDF,           // EPIA / EPTG / Estrutural
     Arterial,             // Primary genérica
@@ -50,12 +50,12 @@ enum DFRoadType {
 }
 
 fn detect_df_road(way: &ProcessedWay, base_highway: &str) -> DFRoadType {
-    let name = way.tags.get("name").map(|s| s.to_lowercase()).unwrap_or_default();
-    let ref_tag = way.tags.get("ref").map(|s| s.to_uppercase()).unwrap_or_default();
-    let junction = way.tags.get("junction").map(|s| s.as_str()).unwrap_or("");
-    let suburb = way.tags.get("addr:suburb").map(|s| s.to_lowercase()).unwrap_or_default();
-    let is_in = way.tags.get("is_in").map(|s| s.to_lowercase()).unwrap_or_default();
-    let place = way.tags.get("place").map(|s| s.to_lowercase()).unwrap_or_default();
+    let name = way.tags.get("name").map(|s: &String| s.to_lowercase()).unwrap_or_default();
+    let ref_tag = way.tags.get("ref").map(|s: &String| s.to_uppercase()).unwrap_or_default();
+    let junction = way.tags.get("junction").map(|s: &String| s.as_str()).unwrap_or("");
+    let suburb = way.tags.get("addr:suburb").map(|s: &String| s.to_lowercase()).unwrap_or_default();
+    let is_in = way.tags.get("is_in").map(|s: &String| s.to_lowercase()).unwrap_or_default();
+    let place = way.tags.get("place").map(|s: &String| s.to_lowercase()).unwrap_or_default();
 
     if junction == "roundabout" {
         return DFRoadType::Rotatoria;
@@ -78,7 +78,7 @@ fn detect_df_road(way: &ProcessedWay, base_highway: &str) -> DFRoadType {
     }
 
     if name.contains("l2") || name.contains("l4") {
-        return DFRoadType::L2_L4;
+        return DFRoadType::L2L4;
     }
 
     if ref_tag.contains("DF-003") || ref_tag.contains("DF-085") || ref_tag.contains("DF-095")
@@ -140,7 +140,7 @@ pub fn build_highway_connectivity_map(elements: &[ProcessedElement]) -> HighwayC
                 let layer_value = way
                     .tags
                     .get("layer")
-                    .and_then(|layer| layer.parse::<i32>().ok())
+                    .and_then(|layer: &String| layer.parse::<i32>().ok())
                     .unwrap_or(0);
 
                 let layer_value = if layer_value < 0 { 0 } else { layer_value };
@@ -183,7 +183,7 @@ fn generate_highways_internal(
                 let ground_y = editor.get_ground_level(x, z);
 
                 editor.set_block_absolute(POLISHED_ANDESITE, x, ground_y + 1, z, None, None);
-                for dy in 2..=7 {
+                for dy in 2i32..=7i32 {
                     editor.set_block_absolute(IRON_BARS, x, ground_y + dy, z, None, None);
                 }
                 editor.set_block_absolute(GLOWSTONE, x, ground_y + 8, z, None, None);
@@ -196,7 +196,7 @@ fn generate_highways_internal(
                         let z: i32 = node.z;
                         let ground_y = editor.get_ground_level(x, z);
 
-                        for dy in 1..=4 {
+                        for dy in 1i32..=4i32 {
                             editor.set_block_absolute(ANDESITE_WALL, x, ground_y + dy, z, None, None);
                         }
 
@@ -212,11 +212,11 @@ fn generate_highways_internal(
                 let z = node.z;
                 let ground_y = editor.get_ground_level(x, z);
 
-                for dy in 1..=3 {
+                for dy in 1i32..=3i32 {
                     editor.set_block_absolute(IRON_BARS, x, ground_y + dy, z, None, None);
                     editor.set_block_absolute(IRON_BARS, x + 2, ground_y + dy, z, None, None);
                 }
-                for dx in 0..=2 {
+                for dx in 0i32..=2i32 {
                     editor.set_block_absolute(SMOOTH_STONE_SLAB, x + dx, ground_y + 4, z, None, None);
                     if dx == 1 {
                         editor.set_block_absolute(GRAY_STAINED_GLASS, x + dx, ground_y + 3, z, None, None);
@@ -226,7 +226,7 @@ fn generate_highways_internal(
         } else if element
             .tags()
             .get("area")
-            .is_some_and(|v: &String| v == "yes")
+            .is_some_and(|v: &String| v.as_str() == "yes")
         {
             let ProcessedElement::Way(way) = element else {
                 return;
@@ -276,13 +276,13 @@ fn generate_highways_internal(
 
             let scale_factor = args.scale;
 
-            let is_indoor = element.tags().get("indoor").is_some_and(|v| v == "yes");
-            let is_bridge = !is_indoor && element.tags().get("bridge").is_some_and(|v| v != "no");
+            let is_indoor = element.tags().get("indoor").is_some_and(|v: &String| v.as_str() == "yes");
+            let is_bridge = !is_indoor && element.tags().get("bridge").is_some_and(|v: &String| v.as_str() != "no");
 
             let mut layer_value = element
                 .tags()
                 .get("layer")
-                .and_then(|layer| layer.parse::<i32>().ok())
+                .and_then(|layer: &String| layer.parse::<i32>().ok())
                 .unwrap_or(0);
 
             if layer_value < 0 || is_indoor {
@@ -320,7 +320,7 @@ fn generate_highways_internal(
                     grass_buffer = 5;
                     physical_median_radius = 1; // Barreira New Jersey (Mureta)
                 }
-                DFRoadType::L2_L4 | DFRoadType::Arterial => {
+                DFRoadType::L2L4 | DFRoadType::Arterial => {
                     block_type = BLACK_CONCRETE;
                     block_range = 9;
                     add_stripe = true;
@@ -417,8 +417,8 @@ fn generate_highways_internal(
                 }
             }
 
-            if scale_factor < 1.0 {
-                block_range = ((block_range as f64) * scale_factor).floor() as i32;
+            if scale_factor.unwrap_or(1.0) < 1.0 {
+                block_range = ((block_range as f64) * scale_factor.unwrap_or(1.0)).floor() as i32;
             }
 
             const LAYER_HEIGHT_STEP: i32 = 5;
@@ -505,8 +505,8 @@ fn generate_highways_internal(
 
                     let mut stripe_length: i32 = 0;
 
-                    let dash_length: i32 = (3.0 * scale_factor).round() as i32;
-                    let gap_length: i32 = (5.0 * scale_factor).round() as i32;
+                    let dash_length: i32 = (3.0 * scale_factor.unwrap_or(1.0)).round() as i32;
+                    let gap_length: i32 = (5.0 * scale_factor.unwrap_or(1.0)).round() as i32;
 
                     // OTIMIZAÇÃO: Cálculo de VETOR NORMAL extraído do loop de Bresenham
                     let dx_segment = (x2 - x1) as f64;
@@ -736,7 +736,7 @@ fn should_add_slope_at_node(
 }
 
 fn calculate_way_length(way: &ProcessedWay) -> usize {
-    let mut total_length = 0.0;
+    let mut total_length: f64 = 0.0;
     let mut previous_node: Option<&crate::osm_parser::ProcessedNode> = None;
 
     for node in &way.nodes {
@@ -844,7 +844,7 @@ pub fn generate_aeroway(editor: &mut WorldEditor, way: &ProcessedWay, args: &Arg
             let x2 = node.x;
             let z2 = node.z;
             let points = bresenham_line(x1, 0, z1, x2, 0, z2);
-            let way_width: i32 = (20.0 * args.scale).ceil() as i32;
+            let way_width: i32 = (20.0 * args.scale.unwrap_or(1.0)).ceil() as i32;
 
             for (x, _, z) in points {
                 for dx in -way_width..=way_width {

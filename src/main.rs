@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// ðŸš¨ BESM-6: DeclaraÃ§Ã£o de MÃ³dulos Base
 mod args;
+mod osm_parser;
 #[cfg(feature = "bedrock")]
 mod bedrock_block_map;
 mod block_definitions;
@@ -16,9 +18,8 @@ mod floodfill;
 mod floodfill_cache;
 mod ground;
 mod map_renderer;
-// ?? INJEÇÃO DO NOVO MOTOR GOVERNAMENTAL E DASHBOARD
-mod providers; 
-mod master_control; 
+mod providers;
+mod master_control;
 #[cfg(feature = "gui")]
 mod progress;
 mod retrieve_data;
@@ -32,17 +33,20 @@ mod world_editor;
 mod world_utils;
 
 use args::Args;
-use clap::Parser;
 use colored::*;
+use std::env;
+use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::{env, fs, io::Write};
-use coordinate_system::geographic::LLBBox;
+use clap::Parser;
+
+#[cfg(feature = "gui")]
+use crate::gui::run_gui;
 
 #[cfg(feature = "gui")]
 mod gui;
 
-// If the user does not want the GUI, it's easiest to just mock the progress module to do nothing
 #[cfg(not(feature = "gui"))]
 mod progress {
     pub fn emit_gui_error(_message: &str) {}
@@ -53,25 +57,20 @@ mod progress {
         false
     }
 }
+
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Console::{AttachConsole, FreeConsole, ATTACH_PARENT_PROCESS};
 
-/// Função principal que despacha a geração (agora aceita um canal de telemetria opcional)
-pub fn run_generation_pipeline(mut args: Args, telemetry_tx: Option<mpsc::Sender<master_control::BesmSignal>>) {
-    // Configure thread pool with 90% CPU cap to keep system responsive
+pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<master_control::BesmSignal>>) {
     floodfill_cache::configure_rayon_thread_pool(0.9);
-
-    // Clean up old cached elevation tiles on startup
     elevation_data::cleanup_old_cached_tiles();
 
-    // Determine world format and output path
     let world_format = if args.bedrock {
         world_editor::WorldFormat::BedrockMcWorld
     } else {
         world_editor::WorldFormat::JavaAnvil
     };
 
-    // Build the generation output path and level name
     let (generation_path, level_name) = if args.bedrock {
         let output_dir = args
             .path
@@ -90,67 +89,37 @@ pub fn run_generation_pipeline(mut args: Args, telemetry_tx: Option<mpsc::Sender
                 return;
             }
         };
-        
+
         let msg = format!("Created new world at: {}", world_path.display().to_string());
         if let Some(ref tx) = telemetry_tx { let _ = tx.send(master_control::BesmSignal::Log(msg.clone())); }
         println!("{}", msg.bright_white().bold());
-        
+
         (world_path, None)
     };
 
-    // ==============================================================================
-    // ?? GOLPE DE ESTADO (Pipeline BESM-6 Integralizado) ??
-    // Hierarquia de Dados (0 = Máxima Prioridade, 10 = Mínima Prioridade)
-    // ==============================================================================
-    
     let mut provider_manager = providers::ProviderManager::new();
 
-    // [PRIORIDADE 10] Base universal da Internet
+    // Prioridade 10 (Base)
     provider_manager.register_provider(Box::new(providers::osm_provider::OSMProvider::new(args.scale_h)));
 
-    // [PRIORIDADE 10] Base universal Local (Ultra-rápido via SSD)
     if let Some(ref pbf_path) = args.local_pbf {
         provider_manager.register_provider(Box::new(providers::pbf_provider::PbfProvider::new(
-            pbf_path.clone(), 
-            args.scale_h, 
-            10, 
+            pbf_path.clone(),
+            args.scale_h,
+            10,
         )));
     }
 
-    // [PRIORIDADE 3] Matriz Orgânica da Natureza (1 pixel = 1 metro)
-    if let Some(ref tiff_path) = args.local_geotiff {
-        provider_manager.register_provider(Box::new(providers::raster_provider::RasterProvider::new(
-            tiff_path.clone(), 
-            args.scale_h, 
-            3,
-            args.geotiff_lat,
-            args.geotiff_lon,
-            args.geotiff_pixel_size
-        )));
-    }
-
-    // [PRIORIDADE 2] Saneamento, Energia e Submundo (WFS Dinâmico)
     if args.enable_underground_wfs {
         if let Some(ref wfs_url) = args.wfs_endpoint {
             provider_manager.register_provider(Box::new(providers::wfs_provider::WFSProvider::new(
                 wfs_url.clone(),
                 args.scale_h,
-                2, 
+                2,
             )));
         }
     }
 
-    // [PRIORIDADE 2] Mobiliário Urbano (Postes, Lixeiras e Árvores Exatas)
-    if let Some(ref csv_path) = args.local_csv {
-        provider_manager.register_provider(Box::new(providers::csv_provider::CsvProvider::new(
-            csv_path.clone(), 
-            args.scale_h, 
-            2, 
-            None
-        )));
-    }
-
-    // [PRIORIDADE 1] Bases Vetoriais Oficiais do GDF / IBGE
     if let Some(ref shp_path) = args.local_shp {
         provider_manager.register_provider(Box::new(providers::gdf_provider::GDFProvider::new(
             shp_path.clone(), args.scale_h, 1, None
@@ -168,31 +137,20 @@ pub fn run_generation_pipeline(mut args: Args, telemetry_tx: Option<mpsc::Sender
     }
     if let Some(ref citygml_path) = args.local_citygml {
         provider_manager.register_provider(Box::new(providers::citygml_provider::CityGmlProvider::new(
-            citygml_path.clone(), args.scale_h, 1, args.stream_citygml
-        )));
-    }
-
-    // [PRIORIDADE 0] A Supremacia Estrutural (Plantas Baixas CAESB)
-    if let Some(ref utility_path) = args.local_utility {
-        provider_manager.register_provider(Box::new(providers::indoor_utility_provider::IndoorUtilityProvider::new(
-            utility_path.clone(), 
-            args.scale_h, 
-            1.15, // Escala Vertical Exata 
-            0,
+            citygml_path.clone(), args.scale_h, 1
         )));
     }
 
     let mut optimized_features = match provider_manager.fetch_all(&args.bbox) {
         Ok(features) => features,
         Err(e) => {
-            let msg = format!("Error Crítico no Provider Manager: {}", e);
+            let msg = format!("Error CrÃ­tico no Provider Manager: {}", e);
             if let Some(ref tx) = telemetry_tx { let _ = tx.send(master_control::BesmSignal::Log(msg.clone())); }
             eprintln!("{}", msg.red().bold());
             return;
         }
     };
 
-    // ?? BESM-6 TWEAK: O TRANCAMENTO DE PRIORIDADE
     optimized_features.sort_by_key(|f| f.priority);
 
     let parsed_elements: Vec<osm_parser::ProcessedElement> = optimized_features
@@ -200,12 +158,9 @@ pub fn run_generation_pipeline(mut args: Args, telemetry_tx: Option<mpsc::Sender
         .map(|feature| feature.into_processed_element())
         .collect();
 
-    // ?? BESM-6 Tweak: O Cálculo das Fronteiras Globais Absolutas
     let xzbbox = coordinate_system::transformation::CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale_h)
         .unwrap()
         .1;
-
-    let ground = ground::generate_ground_data(&args);
 
     if args.debug {
         let mut buf = std::io::BufWriter::new(
@@ -217,11 +172,11 @@ pub fn run_generation_pipeline(mut args: Args, telemetry_tx: Option<mpsc::Sender
                 "Element ID: {}, Type: {}, Tags: {:?}",
                 element.id(),
                 element.kind(),
-                element.tags(),
+                element.tags(), // Aqui Ã© correto usar funÃ§Ã£o em element, a feature foi resolvida no mod.rs
             )
-            .expect("Failed to write to output file");
+                .expect("Failed to write to output file");
         }
-        let msg = "Arquivo de depuração gerado: parsed_osm_data.txt. Verifique a retenção das tags governamentais.".to_string();
+        let msg = "Arquivo de depuraÃ§Ã£o gerado: parsed_osm_data.txt.".to_string();
         if let Some(ref tx) = telemetry_tx { let _ = tx.send(master_control::BesmSignal::Log(msg.clone())); }
         println!("[INFO] {}", msg);
     }
@@ -253,15 +208,13 @@ pub fn run_generation_pipeline(mut args: Args, telemetry_tx: Option<mpsc::Sender
         format: world_format,
         level_name,
         spawn_point,
-        telemetry_channel: telemetry_tx, // ?? Injeção do Canal para o Motor Out-of-Core
+        telemetry_tx: telemetry_tx,
     };
 
-    // Generate world (Ancorado no Scanline Engine do data_processing.rs)
     match data_processing::generate_world_with_options(
         parsed_elements,
         xzbbox,
-        args.bbox,
-        ground,
+        args.bbox.clone(),
         &args,
         generation_options,
     ) {
@@ -287,14 +240,13 @@ pub fn run_generation_pipeline(mut args: Args, telemetry_tx: Option<mpsc::Sender
 fn run_cli() {
     let version: &str = env!("CARGO_PKG_VERSION");
     let repository: &str = env!("CARGO_PKG_REPOSITORY");
-    
-    // ?? BESM-6 TWEAK: A Nova Alma da Máquina
+
     println!(
         r#"
-         ¦¯¯¯¯¯¦ ¯¦¯ ¦_   ¦ ¦¯¯¯¯¯¦ ¦¯¯¯¯¯¦ ¦       ¯¦¯ ¦¯¯¯¯¯¦ ¦_   _¦
-         ¦     ¦  ¦  ¦ ¯_ ¦ ¦       ¦       ¦        ¦  ¦       ¦ ¯_¯ ¦
-         ¦_____¦  ¦  ¦   ¦¦ ¦       ¦¯¯¯¯¯¦ ¦        ¦  ¯¯¯¯¯¯_ ¦     ¦
-         ¦        ¦  ¦    ¦ ¦______ ¦______ ¦______  ¦  ______¦ ¦     ¦
+         â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆ_   â–ˆ â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ â–ˆ       â–ˆâ–ˆâ–ˆ â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ â–ˆ_   _â–ˆ
+         â–ˆ     â–ˆ  â–ˆ  â–ˆ â–ˆ_ â–ˆ â–ˆ       â–ˆ       â–ˆ        â–ˆ  â–ˆ       â–ˆ â–ˆ_â–ˆ â–ˆ
+         â–ˆ_____â–ˆ  â–ˆ  â–ˆ   â–ˆâ–ˆ â–ˆ       â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ â–ˆ        â–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ_ â–ˆ     â–ˆ
+         â–ˆ        â–ˆ  â–ˆ    â–ˆ â–ˆ______ â–ˆ______ â–ˆ______  â–ˆ  ______â–ˆ â–ˆ     â–ˆ
 
                                VERSION {}
                     {}
@@ -307,8 +259,8 @@ fn run_cli() {
         eprintln!("{}: {}", "Error checking for version updates".red().bold(), e);
     }
 
-    let args: Args = Args::parse();
-    if let Err(e) = args::validate_args(&args) {
+    let mut args: Args = Args::parse();
+    if let Err(e) = args::validate_args(&mut args) {
         eprintln!("{}: {}", "Error".red().bold(), e);
         std::process::exit(1);
     }
@@ -328,20 +280,18 @@ fn main() {
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }
 
-    // ?? BESM-6 TWEAK: Roteador de Modos de Execução
     let args_count = std::env::args().len();
-    
+
     #[cfg(feature = "gui")]
     {
         if args_count == 1 {
-            gui::run_gui();
-            return; 
+            crate::gui::run_gui();
+            return;
         }
     }
 
     #[cfg(not(feature = "gui"))]
     {
-        // Se a GUI não está compilada e o usuário rodou liso, sobe o Master Control HUD
         if args_count == 1 {
             let mut dashboard = master_control::MasterControl::new();
             dashboard.run_interactive_shell();
@@ -349,6 +299,5 @@ fn main() {
         }
     }
 
-    // Se o usuário passou argumentos (ex: pincelism --bbox ...), roda no modo Pipeline silencioso
     run_cli();
 }

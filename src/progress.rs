@@ -25,7 +25,7 @@ pub fn is_running_with_gui() -> bool {
 /// The progress updates are mapped to the new Out-of-Core Scanline pipeline:
 ///
 /// [1/7] Fetching data... (Providers: OSM, LiDAR, CityGML, WFS) - Starts at: 0% / Completes at: 5%
-/// [2/7] Parsing data... (Voxelização Local Determinística) - Starts at: 5% / Completes at: 15%
+/// [2/7] Parsing data... (Voxelizacao Local Determinï¿½stica) - Starts at: 5% / Completes at: 15%
 /// [3/7] Fetching elevation... (Virtual Grid & Downsampling) - Starts at: 15% / Completes at: 20%
 /// [4/7] Building Global Constraints... (Highway Maps & Limits) - Starts at: 20% / Completes at: 25%
 /// [5/7] Spatially Indexing Vectors... (R-Tree O(1) Routing) - Starts at: 25% / Completes at: 30%

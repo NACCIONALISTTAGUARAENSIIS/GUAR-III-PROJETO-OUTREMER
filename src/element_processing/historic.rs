@@ -47,7 +47,7 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
     let memorial_type = node
         .tags
         .get("memorial")
-        .map(|s| s.as_str())
+        .map(|s: &String| s.as_str())
         .unwrap_or("yes");
 
     match memorial_type {
@@ -59,8 +59,8 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
         "statue" | "sculpture" | "bust" => {
             // TWEAK: Esculturas Monumentais (Ex: Os Candangos / A Justiça)
             // Pedestal Monumental 3x3 para suportar a escala 1.33H
-            for dx in -1..=1 {
-                for dz in -1..=1 {
+            for dx in -1i32..=1i32 {
+                for dz in -1i32..=1i32 {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x + dx, base_y + 1, z + dz, None, None);
                 }
             }
@@ -74,7 +74,7 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
             };
 
             // Corpo da escultura (modernista) com escala 1.15V
-            for y_off in 3..=6 {
+            for y_off in 3i32..=6i32 {
                 let wy = base_y + y_off;
                 editor.set_block_absolute(statue_block, x, wy, z, None, None);
                 if y_off == 5 {
@@ -94,19 +94,19 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
         "obelisk" => {
             // TWEAK: Mastros da Bandeira e Obeliscos do DF
             let is_flagpole = node.tags.contains_key("flag:type") ||
-                node.tags.get("name").map(|s| s.contains("Bandeira")).unwrap_or(false);
+                node.tags.get("name").map(|s: &String| s.contains("Bandeira")).unwrap_or(false);
 
             let parsed_height = node
                 .tags
                 .get("height")
-                .and_then(|h| h.parse::<f64>().ok())
+                .and_then(|h: &String| h.parse::<f64>().ok())
                 .map(|h| (h * 1.15) as i32);
 
             let obelisk_height = parsed_height.unwrap_or_else(|| rng.random_range(20..35));
 
             // Base estável 5x5 (Rigor Urbanístico)
-            for dx in -2..=2 {
-                for dz in -2..=2 {
+            for dx in -2i32..=2i32 {
+                for dz in -2i32..=2i32 {
                     editor.set_block_absolute(POLISHED_ANDESITE, x + dx, base_y + 1, z + dz, None, None);
                 }
             }
@@ -133,7 +133,7 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
         }
         "stele" => {
             editor.set_block_absolute(POLISHED_ANDESITE, x, base_y + 1, z, None, None);
-            for y_off in 2..=5 {
+            for y_off in 2i32..=5i32 {
                 editor.set_block_absolute(ANDESITE_WALL, x, base_y + y_off, z, None, None);
             }
             editor.set_block_absolute(SMOOTH_STONE_SLAB, x, base_y + 6, z, None, None);
@@ -155,14 +155,14 @@ fn generate_monument(editor: &mut WorldEditor, node: &ProcessedNode) {
     let parsed_height = node
         .tags
         .get("height")
-        .and_then(|h| h.parse::<f64>().ok())
+        .and_then(|h: &String| h.parse::<f64>().ok())
         .map(|h| (h * 1.15) as i32);
 
     let height = parsed_height.unwrap_or(25).clamp(15, 100);
 
     // Large base platform 9x9 (Estilo Esplanada)
-    for dx in -4..=4 {
-        for dz in -4..=4 {
+    for dx in -4i32..=4i32 {
+        for dz in -4i32..=4i32 {
             editor.set_block_absolute(WHITE_CONCRETE, x + dx, base_y + 1, z + dz, None, None);
         }
     }
@@ -198,7 +198,7 @@ fn generate_monumental_cross(editor: &mut WorldEditor, x: i32, z: i32, base_y: i
         editor.set_block_absolute(WHITE_CONCRETE, x, base_y + y_off, z, None, None);
     }
     let arm_y = base_y + (height * 3 / 4).max(3);
-    for dw in -2..=2 {
+    for dw in -2i32..=2i32 {
         if dw != 0 {
             editor.set_block_absolute(WHITE_CONCRETE, x + dw, arm_y, z, None, None);
         }

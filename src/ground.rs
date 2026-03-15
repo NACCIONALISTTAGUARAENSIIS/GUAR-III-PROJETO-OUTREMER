@@ -1,3 +1,11 @@
+//! Ground & Elevation Management (BESM-6 Government Tier)
+//!
+//! Este módulo atua como o Roteador Topográfico do mundo (Eixo Y).
+//! Para impedir o colapso de 50GB de RAM por alocações matriciais contíguas
+//! numa escala do Distrito Federal, ele não guarda dados globais.
+//! Ele delega as consultas de altimetria em tempo constante O(1) diretamente
+//! para os provedores de DEM e DSM, que operam isoladamente na janela do Scanline.
+
 #[cfg(feature = "gui")]
 use crate::telemetry::{send_log, LogLevel};
 use crate::args::Args;
@@ -5,88 +13,78 @@ use crate::{
     coordinate_system::{cartesian::XZPoint, geographic::LLBBox},
     progress::emit_gui_progress_update,
 };
-use crate::elevation_data::{fetch_elevation_data, ElevationData};
+use crate::providers::dem_provider::DemProvider;
+use crate::providers::dsm_provider::DsmProvider;
 use colored::Colorize;
-use image::{Rgb, RgbImage};
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-/// Represents terrain data and elevation settings
-/// ?? BESM-6: Otimizado para Mem�ria Cont�gua (1D Array) e Coordenadas Absolutas
+/// Represents terrain data, stratified into Bare Earth and Surface Canopy.
+/// 🚨 BESM-6: Matrizes globais vetoriais (`Vec<i32>`) foram extintas.
+/// Apenas o extrato quantizado O(1) da região atual (Scanline) é referenciado aqui.
 #[derive(Clone)]
 pub struct Ground {
     pub elevation_enabled: bool,
-    ground_level: i32,
-    elevation_data: Option<ElevationData>,
-    
-    // Offsets Absolutos do Grid (Onde ele come�a no mundo Minecraft)
-    min_x: i32,
-    min_z: i32,
+    pub ground_level: i32,
+
+    // Caches locais do quadrante Scanline atual injetados pelo orquestrador
+    bare_earth_cache: Arc<FxHashMap<(i32, i32), i32>>,
+    canopy_surface_cache: Arc<FxHashMap<(i32, i32), i32>>,
 }
 
 impl Ground {
+    /// O Mundo Estéril (Usado se a topografia for desativada via CLI)
     pub fn new_flat(ground_level: i32) -> Self {
         Self {
             elevation_enabled: false,
             ground_level,
-            elevation_data: None,
-            min_x: 0,
-            min_z: 0,
+            bare_earth_cache: Arc::new(FxHashMap::default()),
+            canopy_surface_cache: Arc::new(FxHashMap::default()),
         }
     }
 
+    /// O Construtor Orgânico Scanline: Recebe apenas as tabelas hash da região atual.
+    /// Evita a alocação de ~50GB de RAM de um array global do tamanho do DF.
     pub fn new_enabled(
-        bbox: &LLBBox,
-        scale_h: f64,
-        scale_v: f64,
         ground_level: i32,
-        local_lidar: Option<&std::path::PathBuf>,
-        // ?? Precisamos do X/Z m�nimo global para alinhar o raster
-        global_min_x: i32, 
-        global_min_z: i32,
+        bare_earth_cache: Arc<FxHashMap<(i32, i32), i32>>,
+        canopy_surface_cache: Arc<FxHashMap<(i32, i32), i32>>,
     ) -> Self {
-        match fetch_elevation_data(bbox, scale_h, scale_v, ground_level, local_lidar) {
-            Ok(elevation_data) => Self {
-                elevation_enabled: true,
-                ground_level,
-                elevation_data: Some(elevation_data),
-                min_x: global_min_x,
-                min_z: global_min_z,
-            },
-            Err(e) => {
-                eprintln!("Failed to fetch elevation data: {}", e);
-                #[cfg(feature = "gui")]
-                send_log(
-                    LogLevel::Warning,
-                    "Elevation unavailable, using flat ground",
-                );
-                // Graceful fallback: disable elevation and keep provided ground_level
-                Self {
-                    elevation_enabled: false,
-                    ground_level,
-                    elevation_data: None,
-                    min_x: global_min_x,
-                    min_z: global_min_z,
-                }
-            }
+        Self {
+            elevation_enabled: true,
+            ground_level,
+            bare_earth_cache,
+            canopy_surface_cache,
         }
     }
 
-    /// Returns the ground level at the given ABSOLUTE Minecraft coordinates
+    /// Retorna a altura do Terreno Nu (Bare Earth) na coordenada absoluta.
+    /// Delega a consulta direta à tabela hash pré-quantizada.
     #[inline(always)]
     pub fn level(&self, coord: XZPoint) -> i32 {
         if !self.elevation_enabled {
             return self.ground_level;
         }
 
-        if let Some(data) = &self.elevation_data {
-            // ?? BESM-6 Tweak: Fim do Ratio Relativo. Mapeamento 1:1 Direto
-            // Calcula o deslocamento do bloco atual em rela��o ao in�cio do Grid
-            let local_x = (coord.x - self.min_x) as f64;
-            let local_z = (coord.z - self.min_z) as f64;
+        // Se o provedor DEM não encontrou dados para esta coordenada exata
+        // (por falta de pontos do LiDAR ou buraco no raster), assumimos o ground level global.
+        // O algoritmo de Blur e Preenchimento O(1) do dem_provider deve cobrir >99% dos casos.
+        *self.bare_earth_cache.get(&(coord.x, coord.z)).unwrap_or(&self.ground_level)
+    }
 
-            self.interpolate_height_absolute(local_x, local_z, data)
+    /// Retorna a altura absoluta da Superfície (Telhados, copas de árvores, pontes).
+    /// Usado primariamente para extração do pé-direito de extrusão: (Surface Y - Bare Y)
+    #[inline(always)]
+    pub fn surface_level(&self, coord: XZPoint) -> i32 {
+        if !self.elevation_enabled {
+            return self.ground_level;
+        }
+
+        // Tenta puxar a superfície. Se não existir DSM, fallback para o DEM (Chão).
+        if let Some(surface_y) = self.canopy_surface_cache.get(&(coord.x, coord.z)) {
+            *surface_y
         } else {
-            self.ground_level
+            self.level(coord) // Se não tem teto, o teto é o chão
         }
     }
 
@@ -107,122 +105,8 @@ impl Ground {
         }
         coords.map(|c: XZPoint| self.level(c)).max()
     }
-
-    /// Interpolates height value using Smootherstep Bilinear Interpolation
-    /// on a contiguous 1D Array (Flat Vector) for massive memory performance.
-    #[inline(always)]
-    fn interpolate_height_absolute(&self, local_x: f64, local_z: f64, data: &ElevationData) -> i32 {
-        // Clamp nas bordas (Seguran�a contra consultas fora do bloco do DF)
-        let max_x = (data.width.saturating_sub(1)) as f64;
-        let max_z = (data.height.saturating_sub(1)) as f64;
-
-        let gx = local_x.clamp(0.0, max_x);
-        let gz = local_z.clamp(0.0, max_z);
-
-        // Pegar os �ndices dos 4 pixels (blocos) ao redor do nosso ponto
-        let x1 = gx.floor() as usize;
-        let x2 = (x1 + 1).min(data.width - 1);
-        let z1 = gz.floor() as usize;
-        let z2 = (z1 + 1).min(data.height - 1);
-
-        // Dist�ncia fracion�ria do ponto x1 e z1 originais
-        let mut tx = gx - x1 as f64;
-        let mut tz = gz - z1 as f64;
-
-        // O TWEAK DE ELITE: Smootherstep (Ken Perlin)
-        tx = tx * tx * tx * (tx * (tx * 6.0 - 15.0) + 10.0);
-        tz = tz * tz * tz * (tz * (tz * 6.0 - 15.0) + 10.0);
-
-        // ?? BESM-6: Leitura em Matriz 1D (z * width + x)
-        let w = data.width;
-        let h00 = data.heights[z1 * w + x1] as f64;
-        let h10 = data.heights[z1 * w + x2] as f64;
-        let h01 = data.heights[z2 * w + x1] as f64;
-        let h11 = data.heights[z2 * w + x2] as f64;
-
-        // Interpola��o no eixo X (Horizontal)
-        let h0 = h00 * (1.0 - tx) + h10 * tx;
-        let h1 = h01 * (1.0 - tx) + h11 * tx;
-
-        // Interpola��o final no eixo Z (Vertical/Profundidade)
-        let final_height = h0 * (1.0 - tz) + h1 * tz;
-
-        final_height.round() as i32
-    }
-
-    fn save_debug_image(&self, filename: &str) {
-        let data = match &self.elevation_data {
-            Some(d) => d,
-            None => return,
-        };
-            
-        if data.heights.is_empty() || data.width == 0 {
-            return;
-        }
-
-        let height = data.height;
-        let width = data.width;
-        let mut img: image::ImageBuffer<Rgb<u8>, Vec<u8>> =
-            RgbImage::new(width as u32, height as u32);
-
-        let mut min_height: i32 = i32::MAX;
-        let mut max_height: i32 = i32::MIN;
-
-        for &h in &data.heights {
-            min_height = min_height.min(h);
-            max_height = max_height.max(h);
-        }
-
-        // Tweak de Seguran�a: Evita divis�o por zero se o terreno for completamente plano
-        let range = max_height - min_height;
-        let safe_range = if range == 0 { 1.0 } else { range as f64 };
-
-        for y in 0..height {
-            for x in 0..width {
-                let h = data.heights[y * width + x];
-                let normalized: u8 =
-                    (((h - min_height) as f64 / safe_range) * 255.0) as u8;
-                img.put_pixel(
-                    x as u32,
-                    y as u32,
-                    Rgb([normalized, normalized, normalized]),
-                );
-            }
-        }
-
-        // Ensure filename has .png extension
-        let filename: String = if !filename.ends_with(".png") {
-            format!("{filename}.png")
-        } else {
-            filename.to_string()
-        };
-
-        if let Err(e) = img.save(&filename) {
-            eprintln!("Failed to save debug image: {e}");
-        }
-    }
 }
 
-pub fn generate_ground_data(args: &Args, xzbbox: &crate::coordinate_system::cartesian::XZBBox) -> Ground {
-    if args.terrain {
-        println!("{} Fetching elevation (LiDAR/SRTM)...", "[3/7]".bold());
-        #[cfg(feature = "gui")]
-        emit_gui_progress_update(14.0, "Fetching elevation...");
-        
-        let ground = Ground::new_enabled(
-            &args.bbox,
-            args.scale_h,
-            args.scale_v,
-            args.ground_level,
-            args.local_lidar.as_ref(), // Passa o caminho do LiDAR se existir (Gov-Tier)
-            xzbbox.min_x(), // Injeta o offset absoluto X
-            xzbbox.min_z(), // Injeta o offset absoluto Z
-        );
-        
-        if args.debug {
-            ground.save_debug_image("elevation_debug");
-        }
-        return ground;
-    }
-    Ground::new_flat(args.ground_level)
-}
+// 🚨 O Gerador Original (generate_ground_data) foi DELETADO e movido para a
+// lógica de Scanline dentro de `data_processing.rs`, pois ele não pode mais
+// ser rodado globalmente antes do motor começar a andar pelas regiões.

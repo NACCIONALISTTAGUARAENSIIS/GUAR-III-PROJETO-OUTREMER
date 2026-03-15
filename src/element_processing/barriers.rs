@@ -7,20 +7,20 @@ use rand::Rng;
 
 // ?? BESM-6: Constantes de Escala Governamental
 const V_SCALE: f64 = 1.15;
-const _H_SCALE: f64 = 1.33; // Usada em larguras de vias, muros são linhas grossura 1.
+const _H_SCALE: f64 = 1.33; // Usada em larguras de vias, muros sï¿½o linhas grossura 1.
 
-// ?? BESM-6 Tweak: Matriz Culling Avançada O(1)
-// Muros nunca devem destruir rodovias, calçadas nobres, água ou árvores do cerrado.
+// ?? BESM-6 Tweak: Matriz Culling AvanÃ§ada O(1)
+// Muros nunca devem destruir rodovias, calï¿½adas nobres, ï¿½gua ou ï¿½rvores do cerrado.
 const URBAN_CLASH_BLACKLIST: &[Block] = &[
     BLACK_CONCRETE,    // Asfalto Monumental e Rodovias
     POLISHED_BASALT,   // Asfalto da W3
     WHITE_CONCRETE,    // Faixas de pedestre e rua
     YELLOW_CONCRETE,   // Ciclovias/Faixas centrais
-    RED_CONCRETE,      // Ciclovia do Guará/Parque da Cidade
-    POLISHED_ANDESITE, // Calçadas VIP e Passarelas
-    SMOOTH_STONE_SLAB, // Calçadão
-    WATER,             // Não ergue muros DENTRO do lago paranoá, a não ser que seja ponte
-    OAK_LOG,           // ?? Orgânico: Respeita árvores nativas do cerrado
+    RED_CONCRETE,      // Ciclovia do Guarï¿½/Parque da Cidade
+    POLISHED_ANDESITE, // Calï¿½adas VIP e Passarelas
+    SMOOTH_STONE_SLAB, // Calï¿½adï¿½o
+    WATER,             // Nï¿½o ergue muros DENTRO do lago paranoï¿½, a nï¿½o ser que seja ponte
+    OAK_LOG,           // ?? Orgï¿½nico: Respeita ï¿½rvores nativas do cerrado
     DARK_OAK_LOG,
     JUNGLE_LOG,
     ACACIA_LOG,
@@ -31,7 +31,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
     let mut barrier_material: Block = COBBLESTONE_WALL;
     let mut barrier_height: f64 = 2.0; 
     
-    // Flags de Tipologia Arquitetônica do DF
+    // Flags de Tipologia Arquitetï¿½nica do DF
     let mut is_cobogo = false;         
     let mut is_guardrail = false;      
     let mut is_green_railing = false;  
@@ -40,19 +40,19 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
     let mut is_sound_wall = false;     
     let mut is_rural_wire = false;     
     let mut is_security_wall = false;  
-    let mut is_institutional_fence = false; // Embaixadas, Quartéis, Itamaraty
+    let mut is_institutional_fence = false; // Embaixadas, Quartï¿½is, Itamaraty
     let mut is_median_barrier = false; // Canteiros centrais baixos
 
     let tags = element.tags();
     
     let is_residential = tags.get("residential").is_some() || tags.get("security").is_some();
-    let name = tags.get("name").map(|s| s.to_lowercase()).unwrap_or_default();
+    let name = tags.get("name").map(|s: &String| s.to_lowercase()).unwrap_or_default();
     
-    // Análise Semântica Fina
-    let is_embassy_or_gov = name.contains("embaixada") || name.contains("ministério") || name.contains("palácio") || tags.get("amenity") == Some(&"embassy".to_string());
+    // Anï¿½lise Semï¿½ntica Fina
+    let is_embassy_or_gov = name.contains("embaixada") || name.contains("ministï¿½rio") || name.contains("palï¿½cio") || tags.get("amenity") == Some(&"embassy".to_string());
     let is_school_or_military = tags.get("amenity") == Some(&"school".to_string()) || tags.get("landuse") == Some(&"military".to_string());
 
-    match tags.get("barrier").map(|s| s.as_str()) {
+    match tags.get("barrier").map(|s: &String| s.as_str()) {
         Some("bollard") => {
             barrier_material = DIORITE_WALL; 
             barrier_height = 0.8;
@@ -74,7 +74,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
             is_sound_wall = true;
         }
         Some("fence") => {
-            match tags.get("fence_type").map(|s| s.as_str()) {
+            match tags.get("fence_type").map(|s: &String| s.as_str()) {
                 Some("railing" | "bars" | "krest") => {
                     barrier_material = IRON_BARS; 
                     barrier_height = 2.0;
@@ -92,7 +92,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     if is_school_or_military { barrier_height = 4.0; is_security_wall = true; }
                 }
                 Some("barbed_wire" | "electric") => {
-                    barrier_material = IRON_BARS; // Usar iron_bars com concertina por cima é mais seguro pra IA dos mobs
+                    barrier_material = IRON_BARS; // Usar iron_bars com concertina por cima ï¿½ mais seguro pra IA dos mobs
                     barrier_height = 2.0;
                     is_rural_wire = true;
                 }
@@ -114,7 +114,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     is_security_wall = is_residential;
                 }
                 _ => {
-                    if tags.get("landuse").map(|s| s.as_str()) == Some("farmland") {
+                    if tags.get("landuse").map(|s: &String| s.as_str()) == Some("farmland") {
                         barrier_material = OAK_FENCE;
                         barrier_height = 1.5;
                         is_rural_wire = true;
@@ -154,14 +154,14 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
         _ => {}
     }
 
-    // Override Explícito de Altura (Padrão OSM e Governo)
+    // Override Explï¿½cito de Altura (Padrï¿½o OSM e Governo)
     if let Some(h_str) = tags.get("height").or_else(|| tags.get("height:barrier")) {
         if let Ok(h) = h_str.trim_end_matches('m').trim().parse::<f64>() {
             barrier_height = h;
         }
     }
 
-    // Override Explícito de Material
+    // Override Explï¿½cito de Material
     if let Some(barrier_mat) = tags.get("material").or_else(|| tags.get("surface")) {
         match barrier_mat.as_str() {
             "brick" => barrier_material = BRICK,
@@ -217,7 +217,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
 
             let bresenham_points: Vec<(i32, i32, i32)> = bresenham_line(prev.x, 0, prev.z, cur.x, 0, cur.z);
             
-            // ?? RESET por Segmento (Corrige o espaçamento irregular de postes longos)
+            // ?? RESET por Segmento (Corrige o espaï¿½amento irregular de postes longos)
             let mut segment_distance = 0; 
 
             for (bx, _, bz) in bresenham_points {
@@ -227,15 +227,15 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                 last_point = Some((bx, bz));
                 segment_distance += 1;
                 
-                // Hash Espacial Orgânico O(1)
+                // Hash Espacial Orgï¿½nico O(1)
                 let mut rng = coord_rng(bx, bz, way.id);
 
                 // ?? TOPOGRAFIA SUAVE: Evita degraus absurdos sob muros em ladeiras
-                // Pega a média de altura local em um raio 3x3 se houver terreno ativo
+                // Pega a mï¿½dia de altura local em um raio 3x3 se houver terreno ativo
                 let mut local_y_sum = 0;
                 let mut count = 0;
-                for ox in -1..=1 {
-                    for oz in -1..=1 {
+                for ox in -1i32..=1i32 {
+                    for oz in -1i32..=1i32 {
                         local_y_sum += editor.get_ground_level(bx + ox, bz + oz);
                         count += 1;
                     }
@@ -243,14 +243,14 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                 let avg_ground_y = (local_y_sum as f64 / count as f64).round() as i32;
                 let exact_ground_y = editor.get_ground_level(bx, bz);
 
-                // Culling de Intersecção: Se bateu num asfalto monumental ou água, pula.
+                // Culling de Intersecï¿½ï¿½o: Se bateu num asfalto monumental ou ï¿½gua, pula.
                 if editor.check_for_block_absolute(bx, exact_ground_y, bz, Some(URBAN_CLASH_BLACKLIST), None) {
                     continue; 
                 }
 
-                // ?? FUNDAÇÃO ESTÁVEL E FLUIDA
+                // ?? FUNDAï¿½ï¿½O ESTï¿½VEL E FLUIDA
                 // Para evitar buracos de ar debaixo de muros em subidas, o muro "afunda" 1 bloco ou mais
-                // dependendo da média local, consolidando o aterro.
+                // dependendo da mï¿½dia local, consolidando o aterro.
                 let foundation_y = avg_ground_y.min(exact_ground_y) - 1;
                 let is_foundation_safe = !editor.check_for_block_absolute(bx, foundation_y, bz, Some(&[IRON_BLOCK, AIR]), None);
                 
@@ -269,26 +269,26 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     if is_institutional_fence {
                         if dy == 0 {
                             editor.set_block_absolute(STONE_BRICKS, bx, absolute_y, bz, None, None);
-                        } else if rng.gen_bool(0.2) { // Espaçamento orgânico
+                        } else if rng.random_bool(0.2) { // Espaï¿½amento orgï¿½nico
                             editor.set_block_absolute(STONE_BRICK_WALL, bx, absolute_y, bz, None, None);
                         } else {
                             editor.set_block_absolute(IRON_BARS, bx, absolute_y, bz, None, None);
                         }
                     }
-                    // 2. Lógica do COBOGÓ
+                    // 2. Lï¿½gica do COBOGï¿½
                     else if is_cobogo && is_solid_block && dy > 1 {
                         let is_hole = (bx + absolute_y + bz) % 2 != 0;
                         if !is_hole {
                             editor.set_block_absolute(barrier_material, bx, absolute_y, bz, None, None);
                         }
                     } 
-                    // 3. Muros Maciços (Weathering Realista e Pilares)
+                    // 3. Muros Maciï¿½os (Weathering Realista e Pilares)
                     else if is_solid_block && !is_cobogo {
                         let mut final_mat = barrier_material;
                         
-                        if dy <= 1 && rng.gen_bool(0.25) && (barrier_material == WHITE_CONCRETE || barrier_material == SMOOTH_QUARTZ) {
+                        if dy <= 1 && rng.random_bool(0.25) && (barrier_material == WHITE_CONCRETE || barrier_material == SMOOTH_QUARTZ) {
                             final_mat = WHITE_TERRACOTTA; 
-                        } else if dy > 0 && rng.gen_bool(0.12) {
+                        } else if dy > 0 && rng.random_bool(0.12) {
                             final_mat = match barrier_material {
                                 BRICK => BRICK_STAIRS, 
                                 STONE_BRICKS => CRACKED_STONE_BRICKS,
@@ -305,7 +305,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
 
                         editor.set_block_absolute(final_mat, bx, absolute_y, bz, None, None);
                     } 
-                    // 4. Lógica de GRADES VERDES (NOVACAP) e ALAMBRADOS
+                    // 4. Lï¿½gica de GRADES VERDES (NOVACAP) e ALAMBRADOS
                     else if barrier_material == IRON_BARS {
                         let is_post = segment_distance % 5 == 0;
 
@@ -320,7 +320,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                             editor.set_block_absolute(IRON_BARS, bx, absolute_y, bz, None, None);
                         }
                     }
-                    // 5. Lógica de CERCA RURAL COM MOURÕES 
+                    // 5. Lï¿½gica de CERCA RURAL COM MOURï¿½ES 
                     else if is_rural_wire {
                         let is_post = segment_distance % 4 == 0;
                         if is_post {
@@ -329,7 +329,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                             editor.set_block_absolute(IRON_BARS, bx, absolute_y, bz, None, None);
                         }
                     }
-                    // 6. Lógica das BARREIRAS ACÚSTICAS DA EPTG
+                    // 6. Lï¿½gica das BARREIRAS ACï¿½STICAS DA EPTG
                     else if is_sound_wall {
                         if dy <= 2 {
                             editor.set_block_absolute(LIGHT_GRAY_CONCRETE, bx, absolute_y, bz, None, None); 
@@ -341,9 +341,9 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                             }
                         }
                     }
-                    // 7. Lógica de CERCA VIVA ORGÂNICA
+                    // 7. Lï¿½gica de CERCA VIVA ORGï¿½NICA
                     else if is_hedge {
-                        let leaf_mat = if rng.gen_bool(0.15) { FLOWERING_AZALEA } else { barrier_material };
+                        let leaf_mat = if rng.random_bool(0.15) { FLOWERING_AZALEA } else { barrier_material };
                         editor.set_block_absolute(leaf_mat, bx, absolute_y, bz, None, None);
                         
                         if dy == 0 && segment_distance % 3 == 0 {
@@ -360,12 +360,12 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                 }
 
                 // ============================================
-                // CÚPULA DA BARREIRA E SEGURANÇA NO TOPO
+                // Cï¿½PULA DA BARREIRA E SEGURANï¿½A NO TOPO
                 // ============================================
                 
                 let mut top_y = exact_ground_y + wall_height_blocks + 1;
                 
-                // Se foi adicionado um half slab no topo, ajustamos o Y da concertina pra não flutuar
+                // Se foi adicionado um half slab no topo, ajustamos o Y da concertina pra nï¿½o flutuar
                 let mut has_slab_now = false;
                 
                 if has_half_slab_top && is_solid_block && !is_cobogo {
@@ -379,7 +379,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     };
                     editor.set_block_absolute(top_mat, bx, top_y, bz, None, None);
                     has_slab_now = true;
-                    top_y += 1; // Próximo bloco (se houver segurança) sobe
+                    top_y += 1; // Prï¿½ximo bloco (se houver seguranï¿½a) sobe
                 }
 
                 if is_guardrail {
@@ -389,10 +389,10 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     editor.set_block_absolute(IRON_TRAPDOOR, bx, top_y, bz, None, None);
                 }
                 else if is_security_wall && wall_height_blocks >= 2 && is_solid_block {
-                    // Clusterização da Concertina (Hash Espacial: Forma aglomerados de 3-5 blocos e pula)
+                    // Clusterizaï¿½ï¿½o da Concertina (Hash Espacial: Forma aglomerados de 3-5 blocos e pula)
                     let cluster_noise = ((bx as f64 * 0.5).sin() + (bz as f64 * 0.5).cos()).abs();
                     if cluster_noise > 0.4 {
-                        let security_mat = if rng.gen_bool(0.4) { COBWEB } else { IRON_BARS }; // Mistura visual agressiva
+                        let security_mat = if rng.random_bool(0.4) { COBWEB } else { IRON_BARS }; // Mistura visual agressiva
                         editor.set_block_absolute(security_mat, bx, top_y, bz, None, None);
                     }
                 }
@@ -408,13 +408,13 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
 pub fn generate_barrier_nodes(editor: &mut WorldEditor<'_>, node: &ProcessedNode) {
     let ground_y = editor.get_ground_level(node.x, node.z);
 
-    match node.tags.get("barrier").map(|s| s.as_str()) {
+    match node.tags.get("barrier").map(|s: &String| s.as_str()) {
         Some("bollard") => {
             editor.set_block_absolute(DIORITE_WALL, node.x, ground_y + 1, node.z, None, None);
             editor.set_block_absolute(SMOOTH_STONE_SLAB, node.x, ground_y + 2, node.z, None, None);
         }
         Some("stile" | "gate" | "swing_gate" | "lift_gate" | "entrance") => {
-            // ?? TWEAK DF: Resolve o bug de portões não abrirem muros texturizados
+            // ?? TWEAK DF: Resolve o bug de portï¿½es nï¿½o abrirem muros texturizados
             let replaceable_walls: &[Block] = &[
                 COBBLESTONE_WALL, OAK_FENCE, STONE_BRICK_WALL, AZALEA_LEAVES, OAK_LEAVES,
                 STONE_BRICK_SLAB, IRON_BARS, BRICK, LIGHT_GRAY_CONCRETE, GLASS_PANE,
@@ -438,7 +438,7 @@ pub fn generate_barrier_nodes(editor: &mut WorldEditor<'_>, node: &ProcessedNode
                 None,
             );
             
-            for dy in 2..=3 {
+            for dy in 2i32..=3i32 {
                 let fill = if dy == 2 { gate_material } else { AIR };
                 editor.set_block_absolute(
                     fill,

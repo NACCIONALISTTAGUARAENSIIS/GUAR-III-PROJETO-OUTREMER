@@ -41,7 +41,7 @@ fn generate_fire_hydrant(editor: &mut WorldEditor, node: &ProcessedNode) {
     let hydrant_type = node
         .tags
         .get("fire_hydrant:type")
-        .map(|s| s.as_str())
+        .map(|s: &String| s.as_str())
         .unwrap_or("pillar");
 
     // Skip non-visible hydrant types

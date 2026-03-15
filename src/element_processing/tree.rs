@@ -10,33 +10,39 @@ use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
 use std::collections::HashMap;
 use std::f64::consts::PI;
+// üö® Ingest√£o do Aut√¥mato Bot√¢nico e Matrizes do Cerrado
+use crate::providers::raster_provider::RasterProvider;
+use crate::providers::vegetation_provider::{
+    BIOME_NONE, BIOME_MATA_GALERIA, BIOME_CERRADAO, BIOME_CERRADO_SS,
+    BIOME_CAMPO_SUJO, BIOME_VEREDA, BIOME_CAMPO_RUPESTRE, MASK_APP_SICAR
+};
 
 type Coord = (i32, i32, i32);
 
 // =====================================================
 // CONSTANTES DE BLOCOS EXTRAS (Cerrado e Builder Specs)
 // =====================================================
-pub const AZALEA_LEAVES: Block = Block::new(225); 
-pub const FLOWERING_AZALEA: Block = Block::new(189); 
-pub const MOSS_CARPET: Block = Block::new(141); 
+pub const AZALEA_LEAVES: Block = Block::new(225);
+pub const FLOWERING_AZALEA: Block = Block::new(189);
+pub const MOSS_CARPET: Block = Block::new(141);
 pub const SHORT_GRASS: Block = Block::new(29);
 pub const POLISHED_BASALT: Block = Block::new(56); // Usado para casca podre/escura na base do tronco
-pub const STRIPPED_DARK_OAK_LOG: Block = Block::new(20); // VariaÁ„o de casca lisa
+pub const STRIPPED_DARK_OAK_LOG: Block = Block::new(20); // Varia√ß√£o de casca lisa
 pub const BROWN_MUSHROOM_BLOCK: Block = Block::new(99);
 
-pub const YELLOW_TERRACOTTA: Block = Block::new(159); // IpÍ Amarelo
-pub const PINK_TERRACOTTA: Block = Block::new(159);   // IpÍ Roxo
-pub const WHITE_TERRACOTTA: Block = Block::new(159);  // IpÍ Branco
+pub const YELLOW_TERRACOTTA: Block = Block::new(159); // Ip√™ Amarelo
+pub const PINK_TERRACOTTA: Block = Block::new(159);   // Ip√™ Roxo
+pub const WHITE_TERRACOTTA: Block = Block::new(159);  // Ip√™ Branco
 pub const ORANGE_TERRACOTTA: Block = Block::new(159); // Flamboyant
-pub const YELLOW_CARPET: Block = Block::new(171); // Folhas caÌdas de IpÍ Amarelo
+pub const YELLOW_CARPET: Block = Block::new(171); // Folhas ca√≠das de Ip√™ Amarelo
 
 // =====================================================
-// ESCALAS E RUÕDO (CERRADO PROCEDURAL)
+// ESCALAS E RU√çDO (CERRADO PROCEDURAL)
 // =====================================================
 const HORIZONTAL_SCALE: f64 = 1.0 / 33.0;
 const VERTICAL_SCALE: f64 = 1.0 / 15.0;
 const GOV_V_SCALE: f64 = 1.15; // Rigor Vertical Governamental
-const GOV_H_SCALE: f64 = 1.33; // ?? BESM-6: DistorÁ„o Horizontal AnisotrÛpica
+const GOV_H_SCALE: f64 = 1.33; // üö® BESM-6: Distor√ß√£o Horizontal Anisotr√≥pica
 
 static NOISE_TERRAIN: Lazy<OpenSimplex> = Lazy::new(|| OpenSimplex::new(4242));
 static NOISE_DENSITY: Lazy<OpenSimplex> = Lazy::new(|| OpenSimplex::new(8888));
@@ -45,8 +51,8 @@ static NOISE_JITTER: Lazy<OpenSimplex> = Lazy::new(|| OpenSimplex::new(7777));
 static NOISE_BARK: Lazy<OpenSimplex> = Lazy::new(|| OpenSimplex::new(3131));
 
 // =====================================================
-// ?? BESM-6: VOXELIZA«√O LOCAL DETERMINÕSTICA
-// Matrizes de copa calculadas em tempo de execuÁ„o via equaÁıes 
+// üö® BESM-6: VOXELIZA√á√ÉO LOCAL DETERMIN√çSTICA
+// Matrizes de copa calculadas em tempo de execu√ß√£o via equa√ß√µes
 // de elipsoide, respeitando matematicamente o GOV_H_SCALE e GOV_V_SCALE.
 // =====================================================
 
@@ -61,12 +67,12 @@ static CANOPY_CACHE: Lazy<CanopyPatterns> = Lazy::new(|| {
         let mut coords = Vec::new();
         // Os raios base originais expandidos pela matriz afim
         let rx = (r * GOV_H_SCALE).round() as i32;
-        let rz = r.round() as i32; 
+        let rz = r.round() as i32;
 
         for x in -rx..=rx {
             for z in -rz..=rz {
-                // EquaÁ„o da elipse: (x^2 / a^2) + (z^2 / b^2) <= 1
-                let a = rx as f64 + 0.5; // +0.5 suaviza a quantizaÁ„o Voxel
+                // Equa√ß√£o da elipse: (x^2 / a^2) + (z^2 / b^2) <= 1
+                let a = rx as f64 + 0.5; // +0.5 suaviza a quantiza√ß√£o Voxel
                 let b = rz as f64 + 0.5;
                 if (x as f64 * x as f64) / (a * a) + (z as f64 * z as f64) / (b * b) <= 1.0 {
                     coords.push((x, 0, z));
@@ -103,7 +109,7 @@ const ACACIA_LEAVES_FILL: [(Coord, Coord); 5] = [
 ];
 
 // =====================================================
-// L”GICA DE ¡RVORE INDIVIDUAL E ORG¬NICA
+// L√ìGICA DE √ÅRVORE INDIVIDUAL E ORG√ÇNICA
 // =====================================================
 
 fn round(editor: &mut WorldEditor, material: Block, (x, y, z): Coord, block_pattern: &[Coord], blacklist: &[Block]) {
@@ -111,8 +117,8 @@ fn round(editor: &mut WorldEditor, material: Block, (x, y, z): Coord, block_patt
         let px = x + i;
         let py = y + j;
         let pz = z + k;
-        
-        // ?? Soft Canopy Check: Apenas planta a folha se n„o invadir os prÈdios
+
+        // üö® Soft Canopy Check: Apenas planta a folha se n√£o invadir os pr√©dios
         if !editor.check_for_block_absolute(px, py, pz, Some(blacklist), None) {
             editor.set_block_absolute(material, px, py, pz, None, None);
         }
@@ -121,10 +127,12 @@ fn round(editor: &mut WorldEditor, material: Block, (x, y, z): Coord, block_patt
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum TreeType {
-    Oak,     
-    DarkOak, 
-    Acacia,  
-    // EspÈcies catalogadas da NOVACAP / DF
+    Oak,
+    DarkOak,
+    Acacia,
+    Birch,    // üö® BESM-6: Fallback para OSM parks
+    Spruce,   // üö® BESM-6: Fallback para OSM parks
+    // Esp√©cies catalogadas da NOVACAP / DF
     IpeAmarelo,
     IpeRoxo,
     IpeBranco,
@@ -143,29 +151,29 @@ pub struct Tree<'a> {
 }
 
 impl Tree<'_> {
-    /// ??? BESM-6: Interceptor de Dados Reais do Provedor (NOVACAP CSV)
+    /// üö® BESM-6: Interceptor de Dados Reais do Provedor (NOVACAP CSV)
     pub fn create_from_provider(
         editor: &mut WorldEditor,
         (x, y, z): Coord,
         tags: &HashMap<String, String>,
         building_footprints: Option<&BuildingFootprintBitmap>,
     ) {
-        let species = tags.get("species").or_else(|| tags.get("csv:especie")).map(|s| s.to_lowercase()).unwrap_or_default();
-        
-        let tree_type = if species.contains("ipÍ amarelo") || species.contains("tabebuia alba") || species.contains("handroanthus albus") {
+        let species = tags.get("species").or_else(|| tags.get("csv:especie")).map(|s: &String| s.to_lowercase()).unwrap_or_default();
+
+        let tree_type = if species.contains("ip√™ amarelo") || species.contains("tabebuia alba") || species.contains("handroanthus albus") {
             TreeType::IpeAmarelo
-        } else if species.contains("ipÍ roxo") || species.contains("ipÍ rosa") || species.contains("handroanthus impetiginosus") {
+        } else if species.contains("ip√™ roxo") || species.contains("ip√™ rosa") || species.contains("handroanthus impetiginosus") {
             TreeType::IpeRoxo
-        } else if species.contains("ipÍ branco") || species.contains("tabebuia roseoalba") {
+        } else if species.contains("ip√™ branco") || species.contains("tabebuia roseoalba") {
             TreeType::IpeBranco
         } else if species.contains("buriti") || species.contains("mauritia flexuosa") {
             TreeType::Buriti
         } else if species.contains("sucupira") || species.contains("pterodon") {
             TreeType::Sucupira
-        } else if species.contains("copaÌba") || species.contains("copaifera") {
+        } else if species.contains("copa√≠ba") || species.contains("copaifera") {
             TreeType::Copaiba
         } else if species.contains("flamboyant") {
-            TreeType::Acacia 
+            TreeType::Acacia
         } else {
             let mut rng = coord_rng(x, z, 0);
             match rng.random_range(1..=10) {
@@ -218,20 +226,20 @@ impl Tree<'_> {
         }
 
         let ground_y = if editor.get_ground().is_some() { editor.get_ground_level(x, z) } else { y };
-        
+
         let mut blacklist: Vec<Block> = Vec::new();
         blacklist.extend(Self::get_building_wall_blocks());
         blacklist.extend(Self::get_building_floor_blocks());
         blacklist.extend(Self::get_structural_blocks());
         blacklist.extend(Self::get_functional_blocks());
-        blacklist.push(WATER); 
-        blacklist.push(BLACK_CONCRETE); 
+        blacklist.push(WATER);
+        blacklist.push(BLACK_CONCRETE);
         blacklist.push(YELLOW_CONCRETE);
         blacklist.push(WHITE_CONCRETE);
         blacklist.push(RED_CONCRETE);
-        blacklist.push(POLISHED_BASALT); 
+        blacklist.push(POLISHED_BASALT);
 
-        // Se a semente principal bateu no prÈdio, cancela.
+        // Se a semente principal bateu no pr√©dio, cancela.
         if editor.check_for_block_absolute(x, ground_y, z, Some(&blacklist), None) {
             return;
         }
@@ -251,14 +259,18 @@ impl Tree<'_> {
 
         if tree_type == TreeType::Buriti {
             editor.fill_column_absolute(JUNGLE_LOG, x, z, ground_y, ground_y + tree.log_height, true);
-            for dy in -2..=1 {
-                for dx in -2..=2 {
-                    for dz in -2..=2 {
-                        if dx.abs() + dz.abs() <= 3 && dy != -2 {
+            for dy in -2i32..=1i32 {
+                for dx in -2i32..=2i32 {
+                    for dz in -2i32..=2i32 {
+                        // üö® Tipagem expl√≠cita pura para aniquilar ambiguidade E0689
+                        let dx_i: i32 = dx;
+                        let dz_i: i32 = dz;
+
+                        if dx_i.abs() + dz_i.abs() <= 3 && dy != -2 {
                             if !editor.check_for_block_absolute(x + dx, ground_y + tree.log_height + dy, z + dz, Some(&blacklist), None) {
                                 editor.set_block_absolute(JUNGLE_LEAVES, x + dx, ground_y + tree.log_height + dy, z + dz, None, None);
                             }
-                        } else if dx.abs() + dz.abs() == 1 && dy == -2 {
+                        } else if dx_i.abs() + dz_i.abs() == 1 && dy == -2 {
                             if !editor.check_for_block_absolute(x + dx, ground_y + tree.log_height + dy, z + dz, Some(&blacklist), None) {
                                 editor.set_block_absolute(JUNGLE_LEAVES, x + dx, ground_y + tree.log_height + dy, z + dz, None, None);
                             }
@@ -269,35 +281,39 @@ impl Tree<'_> {
             return;
         }
 
-        // ?? BESM-6 TWEAK: Center of Mass Shift (SimulaÁ„o R·pida de Fototropismo O(1))
-        // Verifica se h· paredes nos eixos cardeais num raio de 4 blocos na altura H=2.
-        // Se houver, a ·rvore tomba todo o seu esqueleto pro lado oposto, tirando
-        // a copa da colis„o est˙pida.
+        // üö® BESM-6 TWEAK: Center of Mass Shift (Simula√ß√£o R√°pida de Fototropismo O(1))
+        // Verifica se h√° paredes nos eixos cardeais num raio de 4 blocos na altura H=2.
+        // Se houver, a √°rvore tomba todo o seu esqueleto pro lado oposto, tirando
+        // a copa da colis√£o est√∫pida.
         let mut drift_offset_x = 0;
         let mut drift_offset_z = 0;
-        
+
         let check_h = ground_y + 2;
         if editor.check_for_block_absolute(x + 4, check_h, z, Some(&blacklist), None) { drift_offset_x = -1; }
         if editor.check_for_block_absolute(x - 4, check_h, z, Some(&blacklist), None) { drift_offset_x = 1; }
         if editor.check_for_block_absolute(x, check_h, z + 4, Some(&blacklist), None) { drift_offset_z = -1; }
         if editor.check_for_block_absolute(x, check_h, z - 4, Some(&blacklist), None) { drift_offset_z = 1; }
 
-        let root_radius = if is_old_tree { 2 } else { 1 };
-        
-        for dy in -2..=1 {
-            for dx in -root_radius..=root_radius {
-                for dz in -root_radius..=root_radius {
-                    if dx == 0 && dz == 0 { continue; } 
+        let root_radius: i32 = if is_old_tree { 2 } else { 1 };
 
+        for dy in -2i32..=1i32 {
+            for offset_x in -root_radius..=root_radius {
+                for offset_z in -root_radius..=root_radius {
+                    if offset_x == 0 && offset_z == 0 { continue; }
+
+                    // üö® Tipagem estrita: declarando explicitamente como i32 para aniquilar ambiguidade do abs()
+                    let dx: i32 = offset_x;
+                    let dz: i32 = offset_z;
                     let dist = dx.abs() + dz.abs();
+
                     let radius_check = if dy < 0 { root_radius + 1 } else { root_radius };
 
-                    if dist <= radius_check && rng.gen_bool(0.65) {
+                    if dist <= radius_check && rng.random_bool(0.65) {
                         let rx = x + dx;
                         let rz = z + dz;
                         let ry = ground_y + dy;
 
-                        let root_block = if dy >= 0 && rng.gen_bool(0.3) { POLISHED_BASALT } else { tree.log_block };
+                        let root_block = if dy >= 0 && rng.random_bool(0.3) { POLISHED_BASALT } else { tree.log_block };
 
                         if dy >= 0 {
                             if !editor.check_for_block_absolute(rx, ry, rz, Some(&blacklist), None) {
@@ -316,79 +332,79 @@ impl Tree<'_> {
 
         for ty in 0..tree.log_height {
             let wy = ground_y + ty;
-            
+
             // Entorta levemente pela Sucupira/Acacia
             if is_twisted && ty > 2 && ty < tree.log_height - 2 {
                 let drift_n = NOISE_JITTER.get([x as f64 * 0.1, wy as f64 * 0.3, z as f64 * 0.1]);
-                if drift_n > 0.4 { current_x += 1; } 
+                if drift_n > 0.4 { current_x += 1; }
                 else if drift_n < -0.4 { current_x -= 1; }
 
                 let drift_nz = NOISE_JITTER.get([z as f64 * 0.1, wy as f64 * 0.3, x as f64 * 0.1]);
-                if drift_nz > 0.4 { current_z += 1; } 
+                if drift_nz > 0.4 { current_z += 1; }
                 else if drift_nz < -0.4 { current_z -= 1; }
             }
 
-            // Aplica o Pux„o de Gravidade ArquitetÙnico (Tira do PrÈdio)
+            // Aplica o Pux√£o de Gravidade Arquitet√¥nico (Tira do Pr√©dio)
             if ty > 1 {
                 current_x += drift_offset_x;
                 current_z += drift_offset_z;
             }
-            
-            let bark_block = if is_old_tree && ty < 4 && rng.gen_bool(0.2) { STRIPPED_DARK_OAK_LOG } else { tree.log_block };
+
+            let bark_block = if is_old_tree && ty < 4 && rng.random_bool(0.2) { STRIPPED_DARK_OAK_LOG } else { tree.log_block };
             editor.set_block_if_absent_absolute(bark_block, current_x, wy, current_z);
-            
+
             if is_old_tree && ty < 3 {
-                let support_b = if rng.gen_bool(0.3) { POLISHED_BASALT } else { tree.log_block };
-                if rng.gen_bool(0.5) && !editor.check_for_block_absolute(current_x+1, wy, current_z, Some(&blacklist), None) { editor.set_block_if_absent_absolute(support_b, current_x+1, wy, current_z); }
-                if rng.gen_bool(0.5) && !editor.check_for_block_absolute(current_x-1, wy, current_z, Some(&blacklist), None) { editor.set_block_if_absent_absolute(support_b, current_x-1, wy, current_z); }
-                if rng.gen_bool(0.5) && !editor.check_for_block_absolute(current_x, wy, current_z+1, Some(&blacklist), None) { editor.set_block_if_absent_absolute(support_b, current_x, wy, current_z+1); }
-                if rng.gen_bool(0.5) && !editor.check_for_block_absolute(current_x, wy, current_z-1, Some(&blacklist), None) { editor.set_block_if_absent_absolute(support_b, current_x, wy, current_z-1); }
+                let support_b = if rng.random_bool(0.3) { POLISHED_BASALT } else { tree.log_block };
+                if rng.random_bool(0.5) && !editor.check_for_block_absolute(current_x+1, wy, current_z, Some(&blacklist), None) { editor.set_block_if_absent_absolute(support_b, current_x+1, wy, current_z); }
+                if rng.random_bool(0.5) && !editor.check_for_block_absolute(current_x-1, wy, current_z, Some(&blacklist), None) { editor.set_block_if_absent_absolute(support_b, current_x-1, wy, current_z); }
+                if rng.random_bool(0.5) && !editor.check_for_block_absolute(current_x, wy, current_z+1, Some(&blacklist), None) { editor.set_block_if_absent_absolute(support_b, current_x, wy, current_z+1); }
+                if rng.random_bool(0.5) && !editor.check_for_block_absolute(current_x, wy, current_z-1, Some(&blacklist), None) { editor.set_block_if_absent_absolute(support_b, current_x, wy, current_z-1); }
             }
         }
 
-        // --- ?? BESM-6: L-SYSTEM COM RAYCASTING LOCAL DE OCLUS√O ---
+        // --- üö® BESM-6: L-SYSTEM COM RAYCASTING LOCAL DE OCLUS√ÉO ---
         if tree.log_height > 6 {
             let branch_count = rng.random_range(2..=5);
             for _ in 0..branch_count {
                 let branch_y = ground_y + rng.random_range((tree.log_height / 3)..tree.log_height - 1);
                 let mut angle = rng.random_range(0..360) as f64 * PI / 180.0;
                 let branch_len = rng.random_range(2..=5);
-                
+
                 let mut bx = current_x;
                 let mut bz = current_z;
                 let mut by = branch_y;
                 let mut path_blocked = false;
 
                 for step in 1..=branch_len {
-                    // C·lculo do vetor (aplicando distorÁ„o local)
+                    // C√°lculo do vetor (aplicando distor√ß√£o local)
                     let next_bx = current_x + (angle.cos() * step as f64 * GOV_H_SCALE).round() as i32;
                     let next_bz = current_z + (angle.sin() * step as f64).round() as i32;
-                    let next_by = branch_y + (step / 2); 
-                    
+                    let next_by = branch_y + (step / 2);
+
                     // Raycast O(1): O galho vai bater na parede?
                     if editor.check_for_block_absolute(next_bx, next_by, next_bz, Some(&blacklist), None) {
-                        // Poda org‚nica: Obst·culo detectado. Aborta crescimento principal,
-                        // inverte o ‚ngulo em 180∫ para o lado escancarado.
+                        // Poda org√¢nica: Obst√°culo detectado. Aborta crescimento principal,
+                        // inverte o √¢ngulo em 180¬∫ para o lado escancarado.
                         path_blocked = true;
-                        angle += PI; 
-                        break; 
+                        angle += PI;
+                        break;
                     }
 
                     bx = next_bx;
                     bz = next_bz;
                     by = next_by;
-                    
+
                     editor.set_block_absolute(tree.log_block, bx, by, bz, None, None);
 
-                    // BifurcaÁ„o secund·ria 
+                    // Bifurca√ß√£o secund√°ria
                     if step >= branch_len - 1 || path_blocked {
                         let force_split = path_blocked;
-                        if force_split || rng.gen_bool(0.5) {
-                            let sub_angle = angle + (rng.random_range(30..60) as f64 * PI / 180.0) * if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
-                            for sub_step in 1..=2 {
+                        if force_split || rng.random_bool(0.5) {
+                            let sub_angle = angle + (rng.random_range(30..60) as f64 * PI / 180.0) * if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+                            for sub_step in 1i32..=2i32 {
                                 let sbx = bx + (sub_angle.cos() * sub_step as f64 * GOV_H_SCALE).round() as i32;
                                 let sbz = bz + (sub_angle.sin() * sub_step as f64).round() as i32;
-                                
+
                                 if !editor.check_for_block_absolute(sbx, by + sub_step, sbz, Some(&blacklist), None) {
                                     editor.set_block_absolute(tree.twig_block, sbx, by + sub_step, sbz, None, None);
                                 } else {
@@ -403,19 +419,19 @@ impl Tree<'_> {
 
         let is_ipe = tree_type == TreeType::IpeAmarelo || tree_type == TreeType::IpeRoxo || tree_type == TreeType::IpeBranco;
 
-        // --- GERA«√O DA COPA (DESLOCADA DO PR…DIO) ---
+        // --- GERA√á√ÉO DA COPA (DESLOCADA DO PR√âDIO) ---
         for ((i1, j1, k1), (i2, j2, k2)) in tree.leaves_fill {
             let start_y = (*j1 as f64 * GOV_V_SCALE).round() as i32;
             let end_y = (*j2 as f64 * GOV_V_SCALE).round() as i32;
-            
+
             for ly in start_y..=end_y {
-                let leaf_b = if is_ipe && rng.gen_bool(0.85) { tree.leaves_block } else if is_ipe { AIR } else { tree.leaves_block };
+                let leaf_b = if is_ipe && rng.random_bool(0.85) { tree.leaves_block } else if is_ipe { AIR } else { tree.leaves_block };
                 if leaf_b != AIR {
                     let dist_x = (*i1 as f64 * GOV_H_SCALE).round() as i32;
                     let px = current_x + dist_x;
                     let py = ground_y + ly;
                     let pz = current_z + k1;
-                    
+
                     if !editor.check_for_block_absolute(px, py, pz, Some(&blacklist), None) {
                         editor.set_block_if_absent_absolute(leaf_b, px, py, pz);
                     }
@@ -429,25 +445,28 @@ impl Tree<'_> {
         for (round_range, round_pattern) in tree.round_ranges.iter().zip(patterns) {
             for offset in round_range {
                 let y_scaled = (*offset as f64 * GOV_V_SCALE).round() as i32;
-                let leaf_b = if is_ipe && rng.gen_bool(0.85) { tree.leaves_block } else if is_ipe { AIR } else { tree.leaves_block };
+                let leaf_b = if is_ipe && rng.random_bool(0.85) { tree.leaves_block } else if is_ipe { AIR } else { tree.leaves_block };
                 if leaf_b != AIR {
-                    // Copa centralizada em current_x/current_z (que j· entortaram pra longe do prÈdio)
+                    // Copa centralizada em current_x/current_z (que j√° entortaram pra longe do pr√©dio)
                     round(editor, leaf_b, (current_x, ground_y + y_scaled, current_z), round_pattern, &blacklist);
                 }
             }
         }
 
-        // --- EFEITOS DE CH√O (FOLHAS CAÕDAS DE IP ) ---
-        if tree_type == TreeType::IpeAmarelo && rng.gen_bool(0.6) {
-            for lx in -4..=4 { 
-                for lz in -3..=3 {
-                    if lx.abs() + lz.abs() <= 5 && rng.gen_bool(0.4) {
+        // --- EFEITOS DE CH√ÉO (FOLHAS CA√çDAS DE IP√ä) ---
+        if tree_type == TreeType::IpeAmarelo && rng.random_bool(0.6) {
+            for lx in -4i32..=4i32 {
+                for lz in -3i32..=3i32 {
+                    // üö® Tipagem estrita
+                    let lx_i: i32 = lx;
+                    let lz_i: i32 = lz;
+                    if lx_i.abs() + lz_i.abs() <= 5 && rng.random_bool(0.4) {
                         let fx = current_x + lx;
                         let fz = current_z + lz;
                         let fy = if editor.get_ground().is_some() { editor.get_ground_level(fx, fz) } else { ground_y };
-                        
+
                         if editor.check_for_block_absolute(fx, fy, fz, Some(&[GRASS_BLOCK, DIRT, PODZOL]), None) &&
-                           editor.check_for_block_absolute(fx, fy + 1, fz, Some(&[AIR]), None) {
+                            editor.check_for_block_absolute(fx, fy + 1, fz, Some(&[AIR]), None) {
                             editor.set_block_absolute(YELLOW_CARPET, fx, fy + 1, fz, None, None);
                         }
                     }
@@ -458,7 +477,7 @@ impl Tree<'_> {
 
     fn get_tree(kind: TreeType) -> Self {
         match kind {
-            TreeType::Oak => Self {
+            TreeType::Oak | TreeType::Birch => Self {
                 log_block: OAK_LOG,
                 twig_block: OAK_FENCE,
                 log_height: 8,
@@ -470,7 +489,7 @@ impl Tree<'_> {
                     (5..=6).rev().collect(),
                 ],
             },
-            TreeType::DarkOak => Self {
+            TreeType::DarkOak | TreeType::Spruce => Self {
                 log_block: DARK_OAK_LOG,
                 twig_block: DARK_OAK_FENCE,
                 log_height: 5,
@@ -498,7 +517,7 @@ impl Tree<'_> {
                 log_block: DARK_OAK_LOG,
                 twig_block: DARK_OAK_FENCE,
                 log_height: 10,
-                leaves_block: OAK_LEAVES, 
+                leaves_block: OAK_LEAVES,
                 leaves_fill: &OAK_LEAVES_FILL,
                 round_ranges: [
                     (4..=9).rev().collect(),
@@ -593,7 +612,7 @@ impl Tree<'_> {
 }
 
 // =====================================================
-// GERA«√O PROCEDURAL DE FLORESTAS E TRONCOS CAÕDOS
+// GERA√á√ÉO PROCEDURAL DE FLORESTAS E TRONCOS CA√çDOS
 // =====================================================
 
 pub fn generate_chunk(
@@ -606,8 +625,8 @@ pub fn generate_chunk(
     let chunk_seed = (chunk_x as u64).wrapping_mul(2654435761) ^ (chunk_z as u64).wrapping_mul(2246822519);
     let mut chunk_rng = SmallRng::seed_from_u64(chunk_seed);
 
-    // Tronco CaÌdo Gigante (Dead Log do Cerrado)
-    if chunk_rng.gen_bool(0.02) {
+    // Tronco Ca√≠do Gigante (Dead Log do Cerrado)
+    if chunk_rng.random_bool(0.02) {
         generate_fallen_log(chunk_x, chunk_z, editor, &mut chunk_rng, building_footprints);
     }
 
@@ -620,13 +639,13 @@ pub fn generate_chunk(
                 if footprints.contains(wx, wz) { continue; }
             }
 
-            // Escala o RuÌdo de Perlin para a grade distorcida
+            // Escala o Ru√≠do de Perlin para a grade distorcida
             let sx = wx as f64 * HORIZONTAL_SCALE * (1.0 / GOV_H_SCALE);
             let sz = wz as f64 * HORIZONTAL_SCALE;
 
             let topo = NOISE_TERRAIN.get([sx * 0.8, sz * 0.8]);
             let moisture = ((-topo + 0.5).clamp(0.0, 1.0));
-            
+
             let base_height = if editor.get_ground().is_some() {
                 editor.get_ground_level(wx, wz)
             } else {
@@ -646,14 +665,14 @@ pub fn generate_chunk(
 
             let jitter_x = (NOISE_JITTER.get([sx * 3.0, sz * 3.0]) * 1.5).round() as i32;
             let jitter_z = (NOISE_JITTER.get([sz * 3.0, sx * 3.0]) * 1.5).round() as i32;
-            
+
             let safe_lx = (lx + jitter_x).clamp(0, 15);
             let safe_lz = (lz + jitter_z).clamp(0, 15);
-            
+
             let tx = chunk_x * 16 + safe_lx;
             let tz = chunk_z * 16 + safe_lz;
 
-            // Root Kiss Fix: Raio mÌnimo entre ·rvores org‚nicas
+            // Root Kiss Fix: Raio m√≠nimo entre √°rvores org√¢nicas
             let mut too_close = false;
             for &(px, pz) in &tree_positions {
                 let dx = tx - px;
@@ -671,11 +690,11 @@ pub fn generate_chunk(
 
             let species_roll = NOISE_SPECIES.get([sx * 1.5, sz * 1.5]);
             let tree_type = if moisture > 0.8 && species_roll > 0.7 {
-                TreeType::Buriti 
+                TreeType::Buriti
             } else if species_roll > 0.5 {
-                TreeType::Copaiba 
+                TreeType::Copaiba
             } else if species_roll < -0.5 {
-                TreeType::Sucupira 
+                TreeType::Sucupira
             } else {
                 TreeType::Acacia
             };
@@ -685,11 +704,11 @@ pub fn generate_chunk(
     }
 }
 
-/// Gera um tronco tombado e podre (Fallen Log) no ch„o do bioma
+/// Gera um tronco tombado e podre (Fallen Log) no ch√£o do bioma
 fn generate_fallen_log(
-    chunk_x: i32, 
-    chunk_z: i32, 
-    editor: &mut WorldEditor, 
+    chunk_x: i32,
+    chunk_z: i32,
+    editor: &mut WorldEditor,
     rng: &mut SmallRng,
     building_footprints: Option<&BuildingFootprintBitmap>
 ) {
@@ -712,8 +731,8 @@ fn generate_fallen_log(
 
     let len = rng.random_range(5..=12);
     let angle = rng.random_range(0..360) as f64 * PI / 180.0;
-    
-    let is_dark_oak = rng.gen_bool(0.5);
+
+    let is_dark_oak = rng.random_bool(0.5);
     let log_type = if is_dark_oak { DARK_OAK_LOG } else { OAK_LOG };
 
     for step in 0..len {
@@ -726,13 +745,13 @@ fn generate_fallen_log(
         }
 
         // Casca podre na base / textura
-        let final_block = if rng.gen_bool(0.2) { POLISHED_BASALT } else { log_type };
+        let final_block = if rng.random_bool(0.2) { POLISHED_BASALT } else { log_type };
         editor.set_block_if_absent_absolute(final_block, lx, ly, lz);
 
         // Musgo ou cogumelos espalhados pelo tronco
-        if rng.gen_bool(0.4) {
+        if rng.random_bool(0.4) {
             editor.set_block_absolute(MOSS_CARPET, lx, ly + 1, lz, Some(&[AIR]), None);
-        } else if rng.gen_bool(0.15) {
+        } else if rng.random_bool(0.15) {
             editor.set_block_absolute(BROWN_MUSHROOM_BLOCK, lx, ly + 1, lz, Some(&[AIR]), None);
         }
     }
@@ -743,13 +762,13 @@ fn generate_undergrowth(x: i32, y: i32, z: i32, moisture: f64, editor: &mut Worl
     let wy = y + 1;
 
     if moisture < 0.4 {
-        if rng.gen_bool(0.15) { editor.set_block_if_absent_absolute(SHORT_GRASS, x, wy, z); }
-        if rng.gen_bool(0.1) { editor.set_block_if_absent_absolute(MOSS_CARPET, x, wy, z); }
+        if rng.random_bool(0.15) { editor.set_block_if_absent_absolute(SHORT_GRASS, x, wy, z); }
+        if rng.random_bool(0.1) { editor.set_block_if_absent_absolute(MOSS_CARPET, x, wy, z); }
     } else {
-        if rng.gen_bool(0.12) { editor.set_block_if_absent_absolute(FLOWERING_AZALEA, x, wy, z); }
+        if rng.random_bool(0.12) { editor.set_block_if_absent_absolute(FLOWERING_AZALEA, x, wy, z); }
         // Pequenos arbustos e mato seco
-        if moisture > 0.6 && rng.gen_bool(0.3) { 
-            editor.set_block_if_absent_absolute(DEAD_BUSH, x, wy, z); 
+        if moisture > 0.6 && rng.random_bool(0.3) {
+            editor.set_block_if_absent_absolute(DEAD_BUSH, x, wy, z);
         }
     }
 }

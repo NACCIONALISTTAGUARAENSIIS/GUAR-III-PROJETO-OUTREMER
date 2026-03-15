@@ -8,7 +8,7 @@ use std::fs::File;
 use csv::ReaderBuilder;
 
 /// Provedor de Dados Tabulares Abertos (CSV).
-/// Projetado para ler listagens governamentais do dados.df.gov.br (Postes, Árvores da NOVACAP, Paragens de Autocarro).
+/// Projetado para ler listagens governamentais do dados.df.gov.br (Postes, arvores da NOVACAP, Paragens de Autocarro).
 /// Localiza dinamicamente as colunas de Latitude/Longitude e injeta pontos precisos na malha.
 pub struct CsvProvider {
     pub file_path: PathBuf,
@@ -27,7 +27,7 @@ impl CsvProvider {
         }
     }
 
-    /// Identifica dinamicamente os índices das colunas de latitude e longitude.
+    /// Identifica dinamicamente os ï¿½ndices das colunas de latitude e longitude.
     fn detect_coordinate_columns(headers: &csv::StringRecord) -> Option<(usize, usize)> {
         let mut lat_idx = None;
         let mut lon_idx = None;
@@ -35,11 +35,11 @@ impl CsvProvider {
         for (i, header) in headers.iter().enumerate() {
             let clean_header = header.trim().to_lowercase();
             
-            // Farejador heurístico para Latitude
+            // Farejador heurï¿½stico para Latitude
             if clean_header == "lat" || clean_header == "latitude" || clean_header == "y" || clean_header == "lat_y" {
                 lat_idx = Some(i);
             }
-            // Farejador heurístico para Longitude
+            // Farejador heurï¿½stico para Longitude
             if clean_header == "lon" || clean_header == "lng" || clean_header == "longitude" || clean_header == "x" || clean_header == "lon_x" {
                 lon_idx = Some(i);
             }
@@ -69,7 +69,7 @@ impl CsvProvider {
                 let col = header.trim().to_uppercase();
                 let lower_val = val_str.to_lowercase();
 
-                // Inferência Semântica do Distrito Federal (Mobiliário Urbano)
+                // Inferï¿½ncia Semï¿½ntica do Distrito Federal (Mobiliï¿½rio Urbano)
                 match col.as_str() {
                     "ESPECIE" | "NOME_CIENTIFICO" | "ARVORE" | "VEGETACAO" => {
                         is_tree = true;
@@ -97,7 +97,7 @@ impl CsvProvider {
             }
         }
 
-        // Aplica as tags estruturais baseadas na heurística
+        // Aplica as tags estruturais baseadas na heurï¿½stica
         if is_tree {
             tags.insert("natural".to_string(), "tree".to_string());
         } else if is_pole {
@@ -113,6 +113,7 @@ impl CsvProvider {
 }
 
 impl DataProvider for CsvProvider {
+    fn priority(&self) -> u8 { self.priority }
     fn name(&self) -> &str {
         "GDF Open Data (CSV Point Cloud)"
     }
@@ -123,18 +124,18 @@ impl DataProvider for CsvProvider {
         let file = File::open(&self.file_path)
             .map_err(|e| format!("Falha ao abrir ficheiro CSV: {}", e))?;
 
-        // Motor flexível: lida com separadores vírgula ou ponto-e-vírgula comuns no Brasil
+        // Motor flexï¿½vel: lida com separadores vï¿½rgula ou ponto-e-vï¿½rgula comuns no Brasil
         let mut rdr = ReaderBuilder::new()
             .flexible(true)
             .from_reader(file);
 
         let headers = rdr.headers()
-            .map_err(|e| format!("Falha ao ler o cabeçalho do CSV: {}", e))?
+            .map_err(|e| format!("Falha ao ler o cabeï¿½alho do CSV: {}", e))?
             .clone();
 
         let (lat_idx, lon_idx) = match Self::detect_coordinate_columns(&headers) {
             Some(indices) => indices,
-            None => return Err(format!("Colunas de Latitude e Longitude não encontradas no ficheiro: {}", self.file_path.display())),
+            None => return Err(format!("Colunas de Latitude e Longitude nï¿½o encontradas no ficheiro: {}", self.file_path.display())),
         };
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -149,7 +150,7 @@ impl DataProvider for CsvProvider {
                 Err(_) => continue, // Ignora linhas corrompidas silenciosamente
             };
 
-            // Extração segura das coordenadas
+            // Extraï¿½ï¿½o segura das coordenadas
             let lat_str = record.get(lat_idx).unwrap_or("").replace(",", ".");
             let lon_str = record.get(lon_idx).unwrap_or("").replace(",", ".");
 
@@ -163,10 +164,10 @@ impl DataProvider for CsvProvider {
                 Err(_) => continue,
             };
 
-            // ?? BESM-6 Tweak: Early-Z Culling Geográfico Absoluto
+            // ?? BESM-6 Tweak: Early-Z Culling Geogrï¿½fico Absoluto
             if let Ok(llpoint) = LLPoint::new(lat, lon) {
                 if !bbox.contains(&llpoint) {
-                    continue; // Ponto fora do mapa do jogador, é descartado instantaneamente
+                    continue; // Ponto fora do mapa do jogador, ï¿½ descartado instantaneamente
                 }
 
                 let tags = Self::translate_attributes(&headers, &record);

@@ -68,7 +68,7 @@ fn generate_advertising_flag(editor: &mut WorldEditor, node: &ProcessedNode) {
     let height = node
         .tags
         .get("height")
-        .and_then(|h| h.parse::<i32>().ok())
+        .and_then(|h: &String| h.parse::<i32>().ok())
         .unwrap_or(15) // Default subiu de 12 para 15
         .clamp(12, 28);
 

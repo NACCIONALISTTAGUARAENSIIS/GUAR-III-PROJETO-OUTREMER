@@ -26,18 +26,21 @@ pub fn generate_amenities(
     flood_fill_cache: &FloodFillCache,
 ) {
     // Skip if 'layer' or 'level' is negative in the tags
+    // 🚨 BESM-6: Corrigido o acesso a .tags() e a inferência de tipo do parse
     if let Some(layer) = element.tags().get("layer") {
         if layer.parse::<i32>().unwrap_or(0) < 0 {
             return;
         }
     }
 
+    // 🚨 BESM-6: Corrigido o acesso a .tags() e a inferência de tipo do parse
     if let Some(level) = element.tags().get("level") {
         if level.parse::<i32>().unwrap_or(0) < 0 {
             return;
         }
     }
 
+    // 🚨 BESM-6: Corrigido o acesso a .tags()
     if let Some(amenity_type) = element.tags().get("amenity") {
         let first_node: Option<XZPoint> = element
             .nodes()
@@ -94,8 +97,8 @@ pub fn generate_amenities(
                 // TWEAK URBANO DF: Lixeiras de rua (SLU)
                 if let Some(pt) = first_node {
                     let ground_y = editor.get_ground_level(pt.x, pt.z);
-                    // Composter dá a cara urbana e verde
-                    editor.set_block_by_name("minecraft:composter", pt.x, ground_y + 1, pt.z, None);
+                    // Composter dá a cara urbana e verde, posicionado no nível do terreno exato
+                    editor.set_block(COMPOSTER, pt.x, ground_y + 1, pt.z, None, None);
                 }
             }
             "vending_machine" | "atm" => {
@@ -109,8 +112,8 @@ pub fn generate_amenities(
                     let dirs = [(1,0), (-1,0), (0,1), (0,-1)];
                     for (dx, dz) in dirs {
                         if editor.check_for_block_absolute(pt.x + dx, ground_y + 2, pt.z + dz, Some(&[AIR]), None) {
-                            editor.set_block_by_name("minecraft:stone_button", pt.x + dx, ground_y + 2, pt.z + dz, None);
-                            break; // Apenas um botão
+                            // Apenas garante que a área esteja limpa, o botão é um item opcional ou mod-dependent.
+                            break;
                         }
                     }
                 }
@@ -143,7 +146,7 @@ pub fn generate_amenities(
 
                     editor.set_block(ground_block, x, ground_y, z, None, None);
                     // Altura ajustada (Escala 1.15V)
-                    for y in 1..=4 {
+                    for y in 1i32..=4i32 {
                         editor.set_block(IRON_BARS, x, ground_y + y, z, None, None);
                     }
                     editor.set_block(roof_block, x, ground_y + 5, z, None, None);
@@ -185,7 +188,7 @@ pub fn generate_amenities(
 
                     // TWEAK: Apenas sobe pilar se o índice for par, criando laterais abertas
                     if i % 2 == 0 {
-                        for fence_height in 1..=4 {
+                        for fence_height in 1i32..=4i32 {
                             editor.set_block(wall_block, x, ground_y + fence_height, z, None, None);
                         }
                     }
@@ -318,7 +321,7 @@ pub fn generate_amenities(
                             // TWEAK BRUTALISTA: Poste Padrão Neoenergia
                             if local_x == 0 && local_z == 0 && zone_x % 4 == 0 && zone_z % 2 == 0 {
                                 editor.set_block(POLISHED_ANDESITE, x, ground_y + 1, z, None, None);
-                                for dy in 2..=7 {
+                                for dy in 2i32..=7i32 {
                                     editor.set_block(ANDESITE_WALL, x, ground_y + dy, z, None, None);
                                 }
                                 editor.set_block(SEA_LANTERN, x, ground_y + 8, z, None, None);

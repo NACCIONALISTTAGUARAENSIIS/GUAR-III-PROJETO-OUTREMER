@@ -114,7 +114,7 @@ pub fn generate_chunk(
                 _ => (5, true, Block::Leaf),                   // Seca severa (Pequizeiro, muito torto)
             };
 
-            let trunk_height = trunk_base + rng.gen_range(0..4);
+            let trunk_height = trunk_base + rng.random_range(0..4);
 
             // =====================================================
             // CONSTRUÇÃO DO TRONCO COM TORTUOSIDADE
@@ -126,9 +126,9 @@ pub fn generate_chunk(
                 let wy = actual_base_height + y;
 
                 // Efeito de Tronco Retorcido (Cerrado Clássico)
-                if is_twisted && y > 0 && rng.gen_bool(0.35) {
-                    current_x += rng.gen_range(-1..=1);
-                    current_z += rng.gen_range(-1..=1);
+                if is_twisted && y > 0 && rng.random_bool(0.35) {
+                    current_x += rng.random_range(-1..=1);
+                    current_z += rng.random_range(-1..=1);
                 }
 
                 // CICATRIZES DE FOGO (Bark Noise)
@@ -152,13 +152,13 @@ pub fn generate_chunk(
             // COPA (Canopy)
             // =====================================================
             // TWEAK: Copas horizontais e assimétricas (Típico do Cerrado)
-            let canopy_radius_x = 2 + rng.gen_range(0..=2) + (moisture * 1.5) as i32;
-            let canopy_radius_z = 2 + rng.gen_range(0..=2) + (moisture * 1.5) as i32;
+            let canopy_radius_x = 2 + rng.random_range(0..=2) + (moisture * 1.5) as i32;
+            let canopy_radius_z = 2 + rng.random_range(0..=2) + (moisture * 1.5) as i32;
             let canopy_y = actual_base_height + trunk_height;
 
             for dx in -canopy_radius_x..=canopy_radius_x {
                 for dz in -canopy_radius_z..=canopy_radius_z {
-                    for dy in -1..=1 { // Copa muito achatada (pouca altura)
+                    for dy in -1i32..=1i32 { // Copa muito achatada (pouca altura)
 
                         // Elipse achatada para a forma da copa
                         let dist = ((dx*dx) as f64 / (canopy_radius_x*canopy_radius_x) as f64) +
@@ -167,7 +167,7 @@ pub fn generate_chunk(
 
                         if dist < 1.0 {
                             // Esparsidade: a copa do cerrado deixa a luz passar
-                            if leaf_type == Block::Leaf && rng.gen_bool(0.15) { continue; }
+                            if leaf_type == Block::Leaf && rng.random_bool(0.15) { continue; }
                             world(current_x + dx, canopy_y + dy, current_z + dz, leaf_type);
                         }
                     }
@@ -183,9 +183,9 @@ pub fn generate_chunk(
 
 /// Gera galhos laterais para árvores tortas
 fn generate_branch(x: i32, y: i32, z: i32, rng: &mut SmallRng, world: &mut dyn FnMut(i32, i32, i32, Block)) {
-    let dx = rng.gen_range(-2..=2);
-    let dz = rng.gen_range(-2..=2);
-    for i in 1..=3 {
+    let dx = rng.random_range(-2..=2);
+    let dz = rng.random_range(-2..=2);
+    for i in 1i32..=3i32 {
         world(x + (dx * i / 3), y + i, z + (dz * i / 3), Block::Log);
     }
 }
@@ -195,12 +195,12 @@ fn generate_undergrowth(x: i32, y: i32, z: i32, moisture: f64, rng: &mut SmallRn
     // Correção Ecológica: Apenas áreas secas recebem Dead Bush. Áreas úmidas recebem grama verde/arbustos.
     if moisture < 0.4 {
         // Campo Sujo (Seca): Muito Capim, Serapilheira e Arbustos Secos
-        if rng.gen_bool(0.40) { world(x, y, z, Block::Grass); }
-        if rng.gen_bool(0.08) { world(x, y, z, Block::Litter); }
-        if rng.gen_bool(0.05) { world(x, y, z, Block::DeadBush); }
+        if rng.random_bool(0.40) { world(x, y, z, Block::Grass); }
+        if rng.random_bool(0.08) { world(x, y, z, Block::Litter); }
+        if rng.random_bool(0.05) { world(x, y, z, Block::DeadBush); }
     } else {
         // Mata de Galeria/Vereda (Úmido): Arbustos vivos, pouca grama solta (sombreado)
-        if rng.gen_bool(0.15) { world(x, y, z, Block::Shrub); }
-        if rng.gen_bool(0.20) { world(x, y, z, Block::Grass); }
+        if rng.random_bool(0.15) { world(x, y, z, Block::Shrub); }
+        if rng.random_bool(0.20) { world(x, y, z, Block::Grass); }
     }
 }

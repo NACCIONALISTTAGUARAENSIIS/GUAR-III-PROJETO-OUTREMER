@@ -54,16 +54,16 @@ pub(crate) struct PaletteItem {
     pub properties: Option<Value>,
 }
 
-/// Block storage strategy for a 16×16×16 section.
+/// Block storage strategy for a 16x16x16 section.
 ///
 /// **Memory optimisation**: instead of always allocating a 4 096-byte array,
 /// we distinguish two cases:
 ///
-/// * `Uniform(block)` – every position holds the same block (1 byte).
+/// * `Uniform(block)` ï¿½ every position holds the same block (1 byte).
 ///   This covers freshly-created (all-AIR) sections, and sections that were
 ///   entirely filled with one type (e.g. STONE underground with `--fillground`).
 ///
-/// * `Full(Vec<Block>)` – the general case, equivalent to the old `[Block; 4096]`
+/// * `Full(Vec<Block>)` ï¿½ the general case, equivalent to the old `[Block; 4096]`
 ///   but heap-allocated via `Vec` so the *inline* size inside the parent
 ///   `FnvHashMap` entry is only 24 bytes (pointer + length + capacity) instead
 ///   of 4 096 bytes.  This eliminates huge HashMap-slot waste from unused
@@ -71,7 +71,7 @@ pub(crate) struct PaletteItem {
 pub(crate) enum BlockStorage {
     /// Every position is the same block (commonly AIR).
     Uniform(Block),
-    /// Mixed blocks – always exactly 4 096 entries.
+    /// Mixed blocks ï¿½ always exactly 4 096 entries.
     Full(Vec<Block>),
 }
 
@@ -91,7 +91,7 @@ impl BlockStorage {
     pub fn set(&mut self, index: usize, block: Block) {
         match self {
             BlockStorage::Uniform(b) if *b == block => {
-                // No-op – writing the same value.
+                // No-op ï¿½ writing the same value.
             }
             BlockStorage::Uniform(base) => {
                 let base = *base;
@@ -393,7 +393,7 @@ impl RegionToModify {
 }
 
 /// The entire world being modified.
-/// ?? BESM-6: Na arquitetura Out-Of-Core, isto só conterá UMA única região de cada vez
+/// ?? BESM-6: Na arquitetura Out-Of-Core, isto sï¿½ conterï¿½ UMA ï¿½nica regiï¿½o de cada vez
 #[derive(Default)]
 pub(crate) struct WorldToModify {
     pub regions: FnvHashMap<(i32, i32), RegionToModify>,

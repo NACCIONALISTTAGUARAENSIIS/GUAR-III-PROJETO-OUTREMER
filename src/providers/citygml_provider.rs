@@ -1,6 +1,6 @@
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
-use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: ProjeÁ„o ECEF Oficial
+use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: Proje√ß√£o ECEF Oficial
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,7 +17,6 @@ pub struct CityGmlProvider {
     pub file_path: PathBuf,
     pub scale_h: f64,
     pub priority: u8,
-    pub stream_mode: bool, // Exigido para arquivos massivos
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,27 +30,28 @@ enum GmlSurfaceType {
 }
 
 impl CityGmlProvider {
-    pub fn new(file_path: PathBuf, scale_h: f64, priority: u8, stream_mode: bool) -> Self {
+    // üö® BESM-6: Alinhado para 3 argumentos, removendo stream_mode desnecess√°rio (j√° √© SAX nativo)
+    pub fn new(file_path: PathBuf, scale_h: f64, priority: u8) -> Self {
         Self {
             file_path,
             scale_h,
             priority,
-            stream_mode,
         }
     }
 
-    /// Parseia uma string de floats separada por espaÁos (padr„o GML posList) 
+    /// Parseia uma string de floats separada por espa√ßos (padr√£o GML posList)
     /// em tuplas 3D (X, Y, Z).
     #[inline(always)]
     fn parse_pos_list(text: &str) -> Vec<(f64, f64, f64)> {
         let mut coords = Vec::new();
+        // üö® CORRE√á√ÉO CR√çTICA DO ITERADOR: &str nativo, sem coer√ß√£o para String
         let mut floats = text.split_whitespace().filter_map(|s| s.parse::<f64>().ok());
-        
-        // CityGML posList geralmente È 3D (srsDimension="3")
+
+        // CityGML posList geralmente √© 3D (srsDimension="3")
         while let (Some(x), Some(y), Some(z)) = (floats.next(), floats.next(), floats.next()) {
             coords.push((x, y, z));
         }
-        
+
         coords
     }
 
@@ -72,7 +72,7 @@ impl CityGmlProvider {
         let mut is_completely_outside = true;
 
         for &(x, y, z) in points_3d {
-            // CityGML Z È a elevaÁ„o real.
+            // CityGML Z √© a eleva√ß√£o real.
             if z < min_z_elev { min_z_elev = z; }
             if z > max_z_elev { max_z_elev = z; }
 
@@ -92,29 +92,29 @@ impl CityGmlProvider {
             return None;
         }
 
-        // BESM-6 Tweak: Como a malha LOD2 È um sÛlido 3D composto por v·rias faces (paredes, telhados),
-        // achatar tudo e extrair o Convex Hull (EnvoltÛria Convexa) garante um footprint 2D 
-        // perfeito e intransponÌvel para o motor do Minecraft extrudar a base.
+        // BESM-6 Tweak: Como a malha LOD2 √© um s√≥lido 3D composto por v√°rias faces (paredes, telhados),
+        // achatar tudo e extrair o Convex Hull (Envolt√≥ria Convexa) garante um footprint 2D
+        // perfeito e intranspon√≠vel para o motor do Minecraft extrudar a base.
         let geo_points: Vec<Point<f64>> = mc_points
             .iter()
             .map(|pt| Point::new(pt.x as f64, pt.z as f64))
             .collect();
-            
+
         let multi_point = MultiPoint(geo_points);
         let hull: Polygon<f64> = multi_point.convex_hull();
 
-        // Extrai os vÈrtices do casco convexo
+        // Extrai os v√©rtices do casco convexo
         let mut footprint = Vec::new();
         for coord in hull.exterior().coords() {
             footprint.push(XZPoint::new(coord.x.round() as i32, coord.y.round() as i32));
         }
 
-        let height_meters = (max_z_elev - min_z_elev).max(3.0); // No mÌnimo 3 metros (1 andar)
+        let height_meters = (max_z_elev - min_z_elev).max(3.0); // No m√≠nimo 3 metros (1 andar)
 
         Some((footprint, height_meters, is_completely_outside))
     }
 
-    /// Extrator r·pido de Bounding Box 3D para Janelas e Portas LOD3 (EspaÁo Minecraft)
+    /// Extrator r√°pido de Bounding Box 3D para Janelas e Portas LOD3 (Espa√ßo Minecraft)
     fn compute_element_aabb(
         points_3d: &[(f64, f64, f64)],
         proj: &Proj,
@@ -139,25 +139,26 @@ impl CityGmlProvider {
                 }
             }
         }
-        
-        // Aplica o Rigor de Escala Vertical BESM-6 (1.15) na elevaÁ„o da Janela
+
+        // Aplica o Rigor de Escala Vertical BESM-6 (1.15) na eleva√ß√£o da Janela
         Some((
-            min_mc_x, max_mc_x, 
-            (min_mc_y * 1.15).round() as i32, (max_mc_y * 1.15).round() as i32, 
+            min_mc_x, max_mc_x,
+            (min_mc_y * 1.15).round() as i32, (max_mc_y * 1.15).round() as i32,
             min_mc_z, max_mc_z
         ))
     }
 }
 
 impl DataProvider for CityGmlProvider {
+    fn priority(&self) -> u8 { self.priority }
     fn name(&self) -> &str {
         "CityGML 3D Provider (LOD3 SAX Stream with Facade Matrix)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ??? Iniciando scanner SAX Streaming LOD3 no CityGML: {}", self.file_path.display());
+        println!("[INFO] üè¢ Iniciando scanner SAX Streaming LOD3 no CityGML: {}", self.file_path.display());
 
-        // Inicializa bibliotecas de geolocalizaÁ„o (Assumimos SIRGAS 2000 UTM 23S para GDF)
+        // Inicializa bibliotecas de geolocaliza√ß√£o (Assumimos SIRGAS 2000 UTM 23S para GDF)
         let proj = Proj::new_known_crs("EPSG:31983", "EPSG:4326", None)
             .ok()
             .ok_or("Falha ao inicializar biblioteca PROJ para CRS 31983 -> 4326")?;
@@ -165,10 +166,10 @@ impl DataProvider for CityGmlProvider {
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
 
-        // ?? BESM-6 Tweak: SAX Streaming Engine LOD3
+        // üö® BESM-6 Tweak: SAX Streaming Engine LOD3
         let mut reader = Reader::from_file(&self.file_path)
             .map_err(|e| format!("Falha ao abrir arquivo CityGML: {}", e))?;
-        
+
         reader.trim_text(true);
 
         let mut buf = Vec::new();
@@ -178,13 +179,13 @@ impl DataProvider for CityGmlProvider {
         // Estado do parser XML Geral
         let mut in_building = false;
         let mut current_building_points: Vec<(f64, f64, f64)> = Vec::new();
-        
-        // Estado do parser XML LOD3 (Fachadas e V„os)
+
+        // Estado do parser XML LOD3 (Fachadas e V√£os)
         let mut current_surface = GmlSurfaceType::None;
         let mut current_surface_points: Vec<(f64, f64, f64)> = Vec::new();
         let mut window_count = 0;
         let mut door_count = 0;
-        let mut building_tags = HashMap::new(); // Tags do prÈdio atual sendo processado
+        let mut building_tags = HashMap::new(); // Tags do pr√©dio atual sendo processado
 
         let mut capture_text = false;
 
@@ -193,7 +194,7 @@ impl DataProvider for CityGmlProvider {
                 Ok(Event::Start(ref e)) => {
                     let name = e.name();
                     let name_str = String::from_utf8_lossy(name.as_ref());
-                    
+
                     if name_str.contains("Building") && !name_str.contains("BuildingPart") {
                         in_building = true;
                         current_building_points.clear();
@@ -201,7 +202,7 @@ impl DataProvider for CityGmlProvider {
                         window_count = 0;
                         door_count = 0;
                     } else if in_building {
-                        // Classificador de SuperfÌcie LOD3
+                        // Classificador de Superf√≠cie LOD3
                         if name_str.contains("Window") {
                             current_surface = GmlSurfaceType::Window;
                             current_surface_points.clear();
@@ -221,8 +222,8 @@ impl DataProvider for CityGmlProvider {
                     if capture_text {
                         let text = e.unescape().unwrap_or_default();
                         let points = Self::parse_pos_list(&text);
-                        
-                        // Adiciona ao volume mestre do prÈdio para calcular a AABB e o footprint geral
+
+                        // Adiciona ao volume mestre do pr√©dio para calcular a AABB e o footprint geral
                         current_building_points.extend(points.clone());
 
                         // Se for uma janela ou porta, guarda temporariamente para fatiar as coordenadas
@@ -234,11 +235,11 @@ impl DataProvider for CityGmlProvider {
                 Ok(Event::End(ref e)) => {
                     let name = e.name();
                     let name_str = String::from_utf8_lossy(name.as_ref());
-                    
+
                     if name_str.contains("posList") || name_str.contains("pos") {
                         capture_text = false;
                     } else if name_str.contains("Window") {
-                        // ?? LOD3 Tweak: ExtraÁ„o MilimÈtrica da Janela
+                        // üö® LOD3 Tweak: Extra√ß√£o Milim√©trica da Janela
                         if let Some((min_x, max_x, min_y, max_y, min_z, max_z)) = Self::compute_element_aabb(
                             &current_surface_points, &proj, &transformer
                         ) {
@@ -250,10 +251,10 @@ impl DataProvider for CityGmlProvider {
                             building_tags.insert(format!("lod3:window_{}:max_z", window_count), max_z.to_string());
                             window_count += 1;
                         }
-                        current_surface = GmlSurfaceType::Wall; // Volta pro estado de parede por padr„o
+                        current_surface = GmlSurfaceType::Wall; // Volta pro estado de parede por padr√£o
                         current_surface_points.clear();
                     } else if name_str.contains("Door") {
-                        // ?? LOD3 Tweak: ExtraÁ„o MilimÈtrica da Porta
+                        // üö® LOD3 Tweak: Extra√ß√£o Milim√©trica da Porta
                         if let Some((min_x, max_x, min_y, max_y, min_z, max_z)) = Self::compute_element_aabb(
                             &current_surface_points, &proj, &transformer
                         ) {
@@ -268,9 +269,9 @@ impl DataProvider for CityGmlProvider {
                         current_surface = GmlSurfaceType::Wall;
                         current_surface_points.clear();
                     } else if name_str.contains("Building") && !name_str.contains("BuildingPart") {
-                        // ?? FECHOU O PR…DIO: Hora de processar, consolidar as tags e limpar a RAM
+                        // üö® FECHOU O PR√âDIO: Hora de processar, consolidar as tags e limpar a RAM
                         in_building = false;
-                        
+
                         if let Some((footprint, height, is_outside)) = Self::compute_building_footprint_and_height(
                             &current_building_points,
                             &proj,
@@ -280,7 +281,7 @@ impl DataProvider for CityGmlProvider {
                             if !is_outside {
                                 building_tags.insert("source".to_string(), "GDF_CityGML_3D".to_string());
                                 building_tags.insert("building".to_string(), "yes".to_string());
-                                
+
                                 // O Arnis usa 'height' como valor escalar nas tags para definir a altura do Voxel
                                 building_tags.insert("height".to_string(), format!("{:.1}", height));
 
@@ -301,24 +302,24 @@ impl DataProvider for CityGmlProvider {
                                 next_id += 1;
                             }
                         }
-                        
-                        // Zera para o prÛximo prÈdio (Evita vazamento de memÛria - RAM continua plana O(1))
-                        current_building_points.clear(); 
+
+                        // Zera para o pr√≥ximo pr√©dio (Evita vazamento de mem√≥ria - RAM continua plana O(1))
+                        current_building_points.clear();
                         building_tags.clear();
                     }
                 }
                 Ok(Event::Eof) => break, // Fim do Arquivo XML
                 Err(e) => {
-                    eprintln!("[ALERTA] Erro de parsing SAX no CityGML na posiÁ„o {}: {:?}", reader.buffer_position(), e);
+                    eprintln!("[ALERTA] Erro de parsing SAX no CityGML na posi√ß√£o {}: {:?}", reader.buffer_position(), e);
                     break;
                 }
-                _ => (), // Ignora coment·rios, doctypes, etc.
+                _ => (), // Ignora coment√°rios, doctypes, etc.
             }
             buf.clear();
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ? SAX Streaming LOD3 finalizado: {} blocos 3D e fachadas matriciais injetadas.", features.len());
+        println!("[INFO] üè¢ SAX Streaming LOD3 finalizado: {} blocos 3D e fachadas matriciais injetadas.", features.len());
         Ok(features)
     }
 }

@@ -10,6 +10,23 @@ pub enum XZBBox {
 }
 
 impl XZBBox {
+    /// 🚨 BESM-6 TWEAK: Construtor Direto Determinístico
+    /// Instancia uma Bounding Box Retangular a partir de limites absolutos inteiros.
+    pub fn new(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> Self {
+        Self::Rect(
+            XZBBoxRect::new(
+                XZPoint { x: min_x, z: min_z },
+                XZPoint { x: max_x, z: max_z },
+            ).expect("BESM-6 Erro Crítico: Coordenadas de Bounding Box inválidas (min > max).")
+        )
+    }
+
+    /// 🚨 BESM-6 TWEAK: Alias Semântico Explícito
+    /// Utilizado quando o pipeline exige clareza absoluta de fronteiras (ex: Map Rendering).
+    pub fn explicit(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> Self {
+        Self::new(min_x, max_x, min_z, max_z)
+    }
+
     /// Construct rectangle shape bbox from the x and z lengths of the world, originated at (0, 0)
     pub fn rect_from_xz_lengths(length_x: f64, length_z: f64) -> Result<Self, String> {
         if !length_x.is_finite() {

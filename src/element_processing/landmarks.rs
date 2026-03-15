@@ -1,25 +1,27 @@
 use crate::block_definitions::*;
 use crate::osm_parser::ProcessedWay;
 use crate::world_editor::WorldEditor;
+// ðŸš¨ BESM-6: Motor de Fotogrametria Monumental
+use crate::providers::mesh_provider::MeshProvider;
 use std::f64::consts::PI;
 
-/// Escala global do mapa para referência matemática interna (Tier Governamental)
+/// Escala global do mapa para referï¿½ncia matemï¿½tica interna (Tier Governamental)
 const V_SCALE: f64 = 1.15;
 const H_SCALE: f64 = 1.33;
 
-/// Estrutura Mestra de Interceptação de Marcos Urbanos (Landmarks) de Brasília.
-/// Retorna `true` se o edifício for reconhecido e gerado por este módulo.
-/// Retorna `false` para devolver o controle ao gerador procedural padrão.
+/// Estrutura Mestra de Interceptaï¿½ï¿½o de Marcos Urbanos (Landmarks) de Brasï¿½lia.
+/// Retorna `true` se o edifï¿½cio for reconhecido e gerado por este mï¿½dulo.
+/// Retorna `false` para devolver o controle ao gerador procedural padrï¿½o.
 pub fn generate_unique_landmark(
     editor: &mut WorldEditor,
     element: &ProcessedWay,
     ground_y: i32,
 ) -> bool {
-    // ?? BESM-6 Tweak: A Guarda de Respeito Fotogramétrico
-    // Se o elemento veio dos nossos provedores de ultra-precisão 3D (LOD2/LOD3/Mesh), 
-    // nós ABORTAMOS a geração procedimental aproximada e deixamos o motor Voxel desenhar 
-    // o modelo a laser exato que extraímos do governo no main.rs.
-    let source = element.tags.get("source").map(|s| s.as_str()).unwrap_or("");
+    // ?? BESM-6 Tweak: A Guarda de Respeito Fotogramï¿½trico
+    // Se o elemento veio dos nossos provedores de ultra-precisï¿½o 3D (LOD2/LOD3/Mesh), 
+    // nï¿½s ABORTAMOS a geraï¿½ï¿½o procedimental aproximada e deixamos o motor Voxel desenhar 
+    // o modelo a laser exato que extraï¿½mos do governo no main.rs.
+    let source = element.tags.get("source").map(|s: &String| s.as_str()).unwrap_or("");
     if source == "GDF_CityGML_3D" || source == "GDF_Mesh_Voxel" || source == "Photogrammetry_Mesh" {
         return false; 
     }
@@ -28,26 +30,26 @@ pub fn generate_unique_landmark(
         .tags
         .get("name")
         .or_else(|| element.tags.get("building:name"))
-        .map(|s| s.to_lowercase())
+        .map(|s: &String| s.to_lowercase())
         .unwrap_or_default();
 
-    let is_station = element.tags.get("building").map(|s| s.as_str()) == Some("train_station")
-        || element.tags.get("railway").map(|s| s.as_str()) == Some("station")
-        || element.tags.get("station").map(|s| s.as_str()) == Some("subway");
+    let is_station = element.tags.get("building").map(|s: &String| s.as_str()) == Some("train_station")
+        || element.tags.get("railway").map(|s: &String| s.as_str()) == Some("station")
+        || element.tags.get("station").map(|s: &String| s.as_str()) == Some("subway");
 
     // =====================================================
-    // 1. EIXO MONUMENTAL E PALÁCIOS (Niemeyer/Lucio Costa)
+    // 1. EIXO MONUMENTAL E PALï¿½CIOS (Niemeyer/Lucio Costa)
     // =====================================================
 
     if name.contains("congresso nacional")
-        || name.contains("câmara dos deputados")
+        || name.contains("cï¿½mara dos deputados")
         || name.contains("senado federal")
     {
         generate_congresso(editor, element, ground_y);
         return true;
     }
 
-    if name.contains("palácio do planalto") || name.contains("palacio do planalto") {
+    if name.contains("palï¿½cio do planalto") || name.contains("palacio do planalto") {
         generate_palacio_planalto(editor, element, ground_y);
         return true;
     }
@@ -62,17 +64,17 @@ pub fn generate_unique_landmark(
         return true;
     }
 
-    if name.contains("itamaraty") || name.contains("palácio dos arcos") {
+    if name.contains("itamaraty") || name.contains("palï¿½cio dos arcos") {
         generate_itamaraty(editor, element, ground_y);
         return true;
     }
 
-    if name.contains("justiça") && name.contains("palácio") {
+    if name.contains("justiï¿½a") && name.contains("palï¿½cio") {
         generate_palacio_justica(editor, element, ground_y);
         return true;
     }
 
-    if name.contains("ministério da") || name.contains("ministerio da") || name.contains("ministério do") || name.contains("ministerio do") {
+    if name.contains("ministï¿½rio da") || name.contains("ministerio da") || name.contains("ministï¿½rio do") || name.contains("ministerio do") {
         generate_ministerio(editor, element, ground_y);
         return true;
     }
@@ -82,12 +84,12 @@ pub fn generate_unique_landmark(
         return true;
     }
 
-    if name.contains("museu nacional") && name.contains("república") {
+    if name.contains("museu nacional") && name.contains("repï¿½blica") {
         generate_museu_nacional(editor, element, ground_y);
         return true;
     }
 
-    if name.contains("teatro nacional") || name.contains("cláudio santoro") {
+    if name.contains("teatro nacional") || name.contains("clï¿½udio santoro") {
         generate_teatro_nacional(editor, element, ground_y);
         return true;
     }
@@ -106,12 +108,12 @@ pub fn generate_unique_landmark(
         return true;
     }
 
-    if name.contains("rodoviária do plano piloto") || name.contains("rodoviaria do plano piloto") {
+    if name.contains("rodoviï¿½ria do plano piloto") || name.contains("rodoviaria do plano piloto") {
         generate_rodoviaria(editor, element, ground_y);
         return true;
     }
 
-    if name.contains("estádio nacional") || name.contains("mané garrincha") || name.contains("mane garrincha") {
+    if name.contains("estï¿½dio nacional") || name.contains("manï¿½ garrincha") || name.contains("mane garrincha") {
         generate_estadio_nacional(editor, element, ground_y);
         return true;
     }
@@ -122,7 +124,7 @@ pub fn generate_unique_landmark(
     }
 
     // =====================================================
-    // 3. SETOR BANCÁRIO (Colossos Brutalistas)
+    // 3. SETOR BANCï¿½RIO (Colossos Brutalistas)
     // =====================================================
 
     if name.contains("banco do brasil") && name.contains("sede") {
@@ -130,7 +132,7 @@ pub fn generate_unique_landmark(
         return true;
     }
 
-    if (name.contains("caixa econômica") || name.contains("caixa economica")) && name.contains("matriz") {
+    if (name.contains("caixa econï¿½mica") || name.contains("caixa economica")) && name.contains("matriz") {
         generate_sede_cef(editor, element, ground_y);
         return true;
     }
@@ -140,13 +142,13 @@ pub fn generate_unique_landmark(
         return true;
     }
 
-    if (name.contains("banco de brasília") || name.contains("brb")) && name.contains("sede") {
+    if (name.contains("banco de brasï¿½lia") || name.contains("brb")) && name.contains("sede") {
         generate_sede_brb(editor, element, ground_y);
         return true;
     }
 
     // =====================================================
-    // 4. SETOR DE HOTÉIS E COMÉRCIO
+    // 4. SETOR DE HOTï¿½IS E COMï¿½RCIO
     // =====================================================
 
     if name.contains("conjunto nacional") {
@@ -163,17 +165,17 @@ pub fn generate_unique_landmark(
     // 5. MONUMENTOS DE BAIRRO
     // =====================================================
 
-    if name.contains("igrejinha") || (name.contains("nossa senhora de fátima") && name.contains("igreja")) {
+    if name.contains("igrejinha") || (name.contains("nossa senhora de fï¿½tima") && name.contains("igreja")) {
         generate_igrejinha(editor, element, ground_y);
         return true;
     }
 
-    if is_station && (name.contains("guará") || name.contains("guara")) {
+    if is_station && (name.contains("guarï¿½") || name.contains("guara")) {
         generate_estacao_guara(editor, element, ground_y);
         return true;
     }
 
-    if is_station && (name.contains("águas claras") || name.contains("aguas claras")) {
+    if is_station && (name.contains("ï¿½guas claras") || name.contains("aguas claras")) {
         generate_estacao_aguas_claras(editor, element, ground_y);
         return true;
     }
@@ -182,17 +184,17 @@ pub fn generate_unique_landmark(
 }
 
 // ============================================================================
-// HELPER GEOMÉTRICO (Rigor de Rotação e Orientação)
+// HELPER GEOMï¿½TRICO (Rigor de Rotaï¿½ï¿½o e Orientaï¿½ï¿½o)
 // ============================================================================
 
 struct OrientedBounds {
     min_x: i32, max_x: i32, min_z: i32, max_z: i32,
     cx: i32, cz: i32,
-    angle_rad: f64, // O ângulo de rotação da planta baixa no mapa real
+    angle_rad: f64, // O ï¿½ngulo de rotaï¿½ï¿½o da planta baixa no mapa real
 }
 
-/// Extrai a bounding box E calcula o ângulo de inclinação do maior segmento do prédio.
-/// ?? BESM-6 Tweak: Aplica o alargamento horizontal (H_SCALE) no esqueleto do prédio, 
+/// Extrai a bounding box E calcula o ï¿½ngulo de inclinaï¿½ï¿½o do maior segmento do prï¿½dio.
+/// ?? BESM-6 Tweak: Aplica o alargamento horizontal (H_SCALE) no esqueleto do prï¿½dio, 
 /// empurrando as bordas para longe do centro de massa para acompanhar as rodovias.
 fn get_oriented_bounds(element: &ProcessedWay) -> OrientedBounds {
     let raw_min_x = element.nodes.iter().map(|n| n.x).min().unwrap_or(0);
@@ -202,7 +204,7 @@ fn get_oriented_bounds(element: &ProcessedWay) -> OrientedBounds {
     let cx = (raw_min_x + raw_max_x) / 2;
     let cz = (raw_min_z + raw_max_z) / 2;
 
-    // Alarga a base 2D a partir do centro com proteção de precisão
+    // Alarga a base 2D a partir do centro com proteï¿½ï¿½o de precisï¿½o
     let half_w = (((raw_max_x - cx) as f64) * H_SCALE).round() as i32;
     let half_l = (((raw_max_z - cz) as f64) * H_SCALE).round() as i32;
 
@@ -220,15 +222,15 @@ fn get_oriented_bounds(element: &ProcessedWay) -> OrientedBounds {
         let len = dx*dx + dz*dz;
         if len > longest_segment {
             longest_segment = len;
-            main_angle = dz.atan2(dx); // atan2 retorna o ângulo do vetor
+            main_angle = dz.atan2(dx); // atan2 retorna o ï¿½ngulo do vetor
         }
     }
 
     OrientedBounds { min_x, max_x, min_z, max_z, cx, cz, angle_rad: main_angle }
 }
 
-/// Helper para converter coordenadas locais (do desenho geométrico puro) para globais,
-/// aplicando a matriz de rotação descoberta do mapa real.
+/// Helper para converter coordenadas locais (do desenho geomï¿½trico puro) para globais,
+/// aplicando a matriz de rotaï¿½ï¿½o descoberta do mapa real.
 #[inline(always)]
 fn rot_x(lx: f64, lz: f64, angle: f64, cx: i32) -> i32 {
     cx + (lx * angle.cos() - lz * angle.sin()).round() as i32
@@ -240,7 +242,7 @@ fn rot_z(lx: f64, lz: f64, angle: f64, cz: i32) -> i32 {
 }
 
 // ============================================================================
-// MATEMÁTICA DOS MONUMENTOS (Rigor Escala Real e Matriz de Rotação)
+// MATEMï¿½TICA DOS MONUMENTOS (Rigor Escala Real e Matriz de Rotaï¿½ï¿½o)
 // ============================================================================
 
 fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y: i32) {
@@ -249,7 +251,7 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
     let cz = bounds.cz;
     let angle = bounds.angle_rad;
 
-    // 1. Laje Monumental (Baseada no polígono real, independente de rotação)
+    // 1. Laje Monumental (Baseada no polï¿½gono real, independente de rotaï¿½ï¿½o)
     for x in bounds.min_x..=bounds.max_x {
         for z in bounds.min_z..=bounds.max_z {
             editor.set_block_absolute(WHITE_CONCRETE, x, ground_y + 1, z, None, None);
@@ -258,11 +260,11 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
         }
     }
 
-    // 2. Torres Gêmeas (Perfil H) - Usando espaço local (lx, lz) antes da rotação
+    // 2. Torres Gï¿½meas (Perfil H) - Usando espaï¿½o local (lx, lz) antes da rotaï¿½ï¿½o
     let tower_height = (100.0 * V_SCALE) as i32; // Realidade: 100 metros de altura
     let rx = (13.0 * H_SCALE) as i32;
     let rz = (15.0 * H_SCALE) as i32;
-    let h_gap = (6.0 * H_SCALE) as i32; // Vão central ampliado
+    let h_gap = (6.0 * H_SCALE) as i32; // Vï¿½o central ampliado
 
     for y in (ground_y + 4)..=(ground_y + tower_height) {
         for lx in -rx..=rx {
@@ -272,7 +274,7 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
                 let px = rot_x(lx as f64, lz as f64, angle, cx);
                 let pz = rot_z(lx as f64, lz as f64, angle, cz);
 
-                // Fachadas de vidro na frente/trás, concreto cego nos lados
+                // Fachadas de vidro na frente/trï¿½s, concreto cego nos lados
                 if lz == -rz || lz == rz {
                     editor.set_block_absolute(BLACK_STAINED_GLASS, px, y, pz, None, None);
                 } else if lx == -rx || lx == rx || lx == -h_gap - 1 || lx == h_gap + 1 {
@@ -284,14 +286,14 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
         }
     }
 
-    // 3. Cúpula Convexa (Senado) - Calota Esférica Clássica
+    // 3. Cï¿½pula Convexa (Senado) - Calota Esfï¿½rica Clï¿½ssica
     let senado_lx = -(35.0 * H_SCALE) as i32; // Deslocado para a esquerda na planta local
     let radius = (18.0 * H_SCALE) as i32;
     for lx in (senado_lx - radius)..=(senado_lx + radius) {
         for lz in -radius..=radius {
             let dist_sq = (lx - senado_lx).pow(2) + lz.pow(2);
             if dist_sq <= radius * radius {
-                // BESM-6 Tweak: Proteção Math pura .max(0.0)
+                // BESM-6 Tweak: Proteï¿½ï¿½o Math pura .max(0.0)
                 let diff = ((radius * radius - dist_sq) as f64).max(0.0);
                 let h = diff.sqrt() as i32;
                 let flat_h = (h as f64 * 0.6 * V_SCALE) as i32; // Achatamento da calota
@@ -307,7 +309,7 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
         }
     }
 
-    // 4. Cúpula Côncava (Câmara) - Bacia/Parábola Invertida ( y = x² + z² )
+    // 4. Cï¿½pula Cï¿½ncava (Cï¿½mara) - Bacia/Parï¿½bola Invertida ( y = xï¿½ + zï¿½ )
     let camara_lx = (35.0 * H_SCALE) as i32; // Deslocado para a direita na planta local
     let radius_camara = (22.0 * H_SCALE) as i32;
     let max_h = (12.0 * V_SCALE) as i32;
@@ -316,7 +318,7 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
             let dist_sq = (lx - camara_lx).pow(2) + lz.pow(2);
             if dist_sq <= radius_camara * radius_camara {
                 let norm_dist = (dist_sq as f64).sqrt() / (radius_camara as f64);
-                let h = (norm_dist * norm_dist * max_h as f64) as i32; // Parábola pura
+                let h = (norm_dist * norm_dist * max_h as f64) as i32; // Parï¿½bola pura
 
                 let px = rot_x(lx as f64, lz as f64, angle, cx);
                 let pz = rot_z(lx as f64, lz as f64, angle, cz);

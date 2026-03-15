@@ -14,7 +14,8 @@ pub fn generate_bridges(editor: &mut WorldEditor, element: &ProcessedWay) {
             editor.get_ground_level(element.nodes[0].x, element.nodes[0].z)
         } else { 0 };
 
-        if crate::landmarks::generate_unique_landmark(editor, element, base_ground_y) {
+        // 🚨 BESM-6: Corrigido caminho do sub-módulo (Erro E0433)
+        if crate::element_processing::landmarks::generate_unique_landmark(editor, element, base_ground_y) {
             return; // Se for um monumento único, o landmarks.rs assume o controle total.
         }
         // =================================================================
@@ -24,7 +25,7 @@ pub fn generate_bridges(editor: &mut WorldEditor, element: &ProcessedWay) {
 
         // Largura baseada em faixas (Rigor 1.33H)
         let lanes: f64 = element.tags.get("lanes")
-            .and_then(|s| s.parse::<f64>().ok())
+            .and_then(|s: &String| s.parse::<f64>().ok())
             .unwrap_or(2.0);
 
         // Cada faixa real (3.6m) vira ~2.7 blocos na escala 1.33.
@@ -142,7 +143,7 @@ pub fn generate_bridges(editor: &mut WorldEditor, element: &ProcessedWay) {
                 if overall_idx % 32 == 0 && ramp_offset >= 7 {
                     let mut min_ground = bridge_y;
                     // Amostragem transversal para pilar não flutuar
-                    for w in -5..=5 {
+                    for w in -5i32..=5i32 {
                         let gy = editor.get_ground_level(*x + (w as f64 * norm_x) as i32, *z + (w as f64 * norm_z) as i32);
                         if gy < min_ground { min_ground = gy; }
                     }

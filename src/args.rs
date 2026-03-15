@@ -40,7 +40,7 @@ pub enum LayerPriority {
     Osm,
 }
 
-/// Command-line arguments parser for the Brasília Digital Twin Engine
+/// Command-line arguments parser for the Brasï¿½lia Digital Twin Engine
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct Args {
@@ -77,7 +77,7 @@ pub struct Args {
     pub offline: bool,
 
     // ==========================================================
-    // ESCALA HÍBRIDA OFICIAL (Gêmeo Digital DF)
+    // ESCALA Hï¿½BRIDA OFICIAL (Gï¿½meo Digital DF)
     // ==========================================================
     
     /// Horizontal scale (X, Z) to use, in blocks per meter. Default is 1.33 for proper street proportions.
@@ -93,7 +93,7 @@ pub struct Args {
     pub scale: Option<f64>, 
 
     // ==========================================================
-    // INTEGRAÇÃO DE DADOS GOVERNAMENTAIS (GDF / CODEPLAN)
+    // INTEGRAï¿½ï¿½O DE DADOS GOVERNAMENTAIS (GDF / CODEPLAN)
     // ==========================================================
 
     /// Path to local Shapefiles (.shp) from Geoportal DF (buildings, landuse, etc.)
@@ -112,7 +112,7 @@ pub struct Args {
     #[arg(long)]
     pub wfs_endpoint: Option<String>,
 
-    /// EPSG code for local data reprojection (Government Tier). Defaults to 31983 (SIRGAS 2000 / UTM zone 23S for Brasília).
+    /// EPSG code for local data reprojection (Government Tier). Defaults to 31983 (SIRGAS 2000 / UTM zone 23S for Brasï¿½lia).
     #[arg(long, default_value_t = 31983)]
     pub epsg: u32,
 
@@ -149,7 +149,7 @@ pub struct Args {
     pub enable_underground_wfs: bool,
 
     // ==========================================================
-    // INTEGRAÇÃO DE ALTA PERFORMANCE & GÊMEO DIGITAL (BESM-6)
+    // INTEGRAï¿½ï¿½O DE ALTA PERFORMANCE & Gï¿½MEO DIGITAL (BESM-6)
     // ==========================================================
 
     /// PostgreSQL/PostGIS connection URL for direct spatial queries (e.g., postgres://user:pass@localhost:5432/gis)
@@ -177,7 +177,7 @@ pub struct Args {
     pub local_mesh: Option<PathBuf>,
 
     // ==========================================================
-    // CONFIGURAÇÕES BASE
+    // CONFIGURAï¿½ï¿½ES BASE
     // ==========================================================
 
     /// Ground level to use in the Minecraft world
@@ -294,7 +294,7 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
         }
     }
 
-    // ?? BESM-6 Tweak: Validação Antidegeneração da BBox
+    // ?? BESM-6 Tweak: Validao Antidegenerao da BBox
     if args.bbox.max().lat() <= args.bbox.min().lat() || args.bbox.max().lng() <= args.bbox.min().lng() {
         return Err("Invalid bounding box: Max coordinates must be strictly greater than Min coordinates.".to_string());
     }
@@ -311,18 +311,18 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
 
     if area_km2 > args.max_area_km2 {
         return Err(format!(
-            "Bounding box area ({:.2} km²) exceeds the maximum allowed limit ({:.2} km²). Decrease the bbox or bypass with --max-area-km2.",
+            "Bounding box area ({:.2} kmï¿½) exceeds the maximum allowed limit ({:.2} kmï¿½). Decrease the bbox or bypass with --max-area-km2.",
             area_km2, args.max_area_km2
         ));
     }
 
-    // ?? BESM-6 Tweak: Proteção Logística (Pre-flight IO Check).
+    // ?? BESM-6 Tweak: Proteï¿½ï¿½o Logï¿½stica (Pre-flight IO Check).
     // Estimativa braba: ~100MB por km2 na escala 1.33. 
     // Se a estimativa ultrapassar os 180GB estipulados para a Oracle, trava.
     let estimated_weight_gb = (area_km2 * 100.0) / 1024.0;
     if estimated_weight_gb > 180.0 {
         return Err(format!(
-            "Storage Limit Exceeded: The requested area ({:.2} km²) is estimated to consume {:.2} GB. The Oracle server is hard-capped at 180 GB.",
+            "Storage Limit Exceeded: The requested area ({:.2} kmï¿½) is estimated to consume {:.2} GB. The Oracle server is hard-capped at 180 GB.",
             area_km2, estimated_weight_gb
         ));
     }
@@ -334,10 +334,10 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
         }
     }
 
-    // ?? BESM-6 Tweak: Safe thread limit (Núcleos Físicos Estritos)
+    // ?? BESM-6 Tweak: Safe thread limit (Nï¿½cleos Fï¿½sicos Estritos)
     let max_safe_threads = get_physical_cores();
     
-    // Se o usuário passou 0, atribuímos o safe limit físico automaticamente.
+    // Se o usuï¿½rio passou 0, atribuï¿½mos o safe limit fï¿½sico automaticamente.
     if args.threads == 0 {
         args.threads = max_safe_threads;
     } else if args.threads > max_safe_threads {

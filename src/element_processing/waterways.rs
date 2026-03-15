@@ -26,7 +26,7 @@ pub fn generate_waterways(editor: &mut WorldEditor, element: &ProcessedWay) {
 
         // Skip layers below the ground level
         if matches!(
-            element.tags.get("layer").map(|s| s.as_str()),
+            element.tags.get("layer").map(|s: &String| s.as_str()),
             Some("-1") | Some("-2") | Some("-3")
         ) {
             return;

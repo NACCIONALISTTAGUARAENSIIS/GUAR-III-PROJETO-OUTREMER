@@ -7,19 +7,19 @@ use colored::Colorize;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use rustc_hash::FxHashMap; // ?? BESM-6: Acesso de memória em velocidade terminal O(1)
+use rustc_hash::FxHashMap; // ðŸš¨ BESM-6: Acesso de memÃ³ria em velocidade terminal O(1)
 
 // Raw data from OSM
 
-#[derive(Debug, Deserialize)]
-struct OsmMember {
-    r#type: String,
-    r#ref: u64,
-    r#role: String,
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct OsmMember {
+    pub r#type: String,
+    pub r#ref: u64,
+    pub r#role: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct OsmElement {
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct OsmElement {
     pub r#type: String,
     pub id: u64,
     pub lat: Option<f64>,
@@ -30,9 +30,17 @@ struct OsmElement {
     pub members: Vec<OsmMember>,
 }
 
-#[derive(Debug, Deserialize)]
+impl OsmElement {
+    // ðŸš¨ BESM-6: Adicionado este mÃ©todo para compatibilidade com o retrieve_data.rs
+    pub fn type_str(&self) -> &str {
+        &self.r#type
+    }
+}
+
+#[derive(Debug, Default, Clone, Deserialize, serde::Serialize)]
 pub struct OsmData {
-    elements: Vec<OsmElement>,
+    // ðŸš¨ BESM-6: Visibilidade alterada para pub para o retrieve_data poder concatenar Bounding Boxes massivas
+    pub elements: Vec<OsmElement>,
     #[serde(default)]
     pub remark: Option<String>,
 }
@@ -41,6 +49,11 @@ impl OsmData {
     /// Returns true if there are no elements in the OSM data
     pub fn is_empty(&self) -> bool {
         self.elements.is_empty()
+    }
+
+    // ðŸš¨ BESM-6: Adicionado este mÃ©todo para fundir pedaÃ§os de um download massivo fatiado no retrieve_data.
+    pub fn merge(&mut self, mut other: OsmData) {
+        self.elements.append(&mut other.elements);
     }
 }
 
@@ -131,8 +144,8 @@ pub struct ProcessedRelation {
 #[derive(Debug, Clone)]
 pub enum ProcessedElement {
     Node(ProcessedNode),
-    Way(ProcessedWay),
-    Relation(ProcessedRelation),
+    Way(Arc<ProcessedWay>), // ðŸš¨ BESM-6 TWEAK: Garantindo ARC estrito nas ways root
+    Relation(Arc<ProcessedRelation>), // ðŸš¨ BESM-6 TWEAK: Garantindo ARC estrito nas Relations root
 }
 
 impl ProcessedElement {
@@ -190,25 +203,25 @@ pub fn parse_osm_data(
 
     if debug {
         println!("Total elements: {}", data.total_count());
-        println!("Scale factor X: {}", coord_transformer.scale_factor_x());
-        println!("Scale factor Z: {}", coord_transformer.scale_factor_z());
     }
 
     // TWEAK DE ELITE (Refinado):
-    // Margem expandida de forma brutal (2000 blocos). 
-    // Garante que rodovias gigantescas como o Eixão ou EPIA não sejam cortadas no meio do nada 
-    // apenas porque o próximo "nó" do OSM está muito distante da fronteira do mapa.
+    // Margem expandida de forma brutal (2000 blocos).
+    // Garante que rodovias gigantescas como o EixÃ£o ou EPIA nÃ£o sejam cortadas no meio do nada
+    // apenas porque o prÃ³ximo "nÃ³" do OSM estÃ¡ muito distante da fronteira do mapa.
     let margin = 2000;
-    let expanded_bbox = XZBBox::new(
+
+    // ðŸš¨ CorreÃ§Ã£o do XZBBox::explicit: Ele jÃ¡ devolve a variante Rect, nÃ£o precisa de .unwrap()
+    let expanded_bbox = XZBBox::explicit(
         xzbbox.min_x() - margin,
         xzbbox.max_x() + margin,
         xzbbox.min_z() - margin,
         xzbbox.max_z() + margin,
-    ).unwrap();
+    );
 
-    // ?? BESM-6: Substituição de HashMap padrão por FxHashMap.
-    // O SipHash do Rust mata a performance ao iterar milhões de chaves u64 (IDs do OSM).
-    // O FxHash converte esta fase num processamento instantâneo.
+    // ðŸš¨ BESM-6: SubstituiÃ§Ã£o de HashMap padrÃ£o por FxHashMap.
+    // O SipHash do Rust mata a performance ao iterar milhÃµes de chaves u64 (IDs do OSM).
+    // O FxHash converte esta fase num processamento instantÃ¢neo.
     let mut nodes_map: FxHashMap<u64, ProcessedNode> = FxHashMap::default();
     let mut ways_map: FxHashMap<u64, Arc<ProcessedWay>> = FxHashMap::default();
 
@@ -224,7 +237,7 @@ pub fn parse_osm_data(
 
             let xzpoint = coord_transformer.transform_point(llpoint);
 
-            // TWEAK: Usa a expanded_bbox para armazenar nós que estão na "fronteira" do mapa.
+            // TWEAK: Usa a expanded_bbox para armazenar nÃ³s que estÃ£o na "fronteira" do mapa.
             // Sem isso, lagos ou estradas sumiriam do nada.
             if !expanded_bbox.contains(&xzpoint) {
                 continue;
@@ -233,7 +246,7 @@ pub fn parse_osm_data(
             let tags = element.tags.unwrap_or_default();
             let processed: ProcessedNode = ProcessedNode {
                 id: element.id,
-                tags: tags.clone(), // Tweak: Clona apenas uma vez para o nó principal
+                tags: tags.clone(), // Tweak: Clona apenas uma vez para o nÃ³ principal
                 x: xzpoint.x,
                 z: xzpoint.z,
             };
@@ -261,15 +274,15 @@ pub fn parse_osm_data(
 
         let tags = element.tags.unwrap_or_default();
 
-        // ??? PREVENÇÃO BESM-6: Adoção de Nós Órfãos.
-        // Se uma `way` pertencer a um Relation gigantesco que nós sabemos que foi gerado pelo 
-        // ProviderManager, nós NÃO A CORTAMOS AQUI se ela tiver menos nós do que devia.
+        // ðŸš¨ PREVENÃ‡ÃƒO BESM-6: AdoÃ§Ã£o de NÃ³s Ã“rfÃ£os.
+        // Se uma `way` pertencer a um Relation gigantesco que nÃ³s sabemos que foi gerado pelo
+        // ProviderManager, nÃ³s NÃƒO A CORTAMOS AQUI se ela tiver menos nÃ³s do que devia.
         let way = Arc::new(ProcessedWay {
             id: element.id,
             tags: tags.clone(),
             nodes,
         });
-        
+
         ways_map.insert(element.id, Arc::clone(&way));
 
         // Clip way nodes for standalone way processing (not relations)
@@ -286,7 +299,8 @@ pub fn parse_osm_data(
             nodes: clipped_nodes,
         };
 
-        processed_elements.push(ProcessedElement::Way(processed));
+        // ðŸš¨ BESM-6: Envolvemos em Arc para coerÃªncia tipolÃ³gica com as RelaÃ§Ãµes
+        processed_elements.push(ProcessedElement::Way(Arc::new(processed)));
     }
 
     // Third pass: process relations and clip member ways
@@ -371,17 +385,18 @@ pub fn parse_osm_data(
             .collect();
 
         if !members.is_empty() {
-            processed_elements.push(ProcessedElement::Relation(ProcessedRelation {
+            // ðŸš¨ BESM-6: Envolvemos em Arc
+            processed_elements.push(ProcessedElement::Relation(Arc::new(ProcessedRelation {
                 id: element.id,
                 members,
                 tags: tags.clone(),
-            }));
+            })));
         }
     }
 
     emit_gui_progress_update(14.0, "");
 
-    // TWEAK: Garantindo que a memória seja expurgada antes de passar para a fase de construção dos blocos.
+    // TWEAK: Garantindo que a memÃ³ria seja expurgada antes de passar para a fase de construÃ§Ã£o dos blocos.
     drop(nodes_map);
     drop(ways_map);
 
@@ -413,6 +428,7 @@ const PRIORITY_ORDER: [&str; 6] = [
 // Function to determine the priority of each element
 pub fn get_priority(element: &ProcessedElement) -> usize {
     for (i, &tag) in PRIORITY_ORDER.iter().enumerate() {
+        // ðŸš¨ A CORREÃ‡ÃƒO FINAL DA PRIORITY: element.tags() com parÃªnteses.
         if element.tags().contains_key(tag) {
             return i;
         }

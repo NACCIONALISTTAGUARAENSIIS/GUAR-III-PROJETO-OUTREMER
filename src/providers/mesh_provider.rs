@@ -10,15 +10,15 @@ use proj::Proj;
 use tobj;
 
 /// Provedor de Malhas 3D de Fotogrametria (Wavefront .obj).
-/// Projetado para ler escaneamentos de drones (Monumentos, Estátuas, Pontes complexas).
-/// Aplica Voxelização colunar (1x1m) baseada na densidade dos vértices para recriar 
-/// estruturas com tetos curvos e vãos livres no Minecraft.
+/// Projetado para ler escaneamentos de drones (Monumentos, Estï¿½tuas, Pontes complexas).
+/// Aplica VoxelizaÃ§ao colunar (1x1m) baseada na densidade dos vï¿½rtices para recriar
+/// estruturas com tetos curvos e vï¿½os livres no Minecraft.
 pub struct MeshProvider {
     pub file_path: PathBuf,
     pub scale_h: f64,
     pub scale_v: f64,
     pub priority: u8,
-    pub decimation_factor: f64, // Pula vértices para aliviar memória se necessário
+    pub decimation_factor: f64, // Pula vï¿½rtices para aliviar memï¿½ria se necessï¿½rio
 }
 
 impl MeshProvider {
@@ -34,12 +34,13 @@ impl MeshProvider {
 }
 
 impl DataProvider for MeshProvider {
+    fn priority(&self) -> u8 { self.priority }
     fn name(&self) -> &str {
         "Photogrammetry Mesh Voxelizer (.obj)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ?? Iniciando Voxelização de Fotogrametria 3D: {}", self.file_path.display());
+        println!("[INFO] ?? Iniciando Voxelizaï¿½ï¿½o de Fotogrametria 3D: {}", self.file_path.display());
 
         // 1. Carregar a malha 3D via TOBJ (Zero-copy whenever possible)
         let load_options = tobj::LoadOptions {
@@ -52,7 +53,7 @@ impl DataProvider for MeshProvider {
         let (models, _) = tobj::load_obj(&self.file_path, &load_options)
             .map_err(|e| format!("Falha ao decodificar a malha OBJ: {}", e))?;
 
-        // Inicializa o Pipeline Geodésico (Assumimos que o drone exportou a nuvem em UTM 23S)
+        // Inicializa o Pipeline Geodï¿½sico (Assumimos que o drone exportou a nuvem em UTM 23S)
         let proj = Proj::new_known_crs("EPSG:31983", "EPSG:4326", None)
             .ok()
             .ok_or("Falha ao inicializar biblioteca PROJ para CRS 31983 -> 4326")?;
@@ -61,9 +62,9 @@ impl DataProvider for MeshProvider {
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
 
         // ?? BESM-6 Tweak: Matriz Voxel Colunar
-        // Em vez de criar um polígono 2D gigante (que perderia o vão livre de uma ponte),
-        // Nós agregamos os vértices em uma grade Minecraft de 1x1 bloco.
-        // A chave é a coordenada (X, Z) do Minecraft. O valor é (min_y, max_y) da elevação.
+        // Em vez de criar um polï¿½gono 2D gigante (que perderia o vï¿½o livre de uma ponte),
+        // Nï¿½s agregamos os vï¿½rtices em uma grade Minecraft de 1x1 bloco.
+        // A chave ï¿½ a coordenada (X, Z) do Minecraft. O valor ï¿½ (min_y, max_y) da elevaï¿½ï¿½o.
         let mut voxel_grid: FxHashMap<(i32, i32), (f64, f64)> = FxHashMap::default();
 
         let step_skip = (1.0 / self.decimation_factor).round() as usize;
@@ -74,7 +75,7 @@ impl DataProvider for MeshProvider {
             let positions = &mesh.positions; // [x1, y1, z1, x2, y2, z2, ...]
 
             // O Wavefront OBJ usa coordenadas locais.
-            // Padrão Fotogramétrico: X = Easting (UTM), Z = Northing (UTM), Y = Elevação.
+            // Padrï¿½o Fotogramï¿½trico: X = Easting (UTM), Z = Northing (UTM), Y = Elevaï¿½ï¿½o.
             for i in (0..positions.len()).step_by(3 * step_skip) {
                 if i + 2 >= positions.len() { break; }
 
@@ -107,7 +108,7 @@ impl DataProvider for MeshProvider {
             }
         }
 
-        println!("[INFO] ?? Malha fatiada: {} vértices colapsados em {} colunas Voxel.", processed_vertices, voxel_grid.len());
+        println!("[INFO] ?? Malha fatiada: {} vï¿½rtices colapsados em {} colunas Voxel.", processed_vertices, voxel_grid.len());
 
         let mut features = Vec::with_capacity(voxel_grid.len());
         let mut next_id = 7_000_000_000; // Offset dedicado para Mesh Voxel
@@ -115,7 +116,7 @@ impl DataProvider for MeshProvider {
         // 3. Converter as Colunas Voxel em Features de Alta Fidelidade
         for ((mc_x, mc_z), (min_elev, max_elev)) in voxel_grid {
             
-            // Cria um polígono de 1x1 bloco exato para essa coluna
+            // Cria um polï¿½gono de 1x1 bloco exato para essa coluna
             let voxel_poly = vec![
                 XZPoint::new(mc_x, mc_z),
                 XZPoint::new(mc_x + 1, mc_z),
@@ -125,20 +126,20 @@ impl DataProvider for MeshProvider {
 
             let mut tags = HashMap::new();
             tags.insert("source".to_string(), "GDF_Mesh_Voxel".to_string());
-            tags.insert("building".to_string(), "yes".to_string()); // Força o motor a extrudar
+            tags.insert("building".to_string(), "yes".to_string()); // Forï¿½a o motor a extrudar
             
-            // O Segredo da Geometria Complexa: Se houver diferença entre a base e o topo,
-            // o Arnis vai criar um vão livre de ar embaixo (min_height) e teto em (height).
+            // O Segredo da Geometria Complexa: Se houver diferenï¿½a entre a base e o topo,
+            // o Arnis vai criar um vï¿½o livre de ar embaixo (min_height) e teto em (height).
             tags.insert("min_height".to_string(), format!("{:.2}", min_elev * self.scale_v));
             tags.insert("height".to_string(), format!("{:.2}", max_elev * self.scale_v));
 
             let feature = Feature::new(
                 next_id,
-                SemanticGroup::Building, // Tratamos o mesh como construção para sofrer extrusão
+                SemanticGroup::Building, // Tratamos o mesh como construï¿½ï¿½o para sofrer extrusï¿½o
                 tags,
                 GeometryType::Polygon(voxel_poly),
                 "Photogrammetry_Mesh".to_string(),
-                self.priority, // Prioridade Altíssima para perfurar e sobrepor polígonos normais
+                self.priority, // Prioridade Altï¿½ssima para perfurar e sobrepor polï¿½gonos normais
             );
 
             features.push(feature);

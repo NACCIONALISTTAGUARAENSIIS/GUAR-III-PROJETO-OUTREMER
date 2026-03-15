@@ -1,11 +1,11 @@
 //! DSM (Digital Surface Model) Provider (BESM-6 Government Tier)
 //!
-//! Diferente do DEM (Bare Earth), o DSM captura a primeira superfície refletora do laser/radar,
-//! englobando copas de árvores, telhados de prédios, pontes e viadutos.
-//! É utilizado primariamente para o cálculo de altimetria de extrusão: 
-//! Altura do Prédio = (DSM_Y - DEM_Y).
+//! Diferente do DEM (Bare Earth), o DSM captura a primeira superfï¿½cie refletora do laser/radar,
+//! englobando copas de ï¿½rvores, telhados de prï¿½dios, pontes e viadutos.
+//! ï¿½ utilizado primariamente para o cï¿½lculo de altimetria de extrusï¿½o: 
+//! Altura do PrÃ©dio = (DSM_Y - DEM_Y).
 //!
-//! Emprega a Voxelização Local Determinística com Pré-Quantização Inteira em O(1).
+//! Emprega a Voxelizaï¿½ï¿½o Local Determinï¿½stica com Prï¿½-Quantizaï¿½ï¿½o Inteira em O(1).
 
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
@@ -14,7 +14,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use tiff::decoder::{Decoder, DecodingResult};
 
-/// Provedor de Modelos Digitais de Superfície (DSM).
+/// Provedor de Modelos Digitais de Superfï¿½cie (DSM).
 pub struct DsmProvider {
     pub file_path: PathBuf,
     pub scale_h: f64,
@@ -52,14 +52,14 @@ impl DsmProvider {
         }
     }
 
-    /// Extrai a matriz quantizada da superfície (Canopy/Roofs) para uma Bounding Box específica.
+    /// Extrai a matriz quantizada da superfï¿½cie (Canopy/Roofs) para uma Bounding Box especï¿½fica.
     /// Retorna um FxHashMap mapeando a coordenada absoluta (X, Z) para a altura Y de pico (Voxelizada).
     pub fn fetch_quantized_surface(
         &self,
         bbox: &LLBBox,
     ) -> Result<FxHashMap<(i32, i32), i32>, String> {
         println!(
-            "[INFO] ??? Iniciando varredura do Modelo de Superfície (DSM) em: {}",
+            "[INFO] ??? Iniciando varredura do Modelo de Superfï¿½cie (DSM) em: {}",
             self.file_path.display()
         );
 
@@ -70,17 +70,17 @@ impl DsmProvider {
             .map_err(|e| format!("Falha ao inicializar descodificador DSM GeoTIFF: {}", e))?;
 
         let (width, height) = decoder.dimensions()
-            .map_err(|e| format!("Falha ao ler dimensões do DSM GeoTIFF: {}", e))?;
+            .map_err(|e| format!("Falha ao ler dimensï¿½es do DSM GeoTIFF: {}", e))?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o Global ECEF Transformer: {}", e))?;
 
-        // ?? BESM-6: Matriz Virtual de Alta Performance O(1) para a Superfície
+        // ?? BESM-6: Matriz Virtual de Alta Performance O(1) para a Superfï¿½cie
         let mut quantization_grid: FxHashMap<(i32, i32), i32> = FxHashMap::default();
         let mut read_count = 0u64;
         let mut mapped_count = 0u64;
 
-        // Limites de Culling (O Scanline Engine define a BBox da região atual)
+        // Limites de Culling (O Scanline Engine define a BBox da regiï¿½o atual)
         let start_x = ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees_x).max(0.0) as u32;
         let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees_x).min(width as f64) as u32;
         
@@ -88,13 +88,13 @@ impl DsmProvider {
         let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees_y).min(height as f64) as u32;
 
         if start_x >= width || start_y >= height || start_x >= end_x || start_y >= end_y {
-            println!("[AVISO] O DSM GeoTIFF está fora da Bounding Box atual. Retornando grid de superfície vazio.");
+            println!("[AVISO] O DSM GeoTIFF estï¿½ fora da Bounding Box atual. Retornando grid de superfï¿½cie vazio.");
             return Ok(quantization_grid);
         }
 
         match decoder.read_image() {
             Ok(DecodingResult::F32(image_data)) => {
-                // Precision Floating Point (Comum em DSMs fotogramétricos)
+                // Precision Floating Point (Comum em DSMs fotogramï¿½tricos)
                 for y in start_y..end_y {
                     for x in start_x..end_x {
                         read_count += 1;
@@ -112,10 +112,10 @@ impl DsmProvider {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
                                 
-                                // Voxelização: Arredondamento do teto (A superfície mais alta é a que dita o fim do prédio)
+                                // Voxelizaï¿½ï¿½o: Arredondamento do teto (A superfï¿½cie mais alta ï¿½ a que dita o fim do prï¿½dio)
                                 let voxel_y = self.ground_level_offset + (elevation as f64 * self.scale_v).round() as i32;
                                 
-                                // O(1) Hash Map: No caso da superfície, garantimos sempre a retenção do ponto mais alto no metro quadrado
+                                // O(1) Hash Map: No caso da superfï¿½cie, garantimos sempre a retenï¿½ï¿½o do ponto mais alto no metro quadrado
                                 let entry = quantization_grid.entry((xz_point.x, xz_point.z)).or_insert(voxel_y);
                                 if voxel_y > *entry {
                                     *entry = voxel_y;
@@ -185,7 +185,7 @@ impl DsmProvider {
                 }
             }
             _ => {
-                return Err("Formato de codificação do DSM GeoTIFF não suportado. Esperado matriz F32, I16 ou U16.".to_string());
+                return Err("Formato de codificaï¿½ï¿½o do DSM GeoTIFF nï¿½o suportado. Esperado matriz F32, I16 ou U16.".to_string());
             }
         }
 
@@ -193,7 +193,7 @@ impl DsmProvider {
         quantization_grid.shrink_to_fit();
         
         println!(
-            "[INFO] ? Matriz de Superfície (DSM) quantizada. {} pixels processados, {} topos de estrutura ancorados.",
+            "[INFO] ? Matriz de Superfï¿½cie (DSM) quantizada. {} pixels processados, {} topos de estrutura ancorados.",
             read_count, mapped_count
         );
 

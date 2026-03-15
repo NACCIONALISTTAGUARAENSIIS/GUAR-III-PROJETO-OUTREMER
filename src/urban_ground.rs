@@ -4,12 +4,12 @@
 //! then generates appropriate ground blocks (smooth stone) for those areas.
 //!
 //! ?? BESM-6: A arquitetura agora usa um GRID GLOBAL ABSOLUTO.
-//! Não há dependência da Bounding Box do mapa gerado no momento. 
-//! Isso garante determinismo perfeito entre execuções de satélites diferentes.
-//! Expansão baseada em Raio Euclidiano para evitar "escadas" na borda do Cerrado.
+//! Nao hï¿½ dependï¿½ncia da Bounding Box do mapa gerado no momento.
+//! Isso garante determinismo perfeito entre execuï¿½ï¿½es de satï¿½lites diferentes.
+//! Expansï¿½o baseada em Raio Euclidiano para evitar "escadas" na borda do Cerrado.
 
 use crate::coordinate_system::cartesian::XZBBox;
-use rustc_hash::{FxHashMap, FxHashSet}; // BESM-6: Hashing ultrarrápido
+use rustc_hash::{FxHashMap, FxHashSet}; // BESM-6: Hashing ultrarrï¿½pido
 use std::collections::VecDeque;
 
 /// Configuration for urban ground detection.
@@ -32,14 +32,14 @@ pub struct UrbanGroundConfig {
 impl Default for UrbanGroundConfig {
     fn default() -> Self {
         Self {
-            // BRASÍLIA TWEAK ELITE: Finer granularity (16 blocks = 1 Chunk).
+            // BRASï¿½LIA TWEAK ELITE: Finer granularity (16 blocks = 1 Chunk).
             // Garante o alinhamento com a grade do Minecraft (>> 4).
             cell_size: 16, 
             min_elements_per_cell: 1,
             // ?? BESM-6: Elevado para 3 para ignorar cabanas/ranchos rurais isolados no Cerrado,
-            // mas baixo o suficiente para pegar postos de gasolina/comércios locais.
+            // mas baixo o suficiente para pegar postos de gasolina/comï¿½rcios locais.
             min_elements_for_cluster: 3, 
-            // ?? BESM-6: Expansão suavizada. O chão de concreto envolverá as edificações.
+            // ?? BESM-6: Expansï¿½o suavizada. O chï¿½o de concreto envolverï¿½ as edificaï¿½ï¿½es.
             cell_expansion: 2, 
         }
     }
@@ -81,7 +81,7 @@ impl UrbanGroundLookup {
             return false;
         }
 
-        // Fast path matemático O(1) via Arithmetic Right Shift. 
+        // Fast path matemï¿½tico O(1) via Arithmetic Right Shift. 
         // O Rust lida perfeitamente com valores negativos no >> 4 (que equivale ao floor division).
         let cx = x >> 4;
         let cz = z >> 4;
@@ -104,11 +104,11 @@ impl UrbanGroundLookup {
 /// Computes urban ground areas from building locations and roads.
 pub struct UrbanGroundComputer {
     config: UrbanGroundConfig,
-    // ?? BESM-6: Memória Optimizada O(1). 
-    // Em vez de guardar as exatas 100 mil coordenadas dos prédios, guardamos apenas
-    // a célula onde eles caíram e incrementamos o contador de densidade.
+    // ?? BESM-6: Memï¿½ria Optimizada O(1). 
+    // Em vez de guardar as exatas 100 mil coordenadas dos prï¿½dios, guardamos apenas
+    // a cï¿½lula onde eles caï¿½ram e incrementamos o contador de densidade.
     density_grid: FxHashMap<(i32, i32), u16>,
-    total_anchors: u64, // ?? Proteção contra Continental Overflow (u64 em vez de u32)
+    total_anchors: u64, // ?? Proteï¿½ï¿½o contra Continental Overflow (u64 em vez de u32)
 }
 
 impl UrbanGroundComputer {
@@ -135,7 +135,7 @@ impl UrbanGroundComputer {
         
         let counter = self.density_grid.entry((cell_x, cell_z)).or_insert(0);
         
-        // Evita overflow se houverem milhares de prédios na mesma célula
+        // Evita overflow se houverem milhares de prï¿½dios na mesma cï¿½lula
         if *counter < u16::MAX {
             *counter += 1;
             self.total_anchors += 1;
@@ -192,8 +192,8 @@ impl UrbanGroundComputer {
             return Vec::new();
         }
 
-        // Expansão Radial/Euclidiana Fixa. Como o motor agora é Scanline, a densidade
-        // local é a única que importa. O "falso diagnóstico" global foi desmantelado.
+        // Expansï¿½o Radial/Euclidiana Fixa. Como o motor agora ï¿½ Scanline, a densidade
+        // local ï¿½ a ï¿½nica que importa. O "falso diagnï¿½stico" global foi desmantelado.
         let expanded_cells = self.expand_cells_radial(&dense_cells, self.config.cell_expansion);
 
         let mut visited = FxHashSet::default();
@@ -213,8 +213,8 @@ impl UrbanGroundComputer {
             while let Some(current) = queue.pop_front() {
                 component_cells.push(current);
 
-                for dz in -1..=1 {
-                    for dx in -1..=1 {
+                for dz in -1i32..=1i32 {
+                    for dx in -1i32..=1i32 {
                         if dx == 0 && dz == 0 {
                             continue;
                         }
@@ -245,9 +245,9 @@ impl UrbanGroundComputer {
         clusters
     }
 
-    /// ?? BESM-6 TWEAK: Expansão Euclidiana.
+    /// ?? BESM-6 TWEAK: Expansï¿½o Euclidiana.
     /// Em vez de iterar em um quadrado perfeito (for dx, for dz) que gera quinas em 90 graus
-    /// (Efeito Escada), filtramos os Chunks pela distância radial circular.
+    /// (Efeito Escada), filtramos os Chunks pela distï¿½ncia radial circular.
     fn expand_cells_radial(
         &self,
         cells: &FxHashSet<(i32, i32)>,
@@ -263,7 +263,7 @@ impl UrbanGroundComputer {
         for &(cx, cz) in cells {
             for dz in -expansion..=expansion {
                 for dx in -expansion..=expansion {
-                    // Filtro Euclidiano (Arredondamento orgânico de bordas de asfalto)
+                    // Filtro Euclidiano (Arredondamento orgï¿½nico de bordas de asfalto)
                     if dx * dx + dz * dz <= max_dist_sq {
                         expanded.insert((cx + dx, cz + dz));
                     }

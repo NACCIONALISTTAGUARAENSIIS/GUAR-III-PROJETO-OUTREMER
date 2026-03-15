@@ -6,14 +6,14 @@ use std::borrow::Cow; // BESM-6: Zero-alloc efficiency
 
 pub type RGBTuple = (u8, u8, u8);
 
-/// BESM-6 Tweak: Contexto arquitetônico robusto para geração procedimental determinística.
-/// Expandido para suportar Inteligência Demográfica, Identidade Regional e Materiais.
+/// BESM-6 Tweak: Contexto arquitetï¿½nico robusto para geraï¿½ï¿½o procedimental determinï¿½stica.
+/// Expandido para suportar Inteligï¿½ncia Demogrï¿½fica, Identidade Regional e Materiais.
 #[derive(Debug, Clone, Default)]
 pub struct ColorContext<'a> {
     pub raw_color_tag: Option<&'a str>,
     pub building_type: Option<&'a str>,
     pub roof_material: Option<&'a str>,
-    pub wall_material: Option<&'a str>, // ?? Injetado: Inferência por material da parede
+    pub wall_material: Option<&'a str>, // ?? Injetado: Inferï¿½ncia por material da parede
     pub element_id: u64,
     pub center_x: i32,
     pub center_z: i32,
@@ -21,20 +21,20 @@ pub struct ColorContext<'a> {
     pub is_pipeline: bool,
     pub is_landmark: bool,
     
-    // Identidade Arquitetônica Local
-    pub building_area: Option<f64>,  // Ajuda a diferenciar mansões de casebres
+    // Identidade Arquitetï¿½nica Local
+    pub building_area: Option<f64>,  // Ajuda a diferenciar mansï¿½es de casebres
     pub district_seed: u32,          // Define a paleta predominante do bairro
-    pub distance_to_center: f64,     // Gradiente de conservação (0.0 a 1.0)
+    pub distance_to_center: f64,     // Gradiente de conservaï¿½ï¿½o (0.0 a 1.0)
 }
 
 /// BESM-6 Tweak: Hashing Espacial (Spatial Seed) Aprimorado.
-/// Usa dispersão de bits estilo Murmur3 para evitar padrões repetitivos 
-/// em quarteirões perfeitamente alinhados (Superquadras).
+/// Usa dispersï¿½o de bits estilo Murmur3 para evitar padrï¿½es repetitivos 
+/// em quarteirï¿½es perfeitamente alinhados (Superquadras).
 #[inline(always)]
 pub fn spatial_seed(x: i32, z: i32, id: u64) -> u32 {
-    let mut h = x.wrapping_mul(0xcc9e2d51) as u32;
+    let mut h = x.wrapping_mul(0xcc9e2d51u32 as i32) as u32;
     h = h.rotate_left(15).wrapping_mul(0x1b873593);
-    h ^= z.wrapping_mul(0x85ebca6b) as u32;
+    h ^= z.wrapping_mul(0x85ebca6bu32 as i32) as u32;
     h = h.rotate_left(13).wrapping_mul(0xc2b2ae35);
     h ^= (id & 0xFFFFFFFF) as u32;
     h ^= h >> 16;
@@ -46,7 +46,7 @@ pub fn spatial_seed(x: i32, z: i32, id: u64) -> u32 {
 }
 
 // ============================================================================
-// ?? MATEMÁTICA DE CORES HSL (Tier Governamental) ??
+// ?? MATEMï¿½TICA DE CORES HSL (Tier Governamental) ??
 // ============================================================================
 
 #[inline(always)]
@@ -98,8 +98,8 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> RGBTuple {
     )
 }
 
-/// Aplica desgaste urbano/ambiental (Weathering) na cor via espaço HSL.
-/// Resultado incrivelmente mais orgânico e natural, sem "acinzentar" artificialmente.
+/// Aplica desgaste urbano/ambiental (Weathering) na cor via espaï¿½o HSL.
+/// Resultado incrivelmente mais orgï¿½nico e natural, sem "acinzentar" artificialmente.
 #[inline(always)]
 pub fn apply_weathering(rgb: RGBTuple, seed: u32, is_west_facing: bool, distance: f64) -> RGBTuple {
     let (mut h, mut s, mut l) = rgb_to_hsl(rgb.0, rgb.1, rgb.2);
@@ -126,10 +126,10 @@ pub fn apply_weathering(rgb: RGBTuple, seed: u32, is_west_facing: bool, distance
         s = (s - variation * 0.3).clamp(0.0, 1.0);
     }
 
-    // BESM-6 Tweak: Hue Wrap Seguro e Saturação amortecida
+    // BESM-6 Tweak: Hue Wrap Seguro e Saturaï¿½ï¿½o amortecida
     if red_dust_intensity > 0.0 {
         h = ((h * (1.0 - red_dust_intensity)) + (15.0 * red_dust_intensity)) % 360.0;
-        s = (s + red_dust_intensity * 0.5).clamp(0.0, 1.0); // Clamp após multiplicar para não explodir
+        s = (s + red_dust_intensity * 0.5).clamp(0.0, 1.0); // Clamp apï¿½s multiplicar para nï¿½o explodir
     }
 
     hsl_to_rgb(h, s, l)
@@ -141,7 +141,7 @@ pub fn resolve_wall_color(ctx: &ColorContext) -> RGBTuple {
     let seed = spatial_seed(ctx.center_x, ctx.center_z, ctx.element_id);
     let is_west_facing = ctx.center_x % 2 == 0; 
 
-    // 0. Proteção Mestre: Landmarks (Garante Mármore/Branco Imaculado sem sujeira para Palácios)
+    // 0. Proteï¿½ï¿½o Mestre: Landmarks (Garante Mï¿½rmore/Branco Imaculado sem sujeira para Palï¿½cios)
     if ctx.is_landmark {
         return (255, 255, 255); 
     }
@@ -151,7 +151,7 @@ pub fn resolve_wall_color(ctx: &ColorContext) -> RGBTuple {
         let base = match seed % 4 {
             0 => (80, 80, 85),  // Asfalto novo
             1 => (110, 110, 110), // Asfalto desgastado
-            _ => (90, 90, 95),  // Asfalto padrão
+            _ => (90, 90, 95),  // Asfalto padrï¿½o
         };
         return apply_weathering(base, seed, false, ctx.distance_to_center);
     }
@@ -165,21 +165,21 @@ pub fn resolve_wall_color(ctx: &ColorContext) -> RGBTuple {
         return apply_weathering(base, seed, false, ctx.distance_to_center);
     }
 
-    // 2. Prioridade Máxima: O dado bruto tem uma cor exata mapeada? (Com parsing composto via Token)
+    // 2. Prioridade Mï¿½xima: O dado bruto tem uma cor exata mapeada? (Com parsing composto via Token)
     if let Some(text) = ctx.raw_color_tag {
         if let Some(rgb) = color_text_to_rgb_tuple(text) {
             return apply_weathering(rgb, seed, is_west_facing, ctx.distance_to_center);
         }
     }
 
-    // 2.5 Inferência por Material da Parede
+    // 2.5 Inferï¿½ncia por Material da Parede
     if let Some(mat) = ctx.wall_material {
         if let Some(rgb) = semantic_material_to_rgb_tuple(mat) {
             return apply_weathering(rgb, seed, is_west_facing, ctx.distance_to_center);
         }
     }
 
-    // 3. Inteligência Probabilística e Regional (Arquitetura por Bairro e Área)
+    // 3. Inteligencia Probabilistica e Regional (Arquitetura por Bairro e ï¿½rea)
     let btype = ctx.building_type.unwrap_or("yes");
     let district_bias = ctx.district_seed % 3;
 
@@ -198,8 +198,8 @@ pub fn resolve_wall_color(ctx: &ColorContext) -> RGBTuple {
                 }
             } else if area < 60.0 {
                 match seed % 4 {
-                    0 => (150, 70, 50),   // Tijolo à vista aparente
-                    1 => (200, 180, 160), // Reboco rústico
+                    0 => (150, 70, 50),   // Tijolo ï¿½ vista aparente
+                    1 => (200, 180, 160), // Reboco rï¿½stico
                     2 => (240, 230, 150), // Amarelo descascado
                     _ => (235, 220, 190), // Bege sujo
                 }
@@ -318,10 +318,10 @@ static COLOR_CACHE: Lazy<Mutex<LruCache<String, RGBTuple>>> = Lazy::new(|| {
     Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap()))
 });
 
-/// Pipeline mestre de cores originais. Extrai, limpa, entende semanticamente usando tokenização.
+/// Pipeline mestre de cores originais. Extrai, limpa, entende semanticamente usando tokenizaï¿½ï¿½o.
 pub fn color_text_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
-    // TWEAK BESM-6: Substitui hifens por espaços ANTES do parsing para não quebrar 
-    // tags compostas do OSM (ex: "dark-red" vira "dark red") - Crítica 9.2
+    // TWEAK BESM-6: Substitui hifens por espaï¿½os ANTES do parsing para nï¿½o quebrar 
+    // tags compostas do OSM (ex: "dark-red" vira "dark red") - Crï¿½tica 9.2
     let text_norm = text.replace('-', " ");
     let clean_text = text_norm.trim().to_ascii_lowercase();
 
@@ -333,8 +333,8 @@ pub fn color_text_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
 
     let mut hex_buffer = String::new();
     
-    // TWEAK BESM-6: Usando Cow (Clone-on-Write) ou referências diretas (Crítica 9.1).
-    // Evita a alocação pesada de memória ao parsear milhares de cores.
+    // TWEAK BESM-6: Usando Cow (Clone-on-Write) ou referï¿½ncias diretas (Crï¿½tica 9.1).
+    // Evita a alocaï¿½ï¿½o pesada de memï¿½ria ao parsear milhares de cores.
     let mut parse_text: Cow<str> = Cow::Borrowed(&clean_text);
     
     if !parse_text.starts_with('#') && parse_text.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -385,7 +385,7 @@ pub fn color_text_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
     result
 }
 
-/// Aplica uma leve "sujeira" orgânica à cor (Mantida para Retrocompatibilidade).
+/// Aplica uma leve "sujeira" orgï¿½nica ï¿½ cor (Mantida para Retrocompatibilidade).
 pub fn apply_micro_variation(rgb: RGBTuple, seed: u32) -> RGBTuple {
     let v = (seed % 7) as i8 - 3;
     let r = (rgb.0 as i16 + v as i16).clamp(0, 255) as u8;
@@ -433,7 +433,7 @@ fn semantic_material_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
         "concrete" | "concreto" | "cement" | "cimento" | "limestone" => Some((185, 185, 180)),
         "stone" | "pedra" | "granite" => Some((150, 150, 150)),
         "glass" | "vidro" | "mirror" | "espelhado" => Some((140, 180, 220)),
-        "slate" | "lousa" | "zinc" | "zinco" | "amianto" | "fibrocimento" | "metal" | "iron" | "steel" | "aço" => Some((160, 160, 165)),
+        "slate" | "lousa" | "zinc" | "zinco" | "amianto" | "fibrocimento" | "metal" | "iron" | "steel" | "aï¿½o" => Some((160, 160, 165)),
         "wood" | "madeira" | "timber" => Some((135, 85, 55)),
         "asphalt" | "asfalto" | "tarmac" | "piche" | "pavimento" => Some((90, 90, 95)),
         "marble" | "marmore" => Some((240, 240, 240)),
@@ -470,7 +470,7 @@ fn exact_color_name_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
         "fuchsia" => (255, 0, 255),
         "maroon" => (128, 0, 0),
         
-        // ?? Adições Críticas do Padrão CSS (Arquitetura)
+        // ?? Adiï¿½ï¿½es Crï¿½ticas do Padrï¿½o CSS (Arquitetura)
         "tan" => (210, 180, 140),
         "khaki" => (240, 230, 140),
         "salmon" => (250, 128, 114),
@@ -492,7 +492,7 @@ fn exact_color_name_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
     })
 }
 
-/// BESM-6: Distância Euclidiana Quadrada. 
+/// BESM-6: Distï¿½ncia Euclidiana Quadrada. 
 #[inline(always)]
 pub fn rgb_distance(from: &RGBTuple, to: &RGBTuple) -> u32 {
     let dr = from.0 as i32 - to.0 as i32;

@@ -1,11 +1,12 @@
 //! Flood fill cache for polygon filling (Scanline Out-Of-Core Engine).
 //!
-//! ?? BESM-6 TWEAK: Pre-computation has been eradicated to prevent OOM.
-//! The cache is now populated lazily on-demand per region and purged periodically 
+//! ðŸš¨ BESM-6 TWEAK: Pre-computation has been eradicated to prevent OOM.
+//! The cache is now populated lazily on-demand per region and purged periodically
 //! by the Scanline engine.
+//! IntegraÃ§Ã£o total com o ComplexPolygon para suporte a furos e ilhas nativos O(1).
 
 use crate::coordinate_system::cartesian::XZBBox;
-use crate::floodfill::flood_fill_area;
+use crate::floodfill::{flood_fill_area, scanline_fill_complex, extract_complex_polygon_from_element};
 use crate::osm_parser::{ProcessedElement, ProcessedMemberRole, ProcessedWay};
 use fnv::FnvHashMap;
 use std::time::Duration;
@@ -28,7 +29,7 @@ impl CoordinateBitmap {
     pub fn new(xzbbox: &XZBBox) -> Self {
         let min_x = xzbbox.min_x();
         let min_z = xzbbox.min_z();
-        
+
         let width = (i64::from(xzbbox.max_x()) - i64::from(min_x) + 1) as usize;
         let height = (i64::from(xzbbox.max_z()) - i64::from(min_z) + 1) as usize;
 
@@ -183,10 +184,9 @@ impl CoordinateBitmap {
 
 pub type BuildingFootprintBitmap = CoordinateBitmap;
 
-/// Cache Dinâmico de Floodfill (Scanline Context)
+/// Cache DinÃ¢mico de Floodfill (Scanline Context)
 pub struct FloodFillCache {
-    // Agora modificado via Mutex de escopo interno, mas manteremos simple &mut onde for chamado
-    // O lifetime dessa struct dita a existência do cache.
+    // Guarda o preenchimento mapeado pelo ID do Elemento (seja Way ou Relation)
     way_cache: FnvHashMap<u64, Vec<(i32, i32)>>,
 }
 
@@ -197,50 +197,53 @@ impl FloodFillCache {
         }
     }
 
-    /// ?? BESM-6 TWEAK: Limpeza Absoluta do Cache (Evita OOM)
-    /// Invocado pelo data_processing.rs na virada de Região MCA.
+    /// ðŸš¨ BESM-6 TWEAK: Limpeza Absoluta do Cache (Evita OOM)
+    /// Invocado pelo data_processing.rs na virada de RegiÃ£o MCA.
     pub fn clear_cache(&mut self) {
         self.way_cache.clear();
         self.way_cache.shrink_to_fit();
     }
 
-    /// Executa o Floodfill on-demand (se não estiver no cache) e armazena o resultado.
-    /// Como o código legado espera `&self` em alguns pontos, exigiremos `&mut` para gravar na RAM,
-    /// ou usaremos a abordagem estrita de "calcula na hora e devolve".
-    /// 
-    /// Por compatibilidade com a assinatura imutável do Arnis, o cache em RAM é mutado
-    /// internamente apenas quando injetado diretamente (ex: collect_building_footprints), 
-    /// caso contrário, calcula e cospe (garantindo 0 vazamento de memória).
+    /// Executa o Floodfill on-demand para uma via simples.
     pub fn get_or_compute(
         &self,
         way: &ProcessedWay,
         timeout: Option<&Duration>,
     ) -> Vec<(i32, i32)> {
-        // Se já foi pré-calculado na rotina de Footprint, devolve O(1).
         if let Some(cached) = self.way_cache.get(&way.id) {
             return cached.clone();
-        } 
-        
-        // Fallback Dinâmico (Scanline Voxelization Local)
+        }
+
         let polygon_coords: Vec<(i32, i32)> = way.nodes.iter().map(|n| (n.x, n.z)).collect();
         flood_fill_area(&polygon_coords, timeout)
     }
 
-    /// Gets cached flood fill result for a ProcessedElement (Way only).
+    /// ðŸš¨ BESM-6 TWEAK: DelegaÃ§Ã£o GeomÃ©trica Complexa.
+    /// Para Elementos GenÃ©ricos (incluindo RelaÃ§Ãµes com Furos).
     pub fn get_or_compute_element(
         &self,
         element: &ProcessedElement,
         timeout: Option<&Duration>,
     ) -> Vec<(i32, i32)> {
-        match element {
-            ProcessedElement::Way(way) => self.get_or_compute(way, timeout),
-            _ => Vec::new(),
+        let id = match element {
+            ProcessedElement::Way(w) => w.id,
+            ProcessedElement::Relation(r) => r.id,
+            _ => return Vec::new(),
+        };
+
+        if let Some(cached) = self.way_cache.get(&id) {
+            return cached.clone();
+        }
+
+        if let Some(complex_poly) = extract_complex_polygon_from_element(element) {
+            scanline_fill_complex(&complex_poly, timeout)
+        } else {
+            Vec::new()
         }
     }
 
-    /// Coleta footprints para O(1) Block Check e popula o cache temporário na RAM.
-    /// Isso permite que o FloodFillCache retenha prédios massivos sem precisar
-    /// recalculá-los quando a geometria passar.
+    /// Coleta footprints para O(1) Block Check e popula o cache temporÃ¡rio na RAM.
+    /// Agora respeita nativamente os anÃ©is interiores de pÃ¡tios.
     pub fn collect_building_footprints(
         &mut self,
         elements: &[ProcessedElement],
@@ -263,17 +266,16 @@ impl FloodFillCache {
                 ProcessedElement::Relation(rel) => {
                     let is_building = rel.tags.contains_key("building")
                         || rel.tags.contains_key("building:part")
-                        || rel.tags.get("type").map(|t| t.as_str()) == Some("building");
+                        || rel.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
                     if is_building {
-                        for member in &rel.members {
-                            if member.role == ProcessedMemberRole::Outer {
-                                let polygon_coords: Vec<(i32, i32)> = member.way.nodes.iter().map(|n| (n.x, n.z)).collect();
-                                let filled = flood_fill_area(&polygon_coords, None);
-                                for &(x, z) in &filled {
-                                    footprints.set(x, z);
-                                }
-                                self.way_cache.insert(member.way.id, filled);
+                        // ðŸš¨ BESM-6 Tweak: Lida com a RelaÃ§Ã£o inteira, subtraindo furos perfeitamente
+                        if let Some(complex_poly) = extract_complex_polygon_from_element(element) {
+                            let filled = scanline_fill_complex(&complex_poly, None);
+                            for &(x, z) in &filled {
+                                footprints.set(x, z);
                             }
+                            // Agora mapeamos a RelaÃ§Ã£o pela sua PRÃ“PRIA ID global
+                            self.way_cache.insert(rel.id, filled);
                         }
                     }
                 }
@@ -300,18 +302,13 @@ impl FloodFillCache {
                 ProcessedElement::Relation(rel) => {
                     let is_building = rel.tags.contains_key("building")
                         || rel.tags.contains_key("building:part")
-                        || rel.tags.get("type").map(|t| t.as_str()) == Some("building");
+                        || rel.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
                     if is_building {
-                        let mut all_coords = Vec::new();
-                        for member in &rel.members {
-                            if member.role == ProcessedMemberRole::Outer {
-                                if let Some(cached) = self.way_cache.get(&member.way.id) {
-                                    all_coords.extend(cached.iter().copied());
-                                }
+                        // ðŸš¨ Como o footprint jÃ¡ guardou a RelaÃ§Ã£o pela ID dela, o lookup Ã© O(1) e imune a erros.
+                        if let Some(cached) = self.way_cache.get(&rel.id) {
+                            if let Some(centroid) = Self::compute_centroid(cached) {
+                                centroids.push(centroid);
                             }
-                        }
-                        if let Some(centroid) = Self::compute_centroid(&all_coords) {
-                            centroids.push(centroid);
                         }
                     }
                 }
