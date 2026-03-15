@@ -2,8 +2,8 @@ use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: Motor ECEF Oficial
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::fs::File;
+use std::path::PathBuf;
 
 use csv::ReaderBuilder;
 
@@ -18,7 +18,12 @@ pub struct CsvProvider {
 }
 
 impl CsvProvider {
-    pub fn new(file_path: PathBuf, scale_h: f64, priority: u8, semantic_override: Option<SemanticGroup>) -> Self {
+    pub fn new(
+        file_path: PathBuf,
+        scale_h: f64,
+        priority: u8,
+        semantic_override: Option<SemanticGroup>,
+    ) -> Self {
         Self {
             file_path,
             scale_h,
@@ -34,13 +39,22 @@ impl CsvProvider {
 
         for (i, header) in headers.iter().enumerate() {
             let clean_header = header.trim().to_lowercase();
-            
+
             // Farejador heur�stico para Latitude
-            if clean_header == "lat" || clean_header == "latitude" || clean_header == "y" || clean_header == "lat_y" {
+            if clean_header == "lat"
+                || clean_header == "latitude"
+                || clean_header == "y"
+                || clean_header == "lat_y"
+            {
                 lat_idx = Some(i);
             }
             // Farejador heur�stico para Longitude
-            if clean_header == "lon" || clean_header == "lng" || clean_header == "longitude" || clean_header == "x" || clean_header == "lon_x" {
+            if clean_header == "lon"
+                || clean_header == "lng"
+                || clean_header == "longitude"
+                || clean_header == "x"
+                || clean_header == "lon_x"
+            {
                 lon_idx = Some(i);
             }
         }
@@ -53,7 +67,10 @@ impl CsvProvider {
     }
 
     /// O "Rosetta Stone": Converte as colunas do CSV para tags do OSM.
-    fn translate_attributes(headers: &csv::StringRecord, record: &csv::StringRecord) -> HashMap<String, String> {
+    fn translate_attributes(
+        headers: &csv::StringRecord,
+        record: &csv::StringRecord,
+    ) -> HashMap<String, String> {
         let mut tags = HashMap::with_capacity(headers.len() + 1);
         tags.insert("source".to_string(), "GDF_OpenData_CSV".to_string());
 
@@ -63,7 +80,9 @@ impl CsvProvider {
 
         for (i, value) in record.iter().enumerate() {
             let val_str = value.trim().to_string();
-            if val_str.is_empty() { continue; }
+            if val_str.is_empty() {
+                continue;
+            }
 
             if let Some(header) = headers.get(i) {
                 let col = header.trim().to_uppercase();
@@ -78,7 +97,10 @@ impl CsvProvider {
                     "TIPO" | "EQUIPAMENTO" | "CATEGORIA" => {
                         if lower_val.contains("poste") || lower_val.contains("iluminacao") {
                             is_pole = true;
-                        } else if lower_val.contains("onibus") || lower_val.contains("parada") || lower_val.contains("abrigo") {
+                        } else if lower_val.contains("onibus")
+                            || lower_val.contains("parada")
+                            || lower_val.contains("abrigo")
+                        {
                             is_bus_stop = true;
                         } else if lower_val.contains("lixeira") || lower_val.contains("residuo") {
                             tags.insert("amenity".to_string(), "waste_basket".to_string());
@@ -113,29 +135,38 @@ impl CsvProvider {
 }
 
 impl DataProvider for CsvProvider {
-    fn priority(&self) -> u8 { self.priority }
+    fn priority(&self) -> u8 {
+        self.priority
+    }
     fn name(&self) -> &str {
         "GDF Open Data (CSV Point Cloud)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ?? A abrir planilha de dados abertos CSV: {}", self.file_path.display());
+        println!(
+            "[INFO] ?? A abrir planilha de dados abertos CSV: {}",
+            self.file_path.display()
+        );
 
         let file = File::open(&self.file_path)
             .map_err(|e| format!("Falha ao abrir ficheiro CSV: {}", e))?;
 
         // Motor flex�vel: lida com separadores v�rgula ou ponto-e-v�rgula comuns no Brasil
-        let mut rdr = ReaderBuilder::new()
-            .flexible(true)
-            .from_reader(file);
+        let mut rdr = ReaderBuilder::new().flexible(true).from_reader(file);
 
-        let headers = rdr.headers()
+        let headers = rdr
+            .headers()
             .map_err(|e| format!("Falha ao ler o cabe�alho do CSV: {}", e))?
             .clone();
 
         let (lat_idx, lon_idx) = match Self::detect_coordinate_columns(&headers) {
             Some(indices) => indices,
-            None => return Err(format!("Colunas de Latitude e Longitude n�o encontradas no ficheiro: {}", self.file_path.display())),
+            None => {
+                return Err(format!(
+                    "Colunas de Latitude e Longitude n�o encontradas no ficheiro: {}",
+                    self.file_path.display()
+                ))
+            }
         };
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -173,9 +204,13 @@ impl DataProvider for CsvProvider {
                 let tags = Self::translate_attributes(&headers, &record);
 
                 let semantic_group = self.semantic_override.unwrap_or_else(|| {
-                    if tags.contains_key("natural") { SemanticGroup::Natural }
-                    else if tags.contains_key("highway") { SemanticGroup::Infrastructure }
-                    else { SemanticGroup::Other }
+                    if tags.contains_key("natural") {
+                        SemanticGroup::Natural
+                    } else if tags.contains_key("highway") {
+                        SemanticGroup::Infrastructure
+                    } else {
+                        SemanticGroup::Other
+                    }
                 });
 
                 let xz_point = transformer.transform_point(llpoint);
@@ -195,7 +230,10 @@ impl DataProvider for CsvProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ? Planilha CSV processada: {} pontos infraestruturais injetados.", features.len());
+        println!(
+            "[INFO] ? Planilha CSV processada: {} pontos infraestruturais injetados.",
+            features.len()
+        );
         Ok(features)
     }
 }

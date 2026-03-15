@@ -6,14 +6,9 @@ use crate::colors::color_text_to_rgb_tuple;
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::historic;
-use crate::element_processing::subprocessor::buildings_interior::generate_building_interior;
 use crate::floodfill_cache::FloodFillCache;
 use crate::osm_parser::{ProcessedMemberRole, ProcessedNode, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
-use crate::providers::citygml_provider::CityGmlProvider;
-use crate::providers::indoor_utility_provider::IndoorUtilityProvider;
-use crate::providers::mesh_provider::MeshProvider;
-use crate::providers::dsm_provider::DsmProvider;
 use fastnbt::Value;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
@@ -53,9 +48,12 @@ impl Lod3FacadeElement {
     /// Quantiza��o Voxel: Adiciona toler�ncia de 1 bloco para impedir que fachadas finas
     /// sejam engolidas pelo arredondamento
     fn contains(&self, px: i32, py: i32, pz: i32) -> bool {
-        px >= self.min_x - 1 && px <= self.max_x + 1 &&
-        py >= self.min_y - 1 && py <= self.max_y + 1 &&
-        pz >= self.min_z - 1 && pz <= self.max_z + 1
+        px >= self.min_x - 1
+            && px <= self.max_x + 1
+            && py >= self.min_y - 1
+            && py <= self.max_y + 1
+            && pz >= self.min_z - 1
+            && pz <= self.max_z + 1
     }
 }
 
@@ -66,8 +64,14 @@ struct Lod3FacadeMap {
 
 impl Lod3FacadeMap {
     fn from_tags(tags: &HashMap<String, String>) -> Option<Self> {
-        let num_windows = tags.get("lod3:windows").and_then(|s: &String| s.parse::<usize>().ok()).unwrap_or(0);
-        let num_doors = tags.get("lod3:doors").and_then(|s: &String| s.parse::<usize>().ok()).unwrap_or(0);
+        let num_windows = tags
+            .get("lod3:windows")
+            .and_then(|s: &String| s.parse::<usize>().ok())
+            .unwrap_or(0);
+        let num_doors = tags
+            .get("lod3:doors")
+            .and_then(|s: &String| s.parse::<usize>().ok())
+            .unwrap_or(0);
 
         if num_windows == 0 && num_doors == 0 {
             return None;
@@ -76,28 +80,54 @@ impl Lod3FacadeMap {
         let mut windows = Vec::with_capacity(num_windows);
         for i in 0..num_windows {
             if let (Some(min_x), Some(max_x), Some(min_y), Some(max_y), Some(min_z), Some(max_z)) = (
-                tags.get(&format!("lod3:window_{}:min_x", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:window_{}:max_x", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:window_{}:min_y", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:window_{}:max_y", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:window_{}:min_z", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:window_{}:max_z", i)).and_then(|s: &String| s.parse::<i32>().ok())
+                tags.get(&format!("lod3:window_{}:min_x", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:window_{}:max_x", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:window_{}:min_y", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:window_{}:max_y", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:window_{}:min_z", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:window_{}:max_z", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
             ) {
-                windows.push(Lod3FacadeElement { min_x, max_x, min_y, max_y, min_z, max_z });
+                windows.push(Lod3FacadeElement {
+                    min_x,
+                    max_x,
+                    min_y,
+                    max_y,
+                    min_z,
+                    max_z,
+                });
             }
         }
 
         let mut doors = Vec::with_capacity(num_doors);
         for i in 0..num_doors {
             if let (Some(min_x), Some(max_x), Some(min_y), Some(max_y), Some(min_z), Some(max_z)) = (
-                tags.get(&format!("lod3:door_{}:min_x", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:door_{}:max_x", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:door_{}:min_y", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:door_{}:max_y", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:door_{}:min_z", i)).and_then(|s: &String| s.parse::<i32>().ok()),
-                tags.get(&format!("lod3:door_{}:max_z", i)).and_then(|s: &String| s.parse::<i32>().ok())
+                tags.get(&format!("lod3:door_{}:min_x", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:door_{}:max_x", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:door_{}:min_y", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:door_{}:max_y", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:door_{}:min_z", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
+                tags.get(&format!("lod3:door_{}:max_z", i))
+                    .and_then(|s: &String| s.parse::<i32>().ok()),
             ) {
-                doors.push(Lod3FacadeElement { min_x, max_x, min_y, max_y, min_z, max_z });
+                doors.push(Lod3FacadeElement {
+                    min_x,
+                    max_x,
+                    min_y,
+                    max_y,
+                    min_z,
+                    max_z,
+                });
             }
         }
 
@@ -853,10 +883,14 @@ impl BuildingStyle {
         // === Roof ===
 
         // ?? BESM-6 Tweak: Integra��o CityGML e Malhas Voxel 3D (Force Flat Roof)
-        // Se o pr�dio foi gerado via CityGML ou Fotogrametria 3D, a forma real do telhado 
-        // j� est� codificada na geometria. Adicionar um telhado Gabled/Hipped aleat�rio 
+        // Se o pr�dio foi gerado via CityGML ou Fotogrametria 3D, a forma real do telhado
+        // j� est� codificada na geometria. Adicionar um telhado Gabled/Hipped aleat�rio
         // do OSM destruiria o modelo. For�amos Flat (sem telhado gerado).
-        let source = element.tags.get("source").map(|s: &String| s.as_str()).unwrap_or("");
+        let source = element
+            .tags
+            .get("source")
+            .map(|s: &String| s.as_str())
+            .unwrap_or("");
         let is_precise_3d_model = source == "GDF_CityGML_3D" || source == "GDF_Mesh_Voxel";
 
         let (roof_type, generate_roof) = if is_precise_3d_model {
@@ -989,8 +1023,13 @@ impl BuildingBounds {
 #[inline]
 fn should_skip_underground_building(element: &ProcessedWay) -> bool {
     // ?? BESM-6 Tweak: Infraestrutura e Galerias da CAESB DEVEM ser geradas embaixo da terra
-    if element.tags.get("diameter").is_some() || element.tags.get("min_height").is_some_and(|v| v.starts_with("-")) {
-        return false; 
+    if element.tags.get("diameter").is_some()
+        || element
+            .tags
+            .get("min_height")
+            .is_some_and(|v| v.starts_with("-"))
+    {
+        return false;
     }
 
     // Check layer tag, negative means underground
@@ -1035,8 +1074,11 @@ fn calculate_start_y_offset(
     // Se o provedor forneceu a cota exata do fundo, n�s ignoramos o "min_level" abstrato
     // e cravamos no offset de ar exato, respeitando a escala vertical de 1.15.
     let explicit_min_height = if let Some(mh) = element.tags.get("min_height") {
-        mh.trim_end_matches('m').trim().parse::<f64>().ok()
-          .map(|h| (h * 1.15).round() as i32) // Sempre 1.15 na vertical
+        mh.trim_end_matches('m')
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .map(|h| (h * 1.15).round() as i32) // Sempre 1.15 na vertical
     } else {
         None
     };
@@ -1175,7 +1217,7 @@ fn calculate_building_height(
 ) -> (i32, bool) {
     // ?? BESM-6 Tweak: Escala Vertical de Governo SEMPRE ser� 1.15
     let scale_v = 1.15;
-    
+
     let default_height = ((6.0 * scale_v) as i32).max(3);
     let mut building_height = default_height;
     let mut is_tall_building = false;
@@ -1183,7 +1225,6 @@ fn calculate_building_height(
     // From height tag (overrides levels) - Maior prioridade no BESM-6 (CityGML / LiDAR)
     if let Some(height_str) = element.tags.get("height") {
         if let Ok(height) = height_str.trim_end_matches("m").trim().parse::<f64>() {
-            
             let mut base_h = height;
             // Desconta o min_height (v�o livre) se existir
             if let Some(min_h_str) = element.tags.get("min_height") {
@@ -1198,7 +1239,7 @@ fn calculate_building_height(
                 is_tall_building = true;
             }
         }
-    } 
+    }
     // From building:levels tag
     else if let Some(levels_str) = element.tags.get("building:levels") {
         if let Ok(levels) = levels_str.parse::<i32>() {
@@ -1231,7 +1272,7 @@ fn adjust_height_for_building_type(
 ) -> i32 {
     let scale_v = 1.15; // BESM-6: Sempre 1.15 vertical
     let default_height = ((6.0 * scale_v) as i32).max(3);
-    
+
     match building_type {
         "garage" | "shed" => ((2.0 * scale_v) as i32).max(3),
         "apartments" if building_height == default_height => ((15.0 * scale_v) as i32).max(3),
@@ -1440,7 +1481,11 @@ fn generate_roof_only_structure(
     {
         GLASS
     } else if element.tags.get("colour").map(|s: &String| s.as_str()) == Some("white")
-        || element.tags.get("building:colour").map(|s: &String| s.as_str()) == Some("white")
+        || element
+            .tags
+            .get("building:colour")
+            .map(|s: &String| s.as_str())
+            == Some("white")
     {
         SMOOTH_QUARTZ
     } else {
@@ -1604,12 +1649,12 @@ fn build_wall_ring(
                                 );
                             } else {
                                 editor.set_block_absolute(
-                                    AIR, 
-                                    bx, 
-                                    y + config.abs_terrain_offset, 
-                                    bz, 
-                                    None, 
-                                    None
+                                    AIR,
+                                    bx,
+                                    y + config.abs_terrain_offset,
+                                    bz,
+                                    None,
+                                    None,
                                 );
                             }
                         }
@@ -1777,7 +1822,6 @@ fn generate_special_doors(
 /// ?? BESM-6: Inje��o de Detec��o de Matriz de Fachada O(1)
 #[inline]
 fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingConfig) -> Block {
-    
     // ==========================================
     // 1. LOD3 BYPASS: O DITAME DO ARQUITETO
     // ==========================================
@@ -1788,19 +1832,19 @@ fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingC
                 return config.window_block;
             }
         }
-        
+
         // Verifica Portas Milim�tricas
         for door in &facade.doors {
             if door.contains(bx, h, bz) {
-                // A porta do CityGML usa a textura da janela de vidro na escala monumental 
+                // A porta do CityGML usa a textura da janela de vidro na escala monumental
                 // (porta de vidro do planalto), ou um bloco escuro dependendo da porta.
                 // Mas para garantir que n�o pare�a parede, injetamos vidro ou ar:
-                return BLACK_STAINED_GLASS; 
+                return BLACK_STAINED_GLASS;
             }
         }
 
         // Se o pr�dio LOD3 tem matriz de fachada, o que n�o for v�o � parede
-        return config.wall_block; 
+        return config.wall_block;
     }
 
     // ==========================================
@@ -2071,7 +2115,7 @@ fn generate_residential_window_decorations(
                                 centre_sum.wrapping_add(floor_idx * 5),
                                 element.id,
                             )
-                                .random_range(0u32..100);
+                            .random_range(0u32..100);
 
                             let abs_y = h + config.abs_terrain_offset;
 
@@ -2486,7 +2530,7 @@ pub fn generate_buildings(
 
     let scale_factor = args.scale;
     let abs_terrain_offset = if !args.terrain { args.ground_level } else { 0 };
-    
+
     // ?? BESM-6: Scale Vertical force
     let min_level_offset = multiply_scale(min_level * 4, 1.15);
 
@@ -2545,11 +2589,21 @@ pub fn generate_buildings(
 
     // Handle shelter amenity
     if element.tags.get("amenity") == Some(&"shelter".to_string()) {
-        generate_shelter(editor, element, &cached_floor_area, scale_factor.unwrap_or(1.0));
+        generate_shelter(
+            editor,
+            element,
+            &cached_floor_area,
+            scale_factor.unwrap_or(1.0),
+        );
         return;
     }
 
-    if element.tags.get("building:part").map(|v: &String| v.as_str()) == Some("roof") {
+    if element
+        .tags
+        .get("building:part")
+        .map(|v: &String| v.as_str())
+        == Some("roof")
+    {
         generate_roof_only_structure(editor, element, &cached_floor_area, args);
         return;
     }
@@ -2562,8 +2616,12 @@ pub fn generate_buildings(
                 return;
             }
             "parking" => {
-                let (height, _) =
-                    calculate_building_height(element, min_level, scale_factor.unwrap_or(1.0), relation_levels);
+                let (height, _) = calculate_building_height(
+                    element,
+                    min_level,
+                    scale_factor.unwrap_or(1.0),
+                    relation_levels,
+                );
                 generate_parking_building(editor, element, &cached_floor_area, height);
                 return;
             }
@@ -2583,17 +2641,29 @@ pub fn generate_buildings(
             .get("parking")
             .is_some_and(|p| p == "multi-storey")
         {
-            let (height, _) =
-                calculate_building_height(element, min_level, scale_factor.unwrap_or(1.0), relation_levels);
+            let (height, _) = calculate_building_height(
+                element,
+                min_level,
+                scale_factor.unwrap_or(1.0),
+                relation_levels,
+            );
             generate_parking_building(editor, element, &cached_floor_area, height);
             return;
         }
     }
 
     // Calculate building height with type-specific adjustments
-    let (mut building_height, is_tall_building) =
-        calculate_building_height(element, min_level, scale_factor.unwrap_or(1.0), relation_levels);
-    building_height = adjust_height_for_building_type(building_type, building_height, scale_factor.unwrap_or(1.0));
+    let (mut building_height, is_tall_building) = calculate_building_height(
+        element,
+        min_level,
+        scale_factor.unwrap_or(1.0),
+        relation_levels,
+    );
+    building_height = adjust_height_for_building_type(
+        building_type,
+        building_height,
+        scale_factor.unwrap_or(1.0),
+    );
 
     // Determine building category and get appropriate style preset
     let category = BuildingCategory::from_element(element, is_tall_building, building_height);
@@ -2702,7 +2772,7 @@ pub fn generate_buildings(
             );
 
             if !skip_interior && cached_floor_area.len() > 100 {
-                let floor_levels = calculate_floor_levels(start_y_offset, building_height);
+                let _floor_levels = calculate_floor_levels(start_y_offset, building_height);
                 // generate_building_interior disabled due to signature mismatch
             }
         }
@@ -2831,10 +2901,10 @@ fn generate_chimney(
         .iter()
         .filter(|(x, z)| {
             let in_quadrant = match quadrant {
-                0 => *x < center_x && *z < center_z,   
-                1 => *x >= center_x && *z < center_z,  
-                2 => *x < center_x && *z >= center_z,  
-                _ => *x >= center_x && *z >= center_z, 
+                0 => *x < center_x && *z < center_z,
+                1 => *x >= center_x && *z < center_z,
+                2 => *x < center_x && *z >= center_z,
+                _ => *x >= center_x && *z >= center_z,
             };
             let away_from_edge = *x > min_x && *x < max_x && *z > min_z && *z < max_z;
             in_quadrant && away_from_edge
@@ -2880,7 +2950,7 @@ fn generate_chimney(
         chimney_base + chimney_height + abs_terrain_offset,
         chimney_z,
         None,
-        Some(replace_any), 
+        Some(replace_any),
     );
 }
 
@@ -3042,7 +3112,7 @@ fn generate_rooftop_equipment(
     }
 
     let replace_any: &[Block] = &[];
-    let equip_y = roof_y + abs_terrain_offset + 2; 
+    let equip_y = roof_y + abs_terrain_offset + 2;
 
     let floor_set: HashSet<(i32, i32)> = floor_area.iter().copied().collect();
 
@@ -3300,11 +3370,11 @@ fn place_roof_blocks_with_stairs(
             } else {
                 editor.set_block_absolute(
                     config.roof_block,
-                        x,
-                        y + config.abs_terrain_offset,
-                        z,
-                        None,
-                        Some(replace_any),
+                    x,
+                    y + config.abs_terrain_offset,
+                    z,
+                    None,
+                    Some(replace_any),
                 );
             }
         }
@@ -3374,7 +3444,7 @@ fn generate_gabled_roof(
             let slope_ratio = (distance_to_ridge as f64 / max_distance as f64).min(1.0);
             (roof_peak_height as f64 - (slope_ratio * roof_height_boost as f64)) as i32
         }
-            .max(config.base_height);
+        .max(config.base_height);
 
         roof_heights.insert((x, z), roof_height);
     }
@@ -3922,7 +3992,10 @@ fn generate_roof(
         config.roof_block = override_block;
     }
 
-    let roof_orientation = element.tags.get("roof:orientation").map(|s: &String| s.as_str());
+    let roof_orientation = element
+        .tags
+        .get("roof:orientation")
+        .map(|s: &String| s.as_str());
 
     let flat_roof_block = roof_block_override.unwrap_or(floor_block);
 
@@ -3982,7 +4055,12 @@ pub fn generate_building_from_relation(
     flood_fill_cache: &FloodFillCache,
     xzbbox: &crate::coordinate_system::cartesian::XZBBox,
 ) {
-    if relation.tags.get("diameter").is_none() && relation.tags.get("min_height").map_or(true, |v| !v.starts_with("-")) {
+    if relation.tags.get("diameter").is_none()
+        && relation
+            .tags
+            .get("min_height")
+            .map_or(true, |v| !v.starts_with("-"))
+    {
         if let Some(layer) = relation.tags.get("layer") {
             if layer.parse::<i32>().unwrap_or(0) < 0 {
                 return;
@@ -4011,12 +4089,13 @@ pub fn generate_building_from_relation(
         .and_then(|l: &String| l.parse::<i32>().ok())
         .unwrap_or(2);
 
-    let is_building_type = relation.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
+    let is_building_type =
+        relation.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
     let has_parts = is_building_type
         && relation
-        .members
-        .iter()
-        .any(|m| m.role == ProcessedMemberRole::Part);
+            .members
+            .iter()
+            .any(|m| m.role == ProcessedMemberRole::Part);
 
     if !has_parts {
         let mut outer_rings: Vec<Vec<ProcessedNode>> = relation
@@ -4155,7 +4234,7 @@ fn generate_bridge(
             1
         }
     } else {
-        1 
+        1
     };
 
     if element.nodes.len() < 2 {

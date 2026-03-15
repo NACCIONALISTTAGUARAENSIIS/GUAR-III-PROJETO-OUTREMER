@@ -1,10 +1,10 @@
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: Motor ECEF
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::fs::File;
+use std::path::PathBuf;
 
 use tiff::decoder::{Decoder, DecodingResult};
 
@@ -23,12 +23,12 @@ pub struct RasterProvider {
 
 impl RasterProvider {
     pub fn new(
-        file_path: PathBuf, 
-        scale_h: f64, 
-        priority: u8, 
-        top_left_lat: f64, 
-        top_left_lon: f64, 
-        pixel_size_degrees: f64
+        file_path: PathBuf,
+        scale_h: f64,
+        priority: u8,
+        top_left_lat: f64,
+        top_left_lon: f64,
+        pixel_size_degrees: f64,
     ) -> Self {
         Self {
             file_path,
@@ -78,13 +78,18 @@ impl RasterProvider {
 }
 
 impl DataProvider for RasterProvider {
-    fn priority(&self) -> u8 { self.priority }
+    fn priority(&self) -> u8 {
+        self.priority
+    }
     fn name(&self) -> &str {
         "Nature Raster GeoTIFF (MapBiomas / SISDIA)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ?? A abrir malha de sat�lite GeoTIFF (Natureza 1m): {}", self.file_path.display());
+        println!(
+            "[INFO] ?? A abrir malha de sat�lite GeoTIFF (Natureza 1m): {}",
+            self.file_path.display()
+        );
 
         let file = File::open(&self.file_path)
             .map_err(|e| format!("Falha ao abrir ficheiro TIFF: {}", e))?;
@@ -92,7 +97,8 @@ impl DataProvider for RasterProvider {
         let mut decoder = Decoder::new(file)
             .map_err(|e| format!("Falha ao inicializar descodificador TIFF: {}", e))?;
 
-        let (width, height) = decoder.dimensions()
+        let (width, height) = decoder
+            .dimensions()
             .map_err(|e| format!("Falha ao ler dimens�es do TIFF: {}", e))?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -104,16 +110,23 @@ impl DataProvider for RasterProvider {
         // ?? BESM-6 Tweak: Lemos a imagem nativamente. Para n�o rebentar a RAM com imagens
         // de sat�lite de 40.000 x 40.000 pix�is, o processamento deve ser estritamente matem�tico.
         if let Ok(DecodingResult::U8(image_data)) = decoder.read_image() {
-            println!("[INFO] TIFF carregado na mem�ria. Resolu��o: {}x{} pix�is.", width, height);
+            println!(
+                "[INFO] TIFF carregado na mem�ria. Resolu��o: {}x{} pix�is.",
+                width, height
+            );
 
             // Calcula os limites dos pix�is que caem dentro da BBox do jogador
             // Early-Culling Matem�tico (Ignora loops desnecess�rios)
-            let start_x = ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees).max(0.0) as u32;
-            let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees).min(width as f64) as u32;
-            
+            let start_x =
+                ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees).max(0.0) as u32;
+            let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees)
+                .min(width as f64) as u32;
+
             // Latitude diminui � medida que descemos na imagem
-            let start_y = ((self.top_left_lat - bbox.max().lat()) / self.pixel_size_degrees).max(0.0) as u32;
-            let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees).min(height as f64) as u32;
+            let start_y =
+                ((self.top_left_lat - bbox.max().lat()) / self.pixel_size_degrees).max(0.0) as u32;
+            let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees)
+                .min(height as f64) as u32;
 
             if start_x >= width || start_y >= height || start_x >= end_x || start_y >= end_y {
                 println!("[AVISO] O GeoTIFF est� fora da Bounding Box atual. Saltando.");
@@ -161,7 +174,10 @@ impl DataProvider for RasterProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ? Processamento Raster conclu�do: {} voxels org�nicos injetados.", features.len());
+        println!(
+            "[INFO] ? Processamento Raster conclu�do: {} voxels org�nicos injetados.",
+            features.len()
+        );
         Ok(features)
     }
 }

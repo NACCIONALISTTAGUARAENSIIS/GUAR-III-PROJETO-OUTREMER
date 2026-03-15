@@ -7,7 +7,6 @@ use crate::{
 use image::Rgb;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 
 // TWEAK: Expandido de 319 para suportar o Datapack de 4064 blocos.
 const MAX_Y: i32 = 4064;
@@ -253,10 +252,13 @@ fn load_local_lidar(
     use las::{Read, Reader};
     use proj::Proj;
 
-    println!("[INFO] 🛰️ Iniciando scanner LiDAR de alta densidade no arquivo: {}", lidar_path.display());
+    println!(
+        "[INFO] 🛰️ Iniciando scanner LiDAR de alta densidade no arquivo: {}",
+        lidar_path.display()
+    );
 
-    let mut reader = Reader::from_path(lidar_path)
-        .map_err(|e| format!("Falha ao ler arquivo LiDAR: {}", e))?;
+    let mut reader =
+        Reader::from_path(lidar_path).map_err(|e| format!("Falha ao ler arquivo LiDAR: {}", e))?;
 
     // LiDAR no GDF usa SIRGAS 2000 (EPSG:31983). O BBox usa WGS84 (EPSG:4326).
     let proj = Proj::new_known_crs("EPSG:31983", "EPSG:4326", None)
@@ -284,8 +286,7 @@ fn load_local_lidar(
         }
 
         // Converter XYZ do LiDAR (UTM) para WGS84 Lat/Lon
-        let (lon, lat) = proj.convert((point.x, point.y))
-            .unwrap_or((0.0, 0.0));
+        let (lon, lat) = proj.convert((point.x, point.y)).unwrap_or((0.0, 0.0));
 
         // Verificar se está dentro do nosso quadrante de interesse (Streaming Filter)
         if lat < bbox.min().lat()
@@ -316,7 +317,11 @@ fn load_local_lidar(
         mapped_pts += 1;
     }
 
-    println!("[INFO] 📍 LiDAR processado: {} milhões de pontos lidos, {} alocados no relevo de solo.", processed_pts / 1_000_000, mapped_pts);
+    println!(
+        "[INFO] 📍 LiDAR processado: {} milhões de pontos lidos, {} alocados no relevo de solo.",
+        processed_pts / 1_000_000,
+        mapped_pts
+    );
 
     Ok(height_grid)
 }
@@ -351,7 +356,10 @@ pub fn fetch_elevation_data(
                 true
             }
             Err(e) => {
-                eprintln!("[ALERTA] Falha ao carregar LiDAR: {}. Caindo para SRTM...", e);
+                eprintln!(
+                    "[ALERTA] Falha ao carregar LiDAR: {}. Caindo para SRTM...",
+                    e
+                );
                 false
             }
         }
@@ -399,7 +407,10 @@ pub fn fetch_elevation_data(
             }
         }
 
-        println!("Processing {} SRTM elevation tiles...", successful_tiles.len());
+        println!(
+            "Processing {} SRTM elevation tiles...",
+            successful_tiles.len()
+        );
         #[cfg(feature = "gui")]
         emit_gui_progress_update(15.0, "Processing elevation...");
 
@@ -408,8 +419,13 @@ pub fn fetch_elevation_data(
         for ((tile_x, tile_y), rgb_img) in successful_tiles {
             for (y, row) in rgb_img.rows().enumerate() {
                 for (x, pixel) in row.enumerate() {
-                    let pixel_lng = ((tile_x as f64 + x as f64 / 256.0) / (2.0_f64.powi(zoom as i32))) * 360.0 - 180.0;
-                    let pixel_lat_rad = std::f64::consts::PI * (1.0 - 2.0 * (tile_y as f64 + y as f64 / 256.0) / (2.0_f64.powi(zoom as i32)));
+                    let pixel_lng =
+                        ((tile_x as f64 + x as f64 / 256.0) / (2.0_f64.powi(zoom as i32))) * 360.0
+                            - 180.0;
+                    let pixel_lat_rad = std::f64::consts::PI
+                        * (1.0
+                            - 2.0 * (tile_y as f64 + y as f64 / 256.0)
+                                / (2.0_f64.powi(zoom as i32)));
                     let pixel_lat = pixel_lat_rad.sinh().atan().to_degrees();
 
                     if pixel_lat < bbox.min().lat()
@@ -420,8 +436,10 @@ pub fn fetch_elevation_data(
                         continue;
                     }
 
-                    let rel_x = (pixel_lng - bbox.min().lng()) / (bbox.max().lng() - bbox.min().lng());
-                    let rel_y = 1.0 - (pixel_lat - bbox.min().lat()) / (bbox.max().lat() - bbox.min().lat());
+                    let rel_x =
+                        (pixel_lng - bbox.min().lng()) / (bbox.max().lng() - bbox.min().lng());
+                    let rel_y = 1.0
+                        - (pixel_lat - bbox.min().lat()) / (bbox.max().lat() - bbox.min().lat());
 
                     let scaled_x = (rel_x * grid_width as f64).round() as usize;
                     let scaled_y = (rel_y * grid_height as f64).round() as usize;
@@ -430,10 +448,13 @@ pub fn fetch_elevation_data(
                         continue;
                     }
 
-                    let height: f64 = (pixel[0] as f64 * 256.0 + pixel[1] as f64 + pixel[2] as f64 / 256.0) - TERRARIUM_OFFSET;
+                    let height: f64 =
+                        (pixel[0] as f64 * 256.0 + pixel[1] as f64 + pixel[2] as f64 / 256.0)
+                            - TERRARIUM_OFFSET;
 
                     if !(-1000.0..=10000.0).contains(&height) {
-                        extreme_values_found.push((tile_x, tile_y, x, y, pixel[0], pixel[1], pixel[2], height));
+                        extreme_values_found
+                            .push((tile_x, tile_y, x, y, pixel[0], pixel[1], pixel[2], height));
                     }
 
                     height_grid[scaled_y][scaled_x] = height;
@@ -465,8 +486,12 @@ pub fn fetch_elevation_data(
             for &height in row {
                 local_min = local_min.min(height);
                 local_max = local_max.max(height);
-                if height < -1000.0 { local_low += 1; }
-                if height > 10000.0 { local_high += 1; }
+                if height < -1000.0 {
+                    local_low += 1;
+                }
+                if height > 10000.0 {
+                    local_high += 1;
+                }
             }
             (local_min, local_max, local_low, local_high)
         })
@@ -486,12 +511,18 @@ pub fn fetch_elevation_data(
     let available_y_range: f64 = (MAX_Y - TERRAIN_HEIGHT_BUFFER - ground_level) as f64;
 
     let scaled_range: f64 = if ideal_scaled_range <= available_y_range {
-        println!("Realistic elevation: {:.1}m range stretched to {:.0} blocks (Scale {})", height_range, ideal_scaled_range, scale_v);
+        println!(
+            "Realistic elevation: {:.1}m range stretched to {:.0} blocks (Scale {})",
+            height_range, ideal_scaled_range, scale_v
+        );
         ideal_scaled_range
     } else {
         let compression_factor: f64 = available_y_range / height_range;
         let compressed_range: f64 = height_range * compression_factor;
-        eprintln!("Elevation compressed due to Sky Limit: {:.1}m -> {:.0} blocks", height_range, compressed_range);
+        eprintln!(
+            "Elevation compressed due to Sky Limit: {:.1}m -> {:.0} blocks",
+            height_range, compressed_range
+        );
         compressed_range
     };
 
@@ -500,9 +531,14 @@ pub fn fetch_elevation_data(
         .map(|row| {
             row.iter()
                 .map(|&h| {
-                    let relative_height: f64 = if height_range > 0.0 { (h - min_height) / height_range } else { 0.0 };
+                    let relative_height: f64 = if height_range > 0.0 {
+                        (h - min_height) / height_range
+                    } else {
+                        0.0
+                    };
                     let scaled_height: f64 = relative_height * scaled_range;
-                    ((ground_level as f64 + scaled_height).round() as i32).clamp(ground_level, MAX_Y - TERRAIN_HEIGHT_BUFFER)
+                    ((ground_level as f64 + scaled_height).round() as i32)
+                        .clamp(ground_level, MAX_Y - TERRAIN_HEIGHT_BUFFER)
                 })
                 .collect()
         })
@@ -608,7 +644,9 @@ fn create_gaussian_kernel(size: usize, sigma: f64) -> Vec<f64> {
 /// dos vizinhos mais próximos, otimizado para preencher buracos no SRTM.
 fn fill_nan_values(height_grid: &mut [Vec<f64>]) {
     let height: usize = height_grid.len();
-    if height == 0 { return; }
+    if height == 0 {
+        return;
+    }
     let width: usize = height_grid[0].len();
 
     let mut changes_made: bool = true;
@@ -667,10 +705,12 @@ fn filter_elevation_outliers(height_grid: &mut [Vec<f64>]) {
     let p1_idx = (len as f64 * 0.01) as usize;
     let p99_idx = ((len as f64 * 0.99) as usize).min(len - 1);
 
-    let (_, p1_val, _) = all_heights.select_nth_unstable_by(p1_idx, |a, b| a.partial_cmp(b).unwrap());
+    let (_, p1_val, _) =
+        all_heights.select_nth_unstable_by(p1_idx, |a, b| a.partial_cmp(b).unwrap());
     let min_reasonable = *p1_val;
 
-    let (_, p99_val, _) = all_heights.select_nth_unstable_by(p99_idx, |a, b| a.partial_cmp(b).unwrap());
+    let (_, p99_val, _) =
+        all_heights.select_nth_unstable_by(p99_idx, |a, b| a.partial_cmp(b).unwrap());
     let max_reasonable = *p99_val;
 
     let mut outliers_filtered = 0;

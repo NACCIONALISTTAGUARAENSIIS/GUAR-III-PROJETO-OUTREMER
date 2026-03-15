@@ -8,8 +8,8 @@
 //! para preservar perfeitamente a arquitetura ortogonal de prédios em "L" e "U",
 //! além de corrigir a assimetria na injeção da escala vertical.
 
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -43,7 +43,9 @@ impl LidarProvider {
     }
 
     #[inline(always)]
-    fn class_to_semantic(classification: u8) -> Option<(SemanticGroup, std::collections::HashMap<String, String>)> {
+    fn class_to_semantic(
+        classification: u8,
+    ) -> Option<(SemanticGroup, std::collections::HashMap<String, String>)> {
         // O FxHashMap O(1) não preserva ordem em dumps de debug textuais legados, então para os tags mantemos o Hash padrão
         let mut tags = std::collections::HashMap::new();
         tags.insert("source".to_string(), "GDF_LiDAR_Cloud".to_string());
@@ -79,10 +81,15 @@ impl LidarProvider {
     /// Extirpou-se o Convex Hull que destruía prédios em "U" ou "L".
     /// Esta função traça o perímetro externo exato dos blocos contíguos.
     fn trace_concave_boundary(cluster_cells: &FxHashSet<(i32, i32)>) -> Vec<XZPoint> {
-        if cluster_cells.is_empty() { return vec![]; }
+        if cluster_cells.is_empty() {
+            return vec![];
+        }
         if cluster_cells.len() <= 4 {
             // Se for pequeno demais, devolve a bbox simples.
-            return cluster_cells.iter().map(|&(x, z)| XZPoint::new(x, z)).collect();
+            return cluster_cells
+                .iter()
+                .map(|&(x, z)| XZPoint::new(x, z))
+                .collect();
         }
 
         // 1. Encontra um ponto inicial garantido no perímetro (o mais à esquerda-cima)
@@ -90,8 +97,14 @@ impl LidarProvider {
 
         // Direções de Moore Clockwise: Cima, Cima-Dir, Dir, Baixo-Dir, Baixo, Baixo-Esq, Esq, Cima-Esq
         let directions = [
-            (0, -1), (1, -1), (1, 0), (1, 1),
-            (0, 1), (-1, 1), (-1, 0), (-1, -1)
+            (0, -1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+            (0, 1),
+            (-1, 1),
+            (-1, 0),
+            (-1, -1),
         ];
 
         let mut boundary = Vec::new();
@@ -139,7 +152,9 @@ impl LidarProvider {
 
     /// Mescla blocos consecutivos numa mesma linha reta (Ex: a parede lateral de um ministério).
     fn simplify_orthogonal_lines(boundary: &mut Vec<XZPoint>) {
-        if boundary.len() < 3 { return; }
+        if boundary.len() < 3 {
+            return;
+        }
         let mut i = 0;
         while i < boundary.len() {
             let p1 = boundary[i];
@@ -157,7 +172,9 @@ impl LidarProvider {
 }
 
 impl DataProvider for LidarProvider {
-    fn priority(&self) -> u8 { self.priority }
+    fn priority(&self) -> u8 {
+        self.priority
+    }
     fn name(&self) -> &str {
         "High-Density LiDAR Concave Vectorizer (.las/.laz)"
     }
@@ -166,14 +183,20 @@ impl DataProvider for LidarProvider {
         use las::{Read, Reader};
         use proj::Proj;
 
-        println!("[INFO] 🚁 A invocar o scanner LiDAR de ultra-densidade: {}", self.file_path.display());
+        println!(
+            "[INFO] 🚁 A invocar o scanner LiDAR de ultra-densidade: {}",
+            self.file_path.display()
+        );
 
         let mut reader = Reader::from_path(&self.file_path)
             .map_err(|e| format!("Falha ao ler arquivo LiDAR: {}", e))?;
 
         let proj = Proj::new_known_crs(&self.source_epsg, "EPSG:4326", None)
             .ok()
-            .ok_or(format!("Falha ao inicializar a projeção PROJ: {} -> WGS84", self.source_epsg))?;
+            .ok_or(format!(
+                "Falha ao inicializar a projeção PROJ: {} -> WGS84",
+                self.source_epsg
+            ))?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o Global ECEF Transformer: {}", e))?;
@@ -205,7 +228,11 @@ impl DataProvider for LidarProvider {
             let (lon, lat) = proj.convert((point.x, point.y)).unwrap_or((0.0, 0.0));
 
             // Culling BBox Exato
-            if lat < bbox.min().lat() || lat > bbox.max().lat() || lon < bbox.min().lng() || lon > bbox.max().lng() {
+            if lat < bbox.min().lat()
+                || lat > bbox.max().lat()
+                || lon < bbox.min().lng()
+                || lon > bbox.max().lng()
+            {
                 continue;
             }
 
@@ -233,7 +260,10 @@ impl DataProvider for LidarProvider {
             read_count += 1;
         }
 
-        println!("[INFO] 🔬 Laser Decodificado. {} Pontos filtrados no BBox atual.", read_count);
+        println!(
+            "[INFO] 🔬 Laser Decodificado. {} Pontos filtrados no BBox atual.",
+            read_count
+        );
 
         let mut features = Vec::new();
         let mut next_id = 8_000_000_000;
@@ -242,15 +272,19 @@ impl DataProvider for LidarProvider {
         let mut global_visited: FxHashSet<(i32, i32)> = FxHashSet::default();
 
         for start_coord in building_keys {
-            if global_visited.contains(&start_coord) { continue; }
+            if global_visited.contains(&start_coord) {
+                continue;
+            }
 
             if let Some(&(start_h, b_class)) = building_grid.get(&start_coord) {
                 let mut cluster_cells: FxHashSet<(i32, i32)> = FxHashSet::default();
                 let mut queue = VecDeque::with_capacity(1024);
 
                 let mut max_h = start_h;
-                let mut c_min_x = start_coord.0; let mut c_max_x = start_coord.0;
-                let mut c_min_z = start_coord.1; let mut c_max_z = start_coord.1;
+                let mut c_min_x = start_coord.0;
+                let mut c_max_x = start_coord.0;
+                let mut c_min_z = start_coord.1;
+                let mut c_max_z = start_coord.1;
 
                 queue.push_back(start_coord);
                 global_visited.insert(start_coord);
@@ -258,12 +292,12 @@ impl DataProvider for LidarProvider {
                 while let Some((cx, cz)) = queue.pop_front() {
                     cluster_cells.insert((cx, cz));
 
-                    c_min_x = c_min_x.min(cx); c_max_x = c_max_x.max(cx);
-                    c_min_z = c_min_z.min(cz); c_max_z = c_max_z.max(cz);
+                    c_min_x = c_min_x.min(cx);
+                    c_max_x = c_max_x.max(cx);
+                    c_min_z = c_min_z.min(cz);
+                    c_max_z = c_max_z.max(cz);
 
-                    let neighbors = [
-                        (cx + 1, cz), (cx - 1, cz), (cx, cz + 1), (cx, cz - 1),
-                    ];
+                    let neighbors = [(cx + 1, cz), (cx - 1, cz), (cx, cz + 1), (cx, cz - 1)];
 
                     for n_coord in &neighbors {
                         if !global_visited.contains(n_coord) {
@@ -271,7 +305,9 @@ impl DataProvider for LidarProvider {
                                 if n_class == b_class {
                                     global_visited.insert(*n_coord);
                                     queue.push_back(*n_coord);
-                                    if n_h > max_h { max_h = n_h; }
+                                    if n_h > max_h {
+                                        max_h = n_h;
+                                    }
                                 }
                             }
                         }
@@ -281,7 +317,6 @@ impl DataProvider for LidarProvider {
                 // Culling Local: Um prédio não tem menos de 10 m².
                 if cluster_cells.len() >= 10 {
                     if let Some((semantic, mut tags)) = Self::class_to_semantic(b_class) {
-
                         // Cálculo da Elevação Relativa. Como mc_y já está na escala do Minecraft,
                         // a subtração fornece a altura de blocos limpa, sem furos matemáticos.
                         let mut min_ground_local = i32::MAX;
@@ -308,7 +343,9 @@ impl DataProvider for LidarProvider {
 
                         // Estimação de andares (~3.5m por andar)
                         if b_class == 6 {
-                            let levels = ((height_blocks as f64) / (3.5 * self.scale_v)).max(1.0).floor() as i32;
+                            let levels = ((height_blocks as f64) / (3.5 * self.scale_v))
+                                .max(1.0)
+                                .floor() as i32;
                             tags.insert("building:levels".to_string(), levels.to_string());
                         }
 
@@ -332,7 +369,10 @@ impl DataProvider for LidarProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] 🏗️ Solidificação LiDAR concluída: {} Cascos Côncavos isolados perfeitamente.", features.len());
+        println!(
+            "[INFO] 🏗️ Solidificação LiDAR concluída: {} Cascos Côncavos isolados perfeitamente.",
+            features.len()
+        );
 
         Ok(features)
     }

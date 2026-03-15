@@ -70,7 +70,8 @@ impl DemProvider {
         let mut decoder = Decoder::new(file)
             .map_err(|e| format!("Falha ao inicializar descodificador DEM GeoTIFF: {}", e))?;
 
-        let (width, height) = decoder.dimensions()
+        let (width, height) = decoder
+            .dimensions()
             .map_err(|e| format!("Falha ao ler dimens�es do DEM GeoTIFF: {}", e))?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -82,11 +83,15 @@ impl DemProvider {
         let mut mapped_count = 0u64;
 
         // Limites de Culling (Apenas processa a caixa geogr�fica estrita do motor)
-        let start_x = ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees_x).max(0.0) as u32;
-        let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees_x).min(width as f64) as u32;
-        
-        let start_y = ((self.top_left_lat - bbox.max().lat()) / self.pixel_size_degrees_y).max(0.0) as u32;
-        let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees_y).min(height as f64) as u32;
+        let start_x =
+            ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees_x).max(0.0) as u32;
+        let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees_x)
+            .min(width as f64) as u32;
+
+        let start_y =
+            ((self.top_left_lat - bbox.max().lat()) / self.pixel_size_degrees_y).max(0.0) as u32;
+        let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees_y)
+            .min(height as f64) as u32;
 
         if start_x >= width || start_y >= height || start_x >= end_x || start_y >= end_y {
             println!("[AVISO] O DEM GeoTIFF est� fora da Bounding Box atual. Retornando grid de eleva��o vazio.");
@@ -103,7 +108,9 @@ impl DemProvider {
                         let elevation = image_data[pixel_index];
 
                         // Ignora pixels corrompidos ou marcados como NoData (Oceanos, falhas de sensor)
-                        if (elevation - self.nodata_value).abs() < f32::EPSILON || elevation.is_nan() {
+                        if (elevation - self.nodata_value).abs() < f32::EPSILON
+                            || elevation.is_nan()
+                        {
                             continue;
                         }
 
@@ -113,12 +120,15 @@ impl DemProvider {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
-                                
+
                                 // Voxeliza��o Local Determin�stica com Pr�-Quantiza��o Inteira
-                                let voxel_y = self.ground_level_offset + (elevation as f64 * self.scale_v).round() as i32;
-                                
+                                let voxel_y = self.ground_level_offset
+                                    + (elevation as f64 * self.scale_v).round() as i32;
+
                                 // O(1) Hash Map: Sobrescreve mantendo sempre o pico geod�sico daquele bloco de 1x1m
-                                let entry = quantization_grid.entry((xz_point.x, xz_point.z)).or_insert(voxel_y);
+                                let entry = quantization_grid
+                                    .entry((xz_point.x, xz_point.z))
+                                    .or_insert(voxel_y);
                                 if voxel_y > *entry {
                                     *entry = voxel_y;
                                 }
@@ -146,9 +156,12 @@ impl DemProvider {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
-                                let voxel_y = self.ground_level_offset + (elevation as f64 * self.scale_v).round() as i32;
-                                
-                                let entry = quantization_grid.entry((xz_point.x, xz_point.z)).or_insert(voxel_y);
+                                let voxel_y = self.ground_level_offset
+                                    + (elevation as f64 * self.scale_v).round() as i32;
+
+                                let entry = quantization_grid
+                                    .entry((xz_point.x, xz_point.z))
+                                    .or_insert(voxel_y);
                                 if voxel_y > *entry {
                                     *entry = voxel_y;
                                 }
@@ -176,9 +189,12 @@ impl DemProvider {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
-                                let voxel_y = self.ground_level_offset + (elevation as f64 * self.scale_v).round() as i32;
-                                
-                                let entry = quantization_grid.entry((xz_point.x, xz_point.z)).or_insert(voxel_y);
+                                let voxel_y = self.ground_level_offset
+                                    + (elevation as f64 * self.scale_v).round() as i32;
+
+                                let entry = quantization_grid
+                                    .entry((xz_point.x, xz_point.z))
+                                    .or_insert(voxel_y);
                                 if voxel_y > *entry {
                                     *entry = voxel_y;
                                 }
@@ -195,7 +211,7 @@ impl DemProvider {
 
         // Limpeza de capacidade excedente antes de devolver � thread principal
         quantization_grid.shrink_to_fit();
-        
+
         println!(
             "[INFO] ? Matriz DEM Bare Earth quantizada. {} pixels processados, {} blocos de terreno ancorados no Grid Absoluto.",
             read_count, mapped_count

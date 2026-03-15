@@ -1,5 +1,5 @@
-use crate::coordinate_system::geographic::LLBBox;
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::LLBBox;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,7 +20,12 @@ pub struct GDFProvider {
 }
 
 impl GDFProvider {
-    pub fn new(shp_path: PathBuf, scale_h: f64, priority: u8, semantic_override: Option<SemanticGroup>) -> Self {
+    pub fn new(
+        shp_path: PathBuf,
+        scale_h: f64,
+        priority: u8,
+        semantic_override: Option<SemanticGroup>,
+    ) -> Self {
         Self {
             shp_path,
             scale_h,
@@ -87,7 +92,8 @@ impl GDFProvider {
                     // o do OSM, ele será pescado pelo landmarks.rs
                 }
                 "TIPO_VIA" | "CLASSE_VIA" | "HIGHWAY" => {
-                    tags.insert("highway".to_string(), "residential".to_string()); // Fallback
+                    tags.insert("highway".to_string(), "residential".to_string());
+                    // Fallback
                 }
                 _ => {
                     // Mantém atributos crus para debug ou expansão futura
@@ -161,14 +167,18 @@ impl DataProvider for GDFProvider {
 
             // Define o grupo semântico (usa override se a camada inteira for de um tipo específico, ex: "Árvores")
             let semantic_group = self.semantic_override.unwrap_or_else(|| {
-                if tags.contains_key("building") { SemanticGroup::Building }
-                else if tags.contains_key("highway") { SemanticGroup::Highway }
-                else { SemanticGroup::Other }
+                if tags.contains_key("building") {
+                    SemanticGroup::Building
+                } else if tags.contains_key("highway") {
+                    SemanticGroup::Highway
+                } else {
+                    SemanticGroup::Other
+                }
             });
 
             // Extração e Reprojeção da Geometria
             let geometry = match shape {
-                Shape::Polygon(poly)  => {
+                Shape::Polygon(poly) => {
                     let mut outer_ring = Vec::new();
 
                     // Shapefile Polygons contêm anéis (Rings). O primeiro geralmente é o Outer.
@@ -177,7 +187,8 @@ impl DataProvider for GDFProvider {
 
                         for pt in ring.points() {
                             // Converte de UTM para Lat/Lon
-                            let (lon, lat) = proj.convert((pt.x, pt.y))
+                            let (lon, lat) = proj
+                                .convert((pt.x, pt.y))
                                 .map_err(|e| format!("Erro de reprojeção PROJ: {}", e))?;
 
                             // Projeta para blocos do Minecraft
@@ -197,10 +208,12 @@ impl DataProvider for GDFProvider {
                         break;
                     }
 
-                    if outer_ring.len() < 4 { continue; }
+                    if outer_ring.len() < 4 {
+                        continue;
+                    }
                     GeometryType::Polygon(outer_ring)
                 }
-                Shape::Polyline(pline)  => {
+                Shape::Polyline(pline) => {
                     let mut lines = Vec::new();
                     for part in pline.parts() {
                         for pt in part {
@@ -209,10 +222,12 @@ impl DataProvider for GDFProvider {
                         }
                         break; // Pega só o primeiro segmento contínuo para evitar complexidade
                     }
-                    if lines.len() < 2 { continue; }
+                    if lines.len() < 2 {
+                        continue;
+                    }
                     GeometryType::LineString(lines)
                 }
-                Shape::Point(pt)  => {
+                Shape::Point(pt) => {
                     let (lon, lat) = proj.convert((pt.x, pt.y)).unwrap_or((0.0, 0.0));
                     let xz = Self::project_to_minecraft_xz(lat, lon, bbox, self.scale_h);
                     GeometryType::Point(xz)
@@ -234,8 +249,20 @@ impl DataProvider for GDFProvider {
             // Se o AABB da feature inteira estiver fora da BBox do mapa do Minecraft, descartamos.
             let (min_x, max_x, min_z, max_z) = feature.aabb;
             let (mc_max_x, mc_max_z) = (
-                Self::project_to_minecraft_xz(bbox.max().lat(), bbox.max().lng(), bbox, self.scale_h).x,
-                Self::project_to_minecraft_xz(bbox.min().lat(), bbox.max().lng(), bbox, self.scale_h).z
+                Self::project_to_minecraft_xz(
+                    bbox.max().lat(),
+                    bbox.max().lng(),
+                    bbox,
+                    self.scale_h,
+                )
+                .x,
+                Self::project_to_minecraft_xz(
+                    bbox.min().lat(),
+                    bbox.max().lng(),
+                    bbox,
+                    self.scale_h,
+                )
+                .z,
             );
 
             // Verifica se está dentro do quadrante gerado (assumindo origem 0,0)

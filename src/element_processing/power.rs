@@ -127,7 +127,11 @@ fn generate_power_tower_from_node(editor: &mut WorldEditor, node: &ProcessedNode
 /// Generate a high-voltage transmission tower (pylon)
 fn generate_power_tower_impl(editor: &mut WorldEditor, x: i32, z: i32, height: i32, args: &Args) {
     // 🚨 BESM-6: Aterrando a torre no terreno volumétrico em vez de deixá-la voar no Y=0
-    let ground_y = if args.terrain { editor.get_ground_level(x, z) } else { 0 };
+    let ground_y = if args.terrain {
+        editor.get_ground_level(x, z)
+    } else {
+        0
+    };
 
     // Rigor 1.33 Horizontal: Base alargada para 11x11
     let base_width = 5;
@@ -155,12 +159,40 @@ fn generate_power_tower_impl(editor: &mut WorldEditor, x: i32, z: i32, height: i
         // Horizontal cross-bracing
         if y % 5 == 0 && y < height - 2 {
             for dx in -current_width..=current_width {
-                editor.set_block_absolute(ANDESITE, x + dx, absolute_y, z - current_width, None, None);
-                editor.set_block_absolute(ANDESITE, x + dx, absolute_y, z + current_width, None, None);
+                editor.set_block_absolute(
+                    ANDESITE,
+                    x + dx,
+                    absolute_y,
+                    z - current_width,
+                    None,
+                    None,
+                );
+                editor.set_block_absolute(
+                    ANDESITE,
+                    x + dx,
+                    absolute_y,
+                    z + current_width,
+                    None,
+                    None,
+                );
             }
             for dz in -current_width..=current_width {
-                editor.set_block_absolute(ANDESITE, x - current_width, absolute_y, z + dz, None, None);
-                editor.set_block_absolute(ANDESITE, x + current_width, absolute_y, z + dz, None, None);
+                editor.set_block_absolute(
+                    ANDESITE,
+                    x - current_width,
+                    absolute_y,
+                    z + dz,
+                    None,
+                    None,
+                );
+                editor.set_block_absolute(
+                    ANDESITE,
+                    x + current_width,
+                    absolute_y,
+                    z + dz,
+                    None,
+                    None,
+                );
             }
         }
 
@@ -192,7 +224,11 @@ fn generate_power_tower_impl(editor: &mut WorldEditor, x: i32, z: i32, height: i
         }
 
         // Insulators (Isoladores)
-        let end_x = if arm_offset < 0 { x - arm_length } else { x + arm_length };
+        let end_x = if arm_offset < 0 {
+            x - arm_length
+        } else {
+            x + arm_length
+        };
         editor.set_block_absolute(END_ROD, end_x, absolute_arm_y - 1, z, None, None);
         editor.set_block_absolute(END_ROD, x, absolute_arm_y - 1, z + arm_offset, None, None);
     }
@@ -207,7 +243,11 @@ fn generate_power_tower_impl(editor: &mut WorldEditor, x: i32, z: i32, height: i
                 let arm_x = if arm_offset < 0 { x - dx } else { x + dx };
                 editor.set_block_absolute(ANDESITE, arm_x, absolute_lower_arm_y, z, None, None);
             }
-            let end_x = if arm_offset < 0 { x - lower_arm_length } else { x + lower_arm_length };
+            let end_x = if arm_offset < 0 {
+                x - lower_arm_length
+            } else {
+                x + lower_arm_length
+            };
             editor.set_block_absolute(END_ROD, end_x, absolute_lower_arm_y - 1, z, None, None);
         }
     }
@@ -219,7 +259,11 @@ fn generate_power_tower_impl(editor: &mut WorldEditor, x: i32, z: i32, height: i
     // Brasília Concrete Foundation Pad (Sapata CEB aterrada no relevo real)
     for dx in -4i32..=4i32 {
         for dz in -4i32..=4i32 {
-            let local_ground = if args.terrain { editor.get_ground_level(x + dx, z + dz) } else { 0 };
+            let local_ground = if args.terrain {
+                editor.get_ground_level(x + dx, z + dz)
+            } else {
+                0
+            };
             editor.set_block_absolute(POLISHED_ANDESITE, x + dx, local_ground, z + dz, None, None);
         }
     }
@@ -242,7 +286,14 @@ fn generate_power_pole(editor: &mut WorldEditor, element: &ProcessedElement, arg
         .get("material")
         .map(|m: &String| m.as_str())
         .unwrap_or("concrete");
-    generate_power_pole_impl(editor, first_node.x, first_node.z, height, pole_material, args);
+    generate_power_pole_impl(
+        editor,
+        first_node.x,
+        first_node.z,
+        height,
+        pole_material,
+        args,
+    );
 }
 
 /// Generate a wooden/concrete power pole from a ProcessedNode
@@ -272,7 +323,11 @@ fn generate_power_pole_impl(
     pole_material: &str,
     args: &Args,
 ) {
-    let ground_y = if args.terrain { editor.get_ground_level(x, z) } else { 0 };
+    let ground_y = if args.terrain {
+        editor.get_ground_level(x, z)
+    } else {
+        0
+    };
 
     let pole_block = match pole_material {
         "concrete" => GRAY_CONCRETE,
@@ -287,12 +342,33 @@ fn generate_power_pole_impl(
 
     let arm_length = 2;
     for dx in -arm_length..=arm_length {
-        editor.set_block_absolute(LIGHT_GRAY_CONCRETE, x + dx, ground_y + height, z, None, None);
+        editor.set_block_absolute(
+            LIGHT_GRAY_CONCRETE,
+            x + dx,
+            ground_y + height,
+            z,
+            None,
+            None,
+        );
     }
 
     // Power line insulators on poles
-    editor.set_block_absolute(END_ROD, x - arm_length, ground_y + height + 1, z, None, None);
-    editor.set_block_absolute(END_ROD, x + arm_length, ground_y + height + 1, z, None, None);
+    editor.set_block_absolute(
+        END_ROD,
+        x - arm_length,
+        ground_y + height + 1,
+        z,
+        None,
+        None,
+    );
+    editor.set_block_absolute(
+        END_ROD,
+        x + arm_length,
+        ground_y + height + 1,
+        z,
+        None,
+        None,
+    );
     editor.set_block_absolute(END_ROD, x, ground_y + height + 1, z, None, None);
 }
 
@@ -343,7 +419,11 @@ fn generate_power_line(editor: &mut WorldEditor, way: &ProcessedWay, args: &Args
             let sag = (4.0 * max_sag as f64 * t * (1.0 - t)) as i32;
 
             // 🚨 BESM-6: Aterrando os cabos da CEB acompanhando o relevo da pista
-            let ground_y = if args.terrain { editor.get_ground_level(*lx, *lz) } else { 0 };
+            let ground_y = if args.terrain {
+                editor.get_ground_level(*lx, *lz)
+            } else {
+                0
+            };
             let wire_y = (ground_y + base_height - sag).max(ground_y + 3);
 
             editor.set_block_absolute(chain_block, *lx, wire_y, *lz, None, None);

@@ -2,8 +2,8 @@
 
 use noise::{NoiseFn, OpenSimplex};
 use once_cell::sync::Lazy;
-use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 use std::f64::consts::PI;
 
 // =====================================================
@@ -27,14 +27,14 @@ static NOISE_BARK: Lazy<OpenSimplex> = Lazy::new(|| OpenSimplex::new(3131));
 #[derive(Clone, Copy, PartialEq)]
 pub enum Block {
     Air,
-    Log,      // Madeira (Acácia para Cerrado)
-    Leaf,     // Folha comum (Copa rala)
-    LeafDense,// Folha fechada (Vereda/Mata de Galeria)
-    Shrub,    // Arbusto
-    Grass,    // Capim dourado/seco
-    Litter,   // Serapilheira (folhas secas no chão)
-    BurnMark, // Tronco carbonizado
-    DeadBush, // Arbusto seco
+    Log,       // Madeira (Acácia para Cerrado)
+    Leaf,      // Folha comum (Copa rala)
+    LeafDense, // Folha fechada (Vereda/Mata de Galeria)
+    Shrub,     // Arbusto
+    Grass,     // Capim dourado/seco
+    Litter,    // Serapilheira (folhas secas no chão)
+    BurnMark,  // Tronco carbonizado
+    DeadBush,  // Arbusto seco
 }
 
 // =====================================================
@@ -111,7 +111,7 @@ pub fn generate_chunk(
             let (trunk_base, is_twisted, leaf_type) = match moisture {
                 m if m > 0.7 => (12, false, Block::LeafDense), // Vereda/Mata de Galeria (Alta, densa)
                 m if m > 0.4 => (7, true, Block::Leaf),        // Cerrado Típico (Pau-Terra, torto)
-                _ => (5, true, Block::Leaf),                   // Seca severa (Pequizeiro, muito torto)
+                _ => (5, true, Block::Leaf), // Seca severa (Pequizeiro, muito torto)
             };
 
             let trunk_height = trunk_base + rng.random_range(0..4);
@@ -135,11 +135,15 @@ pub fn generate_chunk(
                 let bark = NOISE_BARK.get([
                     current_x as f64 * 0.4,
                     wy as f64 * 0.8,
-                    current_z as f64 * 0.4
+                    current_z as f64 * 0.4,
                 ]);
 
                 // Casca grossa resistente ao fogo
-                let wood_type = if bark > 0.45 && y < 4 { Block::BurnMark } else { Block::Log };
+                let wood_type = if bark > 0.45 && y < 4 {
+                    Block::BurnMark
+                } else {
+                    Block::Log
+                };
                 world(current_x, wy, current_z, wood_type);
 
                 // BIFURCAÇÃO (Geralmente baixa no Cerrado)
@@ -158,16 +162,19 @@ pub fn generate_chunk(
 
             for dx in -canopy_radius_x..=canopy_radius_x {
                 for dz in -canopy_radius_z..=canopy_radius_z {
-                    for dy in -1i32..=1i32 { // Copa muito achatada (pouca altura)
+                    for dy in -1i32..=1i32 {
+                        // Copa muito achatada (pouca altura)
 
                         // Elipse achatada para a forma da copa
-                        let dist = ((dx*dx) as f64 / (canopy_radius_x*canopy_radius_x) as f64) +
-                            ((dz*dz) as f64 / (canopy_radius_z*canopy_radius_z) as f64) +
-                            ((dy*dy * 3) as f64); // Peso vertical alto para amassar a copa
+                        let dist = ((dx * dx) as f64 / (canopy_radius_x * canopy_radius_x) as f64)
+                            + ((dz * dz) as f64 / (canopy_radius_z * canopy_radius_z) as f64)
+                            + ((dy * dy * 3) as f64); // Peso vertical alto para amassar a copa
 
                         if dist < 1.0 {
                             // Esparsidade: a copa do cerrado deixa a luz passar
-                            if leaf_type == Block::Leaf && rng.random_bool(0.15) { continue; }
+                            if leaf_type == Block::Leaf && rng.random_bool(0.15) {
+                                continue;
+                            }
                             world(current_x + dx, canopy_y + dy, current_z + dz, leaf_type);
                         }
                     }
@@ -182,7 +189,13 @@ pub fn generate_chunk(
 // =====================================================
 
 /// Gera galhos laterais para árvores tortas
-fn generate_branch(x: i32, y: i32, z: i32, rng: &mut SmallRng, world: &mut dyn FnMut(i32, i32, i32, Block)) {
+fn generate_branch(
+    x: i32,
+    y: i32,
+    z: i32,
+    rng: &mut SmallRng,
+    world: &mut dyn FnMut(i32, i32, i32, Block),
+) {
     let dx = rng.random_range(-2..=2);
     let dz = rng.random_range(-2..=2);
     for i in 1i32..=3i32 {
@@ -191,16 +204,33 @@ fn generate_branch(x: i32, y: i32, z: i32, rng: &mut SmallRng, world: &mut dyn F
 }
 
 /// Gera a cobertura de solo (Undergrowth) do Cerrado
-fn generate_undergrowth(x: i32, y: i32, z: i32, moisture: f64, rng: &mut SmallRng, world: &mut dyn FnMut(i32, i32, i32, Block)) {
+fn generate_undergrowth(
+    x: i32,
+    y: i32,
+    z: i32,
+    moisture: f64,
+    rng: &mut SmallRng,
+    world: &mut dyn FnMut(i32, i32, i32, Block),
+) {
     // Correção Ecológica: Apenas áreas secas recebem Dead Bush. Áreas úmidas recebem grama verde/arbustos.
     if moisture < 0.4 {
         // Campo Sujo (Seca): Muito Capim, Serapilheira e Arbustos Secos
-        if rng.random_bool(0.40) { world(x, y, z, Block::Grass); }
-        if rng.random_bool(0.08) { world(x, y, z, Block::Litter); }
-        if rng.random_bool(0.05) { world(x, y, z, Block::DeadBush); }
+        if rng.random_bool(0.40) {
+            world(x, y, z, Block::Grass);
+        }
+        if rng.random_bool(0.08) {
+            world(x, y, z, Block::Litter);
+        }
+        if rng.random_bool(0.05) {
+            world(x, y, z, Block::DeadBush);
+        }
     } else {
         // Mata de Galeria/Vereda (Úmido): Arbustos vivos, pouca grama solta (sombreado)
-        if rng.random_bool(0.15) { world(x, y, z, Block::Shrub); }
-        if rng.random_bool(0.20) { world(x, y, z, Block::Grass); }
+        if rng.random_bool(0.15) {
+            world(x, y, z, Block::Shrub);
+        }
+        if rng.random_bool(0.20) {
+            world(x, y, z, Block::Grass);
+        }
     }
 }

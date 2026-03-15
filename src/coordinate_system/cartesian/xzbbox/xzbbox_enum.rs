@@ -17,7 +17,8 @@ impl XZBBox {
             XZBBoxRect::new(
                 XZPoint { x: min_x, z: min_z },
                 XZPoint { x: max_x, z: max_z },
-            ).expect("BESM-6 Erro Crítico: Coordenadas de Bounding Box inválidas (min > max).")
+            )
+            .expect("BESM-6 Erro Crítico: Coordenadas de Bounding Box inválidas (min > max)."),
         )
     }
 

@@ -1,12 +1,12 @@
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: Motor ECEF
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use osmpbf::{Element, ElementReader, RelMemberType};
 use rustc_hash::FxHashMap; // BESM-6: Hash O(1) de extrema performance
-use osmpbf::{ElementReader, Element, RelMemberType};
 
 /// Provedor PBF (Protocolbuffer Binary Format) Local de Alta Performance.
 /// L� arquivos gigantescos do OSM (.osm.pbf) diretamente do SSD.
@@ -32,16 +32,28 @@ impl PbfProvider {
         if tags.contains_key("building") || tags.contains_key("building:part") {
             return Some(SemanticGroup::Building);
         }
-        if tags.contains_key("highway") || tags.contains_key("aeroway") || tags.contains_key("railway") {
+        if tags.contains_key("highway")
+            || tags.contains_key("aeroway")
+            || tags.contains_key("railway")
+        {
             return Some(SemanticGroup::Highway);
         }
-        if tags.contains_key("natural") || tags.contains_key("water") || tags.contains_key("waterway") {
+        if tags.contains_key("natural")
+            || tags.contains_key("water")
+            || tags.contains_key("waterway")
+        {
             return Some(SemanticGroup::Terrain);
         }
-        if tags.contains_key("landuse") || tags.contains_key("leisure") || tags.contains_key("amenity") {
+        if tags.contains_key("landuse")
+            || tags.contains_key("leisure")
+            || tags.contains_key("amenity")
+        {
             return Some(SemanticGroup::Landuse);
         }
-        if tags.contains_key("power") || tags.contains_key("man_made") || tags.contains_key("barrier") {
+        if tags.contains_key("power")
+            || tags.contains_key("man_made")
+            || tags.contains_key("barrier")
+        {
             return Some(SemanticGroup::Infrastructure);
         }
         None
@@ -49,13 +61,18 @@ impl PbfProvider {
 }
 
 impl DataProvider for PbfProvider {
-    fn priority(&self) -> u8 { self.priority }
+    fn priority(&self) -> u8 {
+        self.priority
+    }
     fn name(&self) -> &str {
         "Local OSM PBF (Ultra-Fast Binary Stream)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ? Iniciando motor de varredura PBF no SSD: {}", self.file_path.display());
+        println!(
+            "[INFO] ? Iniciando motor de varredura PBF no SSD: {}",
+            self.file_path.display()
+        );
 
         let reader = ElementReader::from_path(&self.file_path)
             .map_err(|e| format!("Falha ao abrir arquivo PBF: {}", e))?;
@@ -64,10 +81,10 @@ impl DataProvider for PbfProvider {
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
 
         let mut features = Vec::new();
-        let mut next_id: u64 = 6_000_000_000; // Offset em u64 para evitar overflow
+        let _next_id: u64 = 6_000_000_000; // Offset em u64 para evitar overflow
 
         // ?? BESM-6 Tweak: BBox Expandida (Buffer)
-        // Expandimos a �rea de captura em ~2km (0.02 graus) para garantir que vias e 
+        // Expandimos a �rea de captura em ~2km (0.02 graus) para garantir que vias e
         // superquadras que come�am fora da BBox mas cruzam para dentro n�o sejam decepadas.
         let min_lat = bbox.min().lat() - 0.02;
         let max_lat = bbox.max().lat() + 0.02;
@@ -81,7 +98,7 @@ impl DataProvider for PbfProvider {
         // Passagem �nica em Streaming PBF (O formato garante a ordem: Nodes -> Ways -> Relations)
         let _ = reader.for_each(|element| {
             match element {
-                osmpbf::Element::DenseNode(_) => {},
+                osmpbf::Element::DenseNode(_) => {}
                 Element::Node(node) => {
                     let lat = node.lat();
                     let lon = node.lon();
@@ -92,8 +109,11 @@ impl DataProvider for PbfProvider {
                             let xz = transformer.transform_point(llpoint);
                             node_cache.insert(node.id(), xz);
 
-                            let tags: HashMap<String, String> = node.tags().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-                            
+                            let tags: HashMap<String, String> = node
+                                .tags()
+                                .map(|(k, v)| (k.to_string(), v.to_string()))
+                                .collect();
+
                             if let Some(semantic_group) = Self::get_semantic_group(&tags) {
                                 features.push(Feature::new(
                                     node.id() as u64,
@@ -123,14 +143,21 @@ impl DataProvider for PbfProvider {
                         return; // Via fora do mapa ou incompleta
                     }
 
-                    let tags: HashMap<String, String> = way.tags().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+                    let tags: HashMap<String, String> = way
+                        .tags()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
                     let is_closed = coords.first() == coords.last() && coords.len() >= 4;
 
                     // Armazena a geometria no cache de Vias pois uma Relation (Congresso Nacional) pode precisar dela
                     way_cache.insert(way.id(), coords.clone());
 
                     if let Some(semantic_group) = Self::get_semantic_group(&tags) {
-                        let geometry = if is_closed && (semantic_group == SemanticGroup::Building || semantic_group == SemanticGroup::Landuse || semantic_group == SemanticGroup::Terrain) {
+                        let geometry = if is_closed
+                            && (semantic_group == SemanticGroup::Building
+                                || semantic_group == SemanticGroup::Landuse
+                                || semantic_group == SemanticGroup::Terrain)
+                        {
                             GeometryType::Polygon(coords)
                         } else {
                             GeometryType::LineString(coords)
@@ -147,8 +174,11 @@ impl DataProvider for PbfProvider {
                     }
                 }
                 Element::Relation(rel) => {
-                    let tags: HashMap<String, String> = rel.tags().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-                    
+                    let tags: HashMap<String, String> = rel
+                        .tags()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+
                     // Multipolygons s�o cr�ticos para constru��es massivas com p�tios internos
                     if tags.get("type").map(|s: &String| s.as_str()) == Some("multipolygon") {
                         if let Some(semantic_group) = Self::get_semantic_group(&tags) {
@@ -172,7 +202,10 @@ impl DataProvider for PbfProvider {
                                     rel.id() as u64,
                                     semantic_group,
                                     tags,
-                                    GeometryType::MultiPolygon { outer: outer_rings, inner: inner_rings },
+                                    GeometryType::MultiPolygon {
+                                        outer: outer_rings,
+                                        inner: inner_rings,
+                                    },
                                     "OSM_PBF".to_string(),
                                     self.priority,
                                 ));
@@ -184,7 +217,10 @@ impl DataProvider for PbfProvider {
         });
 
         features.shrink_to_fit();
-        println!("[INFO] ? Varredura PBF conclu�da em O(1): {} blocos extra�dos para o motor.", features.len());
+        println!(
+            "[INFO] ? Varredura PBF conclu�da em O(1): {} blocos extra�dos para o motor.",
+            features.len()
+        );
         Ok(features)
     }
 }

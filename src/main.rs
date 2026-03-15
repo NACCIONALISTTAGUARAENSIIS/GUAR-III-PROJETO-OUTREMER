@@ -2,7 +2,6 @@
 
 // 🚨 BESM-6: Declaração de Módulos Base
 mod args;
-mod osm_parser;
 #[cfg(feature = "bedrock")]
 mod bedrock_block_map;
 mod block_definitions;
@@ -18,10 +17,11 @@ mod floodfill;
 mod floodfill_cache;
 mod ground;
 mod map_renderer;
-mod providers;
 mod master_control;
+mod osm_parser;
 #[cfg(feature = "gui")]
 mod progress;
+mod providers;
 mod retrieve_data;
 #[cfg(feature = "gui")]
 mod telemetry;
@@ -33,16 +33,13 @@ mod world_editor;
 mod world_utils;
 
 use args::Args;
+use clap::Parser;
 use colored::*;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use clap::Parser;
-
-#[cfg(feature = "gui")]
-use crate::gui::run_gui;
 
 #[cfg(feature = "gui")]
 mod gui;
@@ -61,7 +58,10 @@ mod progress {
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Console::{AttachConsole, FreeConsole, ATTACH_PARENT_PROCESS};
 
-pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<master_control::BesmSignal>>) {
+pub fn run_generation_pipeline(
+    args: Args,
+    telemetry_tx: Option<mpsc::Sender<master_control::BesmSignal>>,
+) {
     floodfill_cache::configure_rayon_thread_pool(0.9);
     elevation_data::cleanup_old_cached_tiles();
 
@@ -79,19 +79,26 @@ pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<mas
         let (output_path, lvl_name) = world_utils::build_bedrock_output(&args.bbox, output_dir);
         (output_path, Some(lvl_name))
     } else {
-        let base_dir = args.path.clone().unwrap_or_else(|| PathBuf::from("./world"));
+        let base_dir = args
+            .path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("./world"));
         let world_path = match world_utils::create_new_world(&base_dir) {
             Ok(path) => PathBuf::from(path),
             Err(e) => {
                 let msg = format!("Error: {}", e);
-                if let Some(ref tx) = telemetry_tx { let _ = tx.send(master_control::BesmSignal::Log(msg.clone())); }
+                if let Some(ref tx) = telemetry_tx {
+                    let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+                }
                 eprintln!("{}", msg.red().bold());
                 return;
             }
         };
 
         let msg = format!("Created new world at: {}", world_path.display().to_string());
-        if let Some(ref tx) = telemetry_tx { let _ = tx.send(master_control::BesmSignal::Log(msg.clone())); }
+        if let Some(ref tx) = telemetry_tx {
+            let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+        }
         println!("{}", msg.bright_white().bold());
 
         (world_path, None)
@@ -100,7 +107,9 @@ pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<mas
     let mut provider_manager = providers::ProviderManager::new();
 
     // Prioridade 10 (Base)
-    provider_manager.register_provider(Box::new(providers::osm_provider::OSMProvider::new(args.scale_h)));
+    provider_manager.register_provider(Box::new(providers::osm_provider::OSMProvider::new(
+        args.scale_h,
+    )));
 
     if let Some(ref pbf_path) = args.local_pbf {
         provider_manager.register_provider(Box::new(providers::pbf_provider::PbfProvider::new(
@@ -112,40 +121,55 @@ pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<mas
 
     if args.enable_underground_wfs {
         if let Some(ref wfs_url) = args.wfs_endpoint {
-            provider_manager.register_provider(Box::new(providers::wfs_provider::WFSProvider::new(
-                wfs_url.clone(),
-                args.scale_h,
-                2,
-            )));
+            provider_manager.register_provider(Box::new(
+                providers::wfs_provider::WFSProvider::new(wfs_url.clone(), args.scale_h, 2),
+            ));
         }
     }
 
     if let Some(ref shp_path) = args.local_shp {
         provider_manager.register_provider(Box::new(providers::gdf_provider::GDFProvider::new(
-            shp_path.clone(), args.scale_h, 1, None
+            shp_path.clone(),
+            args.scale_h,
+            1,
+            None,
         )));
     }
     if let Some(ref geojson_path) = args.local_geojson {
-        provider_manager.register_provider(Box::new(providers::geojson_provider::GeoJsonProvider::new(
-            geojson_path.clone(), args.scale_h, 1, None
-        )));
+        provider_manager.register_provider(Box::new(
+            providers::geojson_provider::GeoJsonProvider::new(
+                geojson_path.clone(),
+                args.scale_h,
+                1,
+                None,
+            ),
+        ));
     }
     if let Some(ref gpkg_path) = args.local_gpkg {
         provider_manager.register_provider(Box::new(providers::gpkg_provider::GpkgProvider::new(
-            gpkg_path.clone(), args.scale_h, 1, None
+            gpkg_path.clone(),
+            args.scale_h,
+            1,
+            None,
         )));
     }
     if let Some(ref citygml_path) = args.local_citygml {
-        provider_manager.register_provider(Box::new(providers::citygml_provider::CityGmlProvider::new(
-            citygml_path.clone(), args.scale_h, 1
-        )));
+        provider_manager.register_provider(Box::new(
+            providers::citygml_provider::CityGmlProvider::new(
+                citygml_path.clone(),
+                args.scale_h,
+                1,
+            ),
+        ));
     }
 
     let mut optimized_features = match provider_manager.fetch_all(&args.bbox) {
         Ok(features) => features,
         Err(e) => {
             let msg = format!("Error Crítico no Provider Manager: {}", e);
-            if let Some(ref tx) = telemetry_tx { let _ = tx.send(master_control::BesmSignal::Log(msg.clone())); }
+            if let Some(ref tx) = telemetry_tx {
+                let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+            }
             eprintln!("{}", msg.red().bold());
             return;
         }
@@ -158,9 +182,12 @@ pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<mas
         .map(|feature| feature.into_processed_element())
         .collect();
 
-    let xzbbox = coordinate_system::transformation::CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale_h)
-        .unwrap()
-        .1;
+    let xzbbox = coordinate_system::transformation::CoordTransformer::llbbox_to_xzbbox(
+        &args.bbox,
+        args.scale_h,
+    )
+    .unwrap()
+    .1;
 
     if args.debug {
         let mut buf = std::io::BufWriter::new(
@@ -174,10 +201,12 @@ pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<mas
                 element.kind(),
                 element.tags(), // Aqui é correto usar função em element, a feature foi resolvida no mod.rs
             )
-                .expect("Failed to write to output file");
+            .expect("Failed to write to output file");
         }
         let msg = "Arquivo de depuração gerado: parsed_osm_data.txt.".to_string();
-        if let Some(ref tx) = telemetry_tx { let _ = tx.send(master_control::BesmSignal::Log(msg.clone())); }
+        if let Some(ref tx) = telemetry_tx {
+            let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+        }
         println!("[INFO] {}", msg);
     }
 
@@ -193,7 +222,11 @@ pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<mas
 
             let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale_h)
                 .unwrap_or_else(|e| {
-                    eprintln!("{} Failed to convert spawn point: {}", "Error:".red().bold(), e);
+                    eprintln!(
+                        "{} Failed to convert spawn point: {}",
+                        "Error:".red().bold(),
+                        e
+                    );
                     std::process::exit(1);
                 });
 
@@ -220,13 +253,23 @@ pub fn run_generation_pipeline(args: Args, telemetry_tx: Option<mpsc::Sender<mas
     ) {
         Ok(_) => {
             if args.bedrock {
-                println!("{} Bedrock world saved to: {}", "Done!".green().bold(), generation_path.display());
+                println!(
+                    "{} Bedrock world saved to: {}",
+                    "Done!".green().bold(),
+                    generation_path.display()
+                );
             }
 
             if !args.bedrock {
                 if let Some((spawn_x, spawn_z)) = spawn_point {
-                    if let Err(e) = world_utils::set_spawn_in_level_dat(&generation_path, spawn_x, spawn_z) {
-                        eprintln!("{} Failed to set spawn point in level.dat: {}", "Warning:".yellow().bold(), e);
+                    if let Err(e) =
+                        world_utils::set_spawn_in_level_dat(&generation_path, spawn_x, spawn_z)
+                    {
+                        eprintln!(
+                            "{} Failed to set spawn point in level.dat: {}",
+                            "Warning:".yellow().bold(),
+                            e
+                        );
                     }
                 }
             }
@@ -256,7 +299,11 @@ fn run_cli() {
     );
 
     if let Err(e) = version_check::check_for_updates() {
-        eprintln!("{}: {}", "Error checking for version updates".red().bold(), e);
+        eprintln!(
+            "{}: {}",
+            "Error checking for version updates".red().bold(),
+            e
+        );
     }
 
     let mut args: Args = Args::parse();
@@ -266,7 +313,10 @@ fn run_cli() {
     }
 
     if args.bedrock && !cfg!(feature = "bedrock") {
-        eprintln!("{}: The --bedrock flag requires the 'bedrock' feature.", "Error".red().bold());
+        eprintln!(
+            "{}: The --bedrock flag requires the 'bedrock' feature.",
+            "Error".red().bold()
+        );
         std::process::exit(1);
     }
 

@@ -15,20 +15,48 @@ const VALLEY_BRIDGE_THRESHOLD: i32 = 5;
 
 // --- OTIMIZAÇÃO: ARRAYS GLOBAIS DE BLOCOS PROTEGIDOS (Impede recriação no Heap em O(n^2)) ---
 const PROTECTED_BLOCKS: &[Block] = &[
-    WHITE_TERRACOTTA, LIGHT_GRAY_TERRACOTTA, YELLOW_TERRACOTTA,
-    BRICK, MUD_BRICKS, SMOOTH_QUARTZ, WATER,
-    GLASS, GLASS_PANE, OAK_DOOR, IRON_DOOR, STONE_BRICKS,
-    ANDESITE_WALL, COBBLESTONE_WALL, BRICK_WALL, STONE_BRICK_WALL,
-    OAK_PLANKS, WHITE_CONCRETE, POLISHED_BASALT,
-    ACACIA_LOG, OAK_LOG, LEAVES, OAK_LEAVES, JUNGLE_LEAVES,
-    IRON_BLOCK, IRON_BARS, STONE_STAIRS, OAK_STAIRS
+    WHITE_TERRACOTTA,
+    LIGHT_GRAY_TERRACOTTA,
+    YELLOW_TERRACOTTA,
+    BRICK,
+    MUD_BRICKS,
+    SMOOTH_QUARTZ,
+    WATER,
+    GLASS,
+    GLASS_PANE,
+    OAK_DOOR,
+    IRON_DOOR,
+    STONE_BRICKS,
+    ANDESITE_WALL,
+    COBBLESTONE_WALL,
+    BRICK_WALL,
+    STONE_BRICK_WALL,
+    OAK_PLANKS,
+    WHITE_CONCRETE,
+    POLISHED_BASALT,
+    ACACIA_LOG,
+    OAK_LOG,
+    LEAVES,
+    OAK_LEAVES,
+    JUNGLE_LEAVES,
+    IRON_BLOCK,
+    IRON_BARS,
+    STONE_STAIRS,
+    OAK_STAIRS,
 ];
 
 const SAFE_FOR_SIDEWALK: &[Block] = &[
-    GRASS_BLOCK, DIRT, COARSE_DIRT, PODZOL, AIR,
-    GRAY_CONCRETE, BLACK_CONCRETE, GRAY_TERRACOTTA, TALL_GRASS, FERN
+    GRASS_BLOCK,
+    DIRT,
+    COARSE_DIRT,
+    PODZOL,
+    AIR,
+    GRAY_CONCRETE,
+    BLACK_CONCRETE,
+    GRAY_TERRACOTTA,
+    TALL_GRASS,
+    FERN,
 ];
-
 
 // --- SISTEMA DE TIPOLOGIA VIÁRIA DO DF ---
 #[derive(PartialEq)]
@@ -50,12 +78,36 @@ enum DFRoadType {
 }
 
 fn detect_df_road(way: &ProcessedWay, base_highway: &str) -> DFRoadType {
-    let name = way.tags.get("name").map(|s: &String| s.to_lowercase()).unwrap_or_default();
-    let ref_tag = way.tags.get("ref").map(|s: &String| s.to_uppercase()).unwrap_or_default();
-    let junction = way.tags.get("junction").map(|s: &String| s.as_str()).unwrap_or("");
-    let suburb = way.tags.get("addr:suburb").map(|s: &String| s.to_lowercase()).unwrap_or_default();
-    let is_in = way.tags.get("is_in").map(|s: &String| s.to_lowercase()).unwrap_or_default();
-    let place = way.tags.get("place").map(|s: &String| s.to_lowercase()).unwrap_or_default();
+    let name = way
+        .tags
+        .get("name")
+        .map(|s: &String| s.to_lowercase())
+        .unwrap_or_default();
+    let ref_tag = way
+        .tags
+        .get("ref")
+        .map(|s: &String| s.to_uppercase())
+        .unwrap_or_default();
+    let junction = way
+        .tags
+        .get("junction")
+        .map(|s: &String| s.as_str())
+        .unwrap_or("");
+    let suburb = way
+        .tags
+        .get("addr:suburb")
+        .map(|s: &String| s.to_lowercase())
+        .unwrap_or_default();
+    let is_in = way
+        .tags
+        .get("is_in")
+        .map(|s: &String| s.to_lowercase())
+        .unwrap_or_default();
+    let place = way
+        .tags
+        .get("place")
+        .map(|s: &String| s.to_lowercase())
+        .unwrap_or_default();
 
     if junction == "roundabout" {
         return DFRoadType::Rotatoria;
@@ -69,7 +121,11 @@ fn detect_df_road(way: &ProcessedWay, base_highway: &str) -> DFRoadType {
         return DFRoadType::Eixao;
     }
 
-    if name.contains("eixo monumental") || name.contains("via s1") || name.contains("via n1") || name.contains("esplanada") {
+    if name.contains("eixo monumental")
+        || name.contains("via s1")
+        || name.contains("via n1")
+        || name.contains("esplanada")
+    {
         return DFRoadType::Monumental;
     }
 
@@ -81,8 +137,13 @@ fn detect_df_road(way: &ProcessedWay, base_highway: &str) -> DFRoadType {
         return DFRoadType::L2L4;
     }
 
-    if ref_tag.contains("DF-003") || ref_tag.contains("DF-085") || ref_tag.contains("DF-095")
-        || name.contains("epia") || name.contains("eptg") || name.contains("estrutural") {
+    if ref_tag.contains("DF-003")
+        || ref_tag.contains("DF-085")
+        || ref_tag.contains("DF-095")
+        || name.contains("epia")
+        || name.contains("eptg")
+        || name.contains("estrutural")
+    {
         return DFRoadType::ExpressaDF;
     }
 
@@ -95,15 +156,32 @@ fn detect_df_road(way: &ProcessedWay, base_highway: &str) -> DFRoadType {
     }
 
     // HEURÍSTICA DE MORFOLOGIA URBANA (Aprimorada com place=suburb)
-    if base_highway == "residential" || base_highway == "living_street" || base_highway == "tertiary" {
-        let in_plano_piloto = name.contains("sqs") || name.contains("sqn") || suburb.contains("asa sul") || suburb.contains("asa norte") || is_in.contains("plano piloto");
-        let in_satelite = name.contains("guará") || suburb.contains("guara") || place.contains("guará") || suburb.contains("ceilândia") || suburb.contains("taguatinga") || is_in.contains("guará");
+    if base_highway == "residential"
+        || base_highway == "living_street"
+        || base_highway == "tertiary"
+    {
+        let in_plano_piloto = name.contains("sqs")
+            || name.contains("sqn")
+            || suburb.contains("asa sul")
+            || suburb.contains("asa norte")
+            || is_in.contains("plano piloto");
+        let in_satelite = name.contains("guará")
+            || suburb.contains("guara")
+            || place.contains("guará")
+            || suburb.contains("ceilândia")
+            || suburb.contains("taguatinga")
+            || is_in.contains("guará");
 
         if in_plano_piloto {
             return DFRoadType::ViaSuperquadra;
         } else if in_satelite {
             // Detecção da Nova Tipologia Comercial de Satélite
-            if name.contains("comercial") || name.contains("hélio prates") || name.contains("central") || name.contains("samdu") || name.contains("sandu") {
+            if name.contains("comercial")
+                || name.contains("hélio prates")
+                || name.contains("central")
+                || name.contains("samdu")
+                || name.contains("sandu")
+            {
                 return DFRoadType::ViaComercialSatelite;
             }
             return DFRoadType::ViaGuara;
@@ -197,7 +275,14 @@ fn generate_highways_internal(
                         let ground_y = editor.get_ground_level(x, z);
 
                         for dy in 1i32..=4i32 {
-                            editor.set_block_absolute(ANDESITE_WALL, x, ground_y + dy, z, None, None);
+                            editor.set_block_absolute(
+                                ANDESITE_WALL,
+                                x,
+                                ground_y + dy,
+                                z,
+                                None,
+                                None,
+                            );
                         }
 
                         editor.set_block_absolute(GREEN_WOOL, x, ground_y + 5, z, None, None);
@@ -217,9 +302,23 @@ fn generate_highways_internal(
                     editor.set_block_absolute(IRON_BARS, x + 2, ground_y + dy, z, None, None);
                 }
                 for dx in 0i32..=2i32 {
-                    editor.set_block_absolute(SMOOTH_STONE_SLAB, x + dx, ground_y + 4, z, None, None);
+                    editor.set_block_absolute(
+                        SMOOTH_STONE_SLAB,
+                        x + dx,
+                        ground_y + 4,
+                        z,
+                        None,
+                        None,
+                    );
                     if dx == 1 {
-                        editor.set_block_absolute(GRAY_STAINED_GLASS, x + dx, ground_y + 3, z, None, None);
+                        editor.set_block_absolute(
+                            GRAY_STAINED_GLASS,
+                            x + dx,
+                            ground_y + 3,
+                            z,
+                            None,
+                            None,
+                        );
                     }
                 }
             }
@@ -276,8 +375,15 @@ fn generate_highways_internal(
 
             let scale_factor = args.scale;
 
-            let is_indoor = element.tags().get("indoor").is_some_and(|v: &String| v.as_str() == "yes");
-            let is_bridge = !is_indoor && element.tags().get("bridge").is_some_and(|v: &String| v.as_str() != "no");
+            let is_indoor = element
+                .tags()
+                .get("indoor")
+                .is_some_and(|v: &String| v.as_str() == "yes");
+            let is_bridge = !is_indoor
+                && element
+                    .tags()
+                    .get("bridge")
+                    .is_some_and(|v: &String| v.as_str() != "no");
 
             let mut layer_value = element
                 .tags()
@@ -377,44 +483,42 @@ fn generate_highways_internal(
                     grass_buffer = 0;
                     is_detached_sidewalk = false;
                 }
-                DFRoadType::Generic(ref t) => {
-                    match t.as_str() {
-                        "footway" | "pedestrian" => {
-                            block_type = POLISHED_ANDESITE;
-                            block_range = 1;
-                        }
-                        "path" => {
-                            block_type = COARSE_DIRT;
-                            block_range = 1;
-                        }
-                        "track" => {
-                            block_type = DIRT_PATH;
-                            block_range = 1;
-                        }
-                        "escape" => {
-                            block_type = SAND;
-                            block_range = 1;
-                        }
-                        "steps" => {
-                            block_type = STONE_STAIRS;
-                            block_range = 1;
-                        }
-                        _ => {
-                            block_type = GRAY_CONCRETE;
-                            if let Some(lanes) = element.tags().get("lanes") {
-                                if lanes == "2" {
-                                    block_range = 3;
-                                    add_stripe = true;
-                                    add_outline = true;
-                                } else if lanes != "1" {
-                                    block_range = 4;
-                                    add_stripe = true;
-                                    add_outline = true;
-                                }
+                DFRoadType::Generic(ref t) => match t.as_str() {
+                    "footway" | "pedestrian" => {
+                        block_type = POLISHED_ANDESITE;
+                        block_range = 1;
+                    }
+                    "path" => {
+                        block_type = COARSE_DIRT;
+                        block_range = 1;
+                    }
+                    "track" => {
+                        block_type = DIRT_PATH;
+                        block_range = 1;
+                    }
+                    "escape" => {
+                        block_type = SAND;
+                        block_range = 1;
+                    }
+                    "steps" => {
+                        block_type = STONE_STAIRS;
+                        block_range = 1;
+                    }
+                    _ => {
+                        block_type = GRAY_CONCRETE;
+                        if let Some(lanes) = element.tags().get("lanes") {
+                            if lanes == "2" {
+                                block_range = 3;
+                                add_stripe = true;
+                                add_outline = true;
+                            } else if lanes != "1" {
+                                block_range = 4;
+                                add_stripe = true;
+                                add_outline = true;
                             }
                         }
                     }
-                }
+                },
             }
 
             if scale_factor.unwrap_or(1.0) < 1.0 {
@@ -555,11 +659,29 @@ fn generate_highways_internal(
                                     if dist_sq <= total_brush_range * total_brush_range {
                                         let set_x = bx + wx;
                                         let set_z = bz + wz;
-                                        let final_paint_y = if use_absolute_y || effective_elevation > 0 { current_y } else { editor.get_ground_level(set_x, set_z).max(current_y) };
+                                        let final_paint_y =
+                                            if use_absolute_y || effective_elevation > 0 {
+                                                current_y
+                                            } else {
+                                                editor.get_ground_level(set_x, set_z).max(current_y)
+                                            };
 
                                         if dist_sq <= block_range * block_range {
-                                            if !editor.check_for_block_absolute(set_x, final_paint_y, set_z, Some(PROTECTED_BLOCKS), None) {
-                                                editor.set_block_absolute(block_type, set_x, final_paint_y, set_z, None, None);
+                                            if !editor.check_for_block_absolute(
+                                                set_x,
+                                                final_paint_y,
+                                                set_z,
+                                                Some(PROTECTED_BLOCKS),
+                                                None,
+                                            ) {
+                                                editor.set_block_absolute(
+                                                    block_type,
+                                                    set_x,
+                                                    final_paint_y,
+                                                    set_z,
+                                                    None,
+                                                    None,
+                                                );
                                             }
                                         }
                                     }
@@ -583,61 +705,175 @@ fn generate_highways_internal(
                             };
 
                             // ZONA 1: CANTEIRO FÍSICO CENTRAL (Impede asfalto de invadir)
-                            if dist_from_center <= physical_median_radius && !is_bridge && effective_elevation == 0 {
+                            if dist_from_center <= physical_median_radius
+                                && !is_bridge
+                                && effective_elevation == 0
+                            {
                                 let median_block = if df_road_type == DFRoadType::ExpressaDF {
                                     ANDESITE_WALL // Mureta New Jersey
                                 } else {
                                     GRASS_BLOCK // Gramadão
                                 };
 
-                                if !editor.check_for_block_absolute(set_x, final_paint_y, set_z, Some(PROTECTED_BLOCKS), None) {
-                                    editor.set_block_absolute(median_block, set_x, final_paint_y, set_z, None, None);
+                                if !editor.check_for_block_absolute(
+                                    set_x,
+                                    final_paint_y,
+                                    set_z,
+                                    Some(PROTECTED_BLOCKS),
+                                    None,
+                                ) {
+                                    editor.set_block_absolute(
+                                        median_block,
+                                        set_x,
+                                        final_paint_y,
+                                        set_z,
+                                        None,
+                                        None,
+                                    );
                                     if median_block == GRASS_BLOCK {
-                                        editor.set_block_absolute(DIRT, set_x, final_paint_y - 1, set_z, None, None);
+                                        editor.set_block_absolute(
+                                            DIRT,
+                                            set_x,
+                                            final_paint_y - 1,
+                                            set_z,
+                                            None,
+                                            None,
+                                        );
                                     }
                                 }
                                 continue; // Pula pintura de asfalto aqui
                             }
 
                             // ZONA 2: ASFALTO E VAGAS (Ignorando o Canteiro Central)
-                            if dist_from_center > physical_median_radius && dist_from_center <= block_range {
+                            if dist_from_center > physical_median_radius
+                                && dist_from_center <= block_range
+                            {
                                 let mut final_block = block_type;
 
                                 if parking_lane && dist_from_center >= block_range - 2 {
                                     let is_parking_line = distance_accumulator % 4 == 0;
-                                    final_block = if is_parking_line { WHITE_CONCRETE } else { block_type };
+                                    final_block = if is_parking_line {
+                                        WHITE_CONCRETE
+                                    } else {
+                                        block_type
+                                    };
                                 }
 
-                                if !editor.check_for_block_absolute(set_x, final_paint_y, set_z, Some(PROTECTED_BLOCKS), None) {
-                                    editor.set_block_absolute(final_block, set_x, final_paint_y, set_z, None, None);
+                                if !editor.check_for_block_absolute(
+                                    set_x,
+                                    final_paint_y,
+                                    set_z,
+                                    Some(PROTECTED_BLOCKS),
+                                    None,
+                                ) {
+                                    editor.set_block_absolute(
+                                        final_block,
+                                        set_x,
+                                        final_paint_y,
+                                        set_z,
+                                        None,
+                                        None,
+                                    );
                                 }
 
                                 if (effective_elevation > 0 || use_absolute_y) && current_y > 0 {
-                                    editor.set_block_absolute(POLISHED_ANDESITE, set_x, current_y - 1, set_z, None, None);
-                                    add_highway_support_pillar_absolute(editor, set_x, current_y, set_z, w, 0, block_range);
+                                    editor.set_block_absolute(
+                                        POLISHED_ANDESITE,
+                                        set_x,
+                                        current_y - 1,
+                                        set_z,
+                                        None,
+                                        None,
+                                    );
+                                    add_highway_support_pillar_absolute(
+                                        editor,
+                                        set_x,
+                                        current_y,
+                                        set_z,
+                                        w,
+                                        0,
+                                        block_range,
+                                    );
                                 }
                             }
                             // ZONA 3: BORDAS E CALÇADAS
                             else if !is_bridge && effective_elevation == 0 {
-                                let safe_to_build = editor.check_for_block_absolute(set_x, final_paint_y, set_z, Some(SAFE_FOR_SIDEWALK), None);
+                                let safe_to_build = editor.check_for_block_absolute(
+                                    set_x,
+                                    final_paint_y,
+                                    set_z,
+                                    Some(SAFE_FOR_SIDEWALK),
+                                    None,
+                                );
 
-                                if safe_to_build && !editor.check_for_block_absolute(set_x, final_paint_y, set_z, Some(PROTECTED_BLOCKS), None) {
-
-                                    editor.set_block_absolute(AIR, set_x, final_paint_y + 1, set_z, Some(&[TALL_GRASS, FERN]), None);
-                                    editor.set_block_absolute(AIR, set_x, final_paint_y + 2, set_z, Some(&[TALL_GRASS, FERN]), None);
+                                if safe_to_build
+                                    && !editor.check_for_block_absolute(
+                                        set_x,
+                                        final_paint_y,
+                                        set_z,
+                                        Some(PROTECTED_BLOCKS),
+                                        None,
+                                    )
+                                {
+                                    editor.set_block_absolute(
+                                        AIR,
+                                        set_x,
+                                        final_paint_y + 1,
+                                        set_z,
+                                        Some(&[TALL_GRASS, FERN]),
+                                        None,
+                                    );
+                                    editor.set_block_absolute(
+                                        AIR,
+                                        set_x,
+                                        final_paint_y + 2,
+                                        set_z,
+                                        Some(&[TALL_GRASS, FERN]),
+                                        None,
+                                    );
 
                                     if is_detached_sidewalk {
-                                        if dist_from_center > block_range && dist_from_center < total_brush_range {
-                                            editor.set_block_absolute(GRASS_BLOCK, set_x, final_paint_y, set_z, None, None);
+                                        if dist_from_center > block_range
+                                            && dist_from_center < total_brush_range
+                                        {
+                                            editor.set_block_absolute(
+                                                GRASS_BLOCK,
+                                                set_x,
+                                                final_paint_y,
+                                                set_z,
+                                                None,
+                                                None,
+                                            );
                                         }
                                         if dist_from_center == total_brush_range {
-                                            editor.set_block_absolute(POLISHED_ANDESITE, set_x, final_paint_y, set_z, None, None);
+                                            editor.set_block_absolute(
+                                                POLISHED_ANDESITE,
+                                                set_x,
+                                                final_paint_y,
+                                                set_z,
+                                                None,
+                                                None,
+                                            );
                                         }
                                     } else {
                                         if dist_from_center == block_range + 1 {
-                                            editor.set_block_absolute(SMOOTH_STONE_SLAB, set_x, final_paint_y, set_z, None, None);
+                                            editor.set_block_absolute(
+                                                SMOOTH_STONE_SLAB,
+                                                set_x,
+                                                final_paint_y,
+                                                set_z,
+                                                None,
+                                                None,
+                                            );
                                         } else if dist_from_center == block_range + 2 {
-                                            editor.set_block_absolute(POLISHED_ANDESITE, set_x, final_paint_y, set_z, None, None);
+                                            editor.set_block_absolute(
+                                                POLISHED_ANDESITE,
+                                                set_x,
+                                                final_paint_y,
+                                                set_z,
+                                                None,
+                                                None,
+                                            );
                                         }
                                     }
                                 }
@@ -655,11 +891,37 @@ fn generate_highways_internal(
                             let y1 = editor.get_ground_level(out_x1, out_z1);
                             let y2 = editor.get_ground_level(out_x2, out_z2);
 
-                            if !editor.check_for_block_absolute(out_x1, y1, out_z1, Some(PROTECTED_BLOCKS), None) {
-                                editor.set_block_absolute(LIGHT_GRAY_CONCRETE, out_x1, y1, out_z1, None, None);
+                            if !editor.check_for_block_absolute(
+                                out_x1,
+                                y1,
+                                out_z1,
+                                Some(PROTECTED_BLOCKS),
+                                None,
+                            ) {
+                                editor.set_block_absolute(
+                                    LIGHT_GRAY_CONCRETE,
+                                    out_x1,
+                                    y1,
+                                    out_z1,
+                                    None,
+                                    None,
+                                );
                             }
-                            if !editor.check_for_block_absolute(out_x2, y2, out_z2, Some(PROTECTED_BLOCKS), None) {
-                                editor.set_block_absolute(LIGHT_GRAY_CONCRETE, out_x2, y2, out_z2, None, None);
+                            if !editor.check_for_block_absolute(
+                                out_x2,
+                                y2,
+                                out_z2,
+                                Some(PROTECTED_BLOCKS),
+                                None,
+                            ) {
+                                editor.set_block_absolute(
+                                    LIGHT_GRAY_CONCRETE,
+                                    out_x2,
+                                    y2,
+                                    out_z2,
+                                    None,
+                                    None,
+                                );
                             }
                         }
 
@@ -669,20 +931,51 @@ fn generate_highways_internal(
                                 // TWEAK DA DUPLICAÇÃO DE VIA
                                 if physical_median_radius > 0 {
                                     // Se tem canteiro, a rua é duplicada. As faixas devem ir no meio de cada pista isolada
-                                    let dist_faixa = physical_median_radius + ((block_range - physical_median_radius) / 2);
+                                    let dist_faixa = physical_median_radius
+                                        + ((block_range - physical_median_radius) / 2);
 
-                                    let fx1 = (*bx as f64 + dist_faixa as f64 * norm_x).round() as i32;
-                                    let fz1 = (*bz as f64 + dist_faixa as f64 * norm_z).round() as i32;
+                                    let fx1 =
+                                        (*bx as f64 + dist_faixa as f64 * norm_x).round() as i32;
+                                    let fz1 =
+                                        (*bz as f64 + dist_faixa as f64 * norm_z).round() as i32;
                                     let y_f1 = editor.get_ground_level(fx1, fz1);
-                                    if !editor.check_for_block_absolute(fx1, y_f1, fz1, Some(PROTECTED_BLOCKS), None) {
-                                        editor.set_block_absolute(WHITE_CONCRETE, fx1, y_f1, fz1, None, None);
+                                    if !editor.check_for_block_absolute(
+                                        fx1,
+                                        y_f1,
+                                        fz1,
+                                        Some(PROTECTED_BLOCKS),
+                                        None,
+                                    ) {
+                                        editor.set_block_absolute(
+                                            WHITE_CONCRETE,
+                                            fx1,
+                                            y_f1,
+                                            fz1,
+                                            None,
+                                            None,
+                                        );
                                     }
 
-                                    let fx2 = (*bx as f64 - dist_faixa as f64 * norm_x).round() as i32;
-                                    let fz2 = (*bz as f64 - dist_faixa as f64 * norm_z).round() as i32;
+                                    let fx2 =
+                                        (*bx as f64 - dist_faixa as f64 * norm_x).round() as i32;
+                                    let fz2 =
+                                        (*bz as f64 - dist_faixa as f64 * norm_z).round() as i32;
                                     let y_f2 = editor.get_ground_level(fx2, fz2);
-                                    if !editor.check_for_block_absolute(fx2, y_f2, fz2, Some(PROTECTED_BLOCKS), None) {
-                                        editor.set_block_absolute(WHITE_CONCRETE, fx2, y_f2, fz2, None, None);
+                                    if !editor.check_for_block_absolute(
+                                        fx2,
+                                        y_f2,
+                                        fz2,
+                                        Some(PROTECTED_BLOCKS),
+                                        None,
+                                    ) {
+                                        editor.set_block_absolute(
+                                            WHITE_CONCRETE,
+                                            fx2,
+                                            y_f2,
+                                            fz2,
+                                            None,
+                                            None,
+                                        );
                                     }
                                 } else {
                                     // Via Simples (Faixa bem no centro)
@@ -690,8 +983,21 @@ fn generate_highways_internal(
                                     let center_z = (*bz as f64 + 0.0 * norm_z).round() as i32;
                                     let y_center = editor.get_ground_level(center_x, center_z);
 
-                                    if !editor.check_for_block_absolute(center_x, y_center, center_z, Some(PROTECTED_BLOCKS), None) {
-                                        editor.set_block_absolute(WHITE_CONCRETE, center_x, y_center, center_z, None, None);
+                                    if !editor.check_for_block_absolute(
+                                        center_x,
+                                        y_center,
+                                        center_z,
+                                        Some(PROTECTED_BLOCKS),
+                                        None,
+                                    ) {
+                                        editor.set_block_absolute(
+                                            WHITE_CONCRETE,
+                                            center_x,
+                                            y_center,
+                                            center_z,
+                                            None,
+                                            None,
+                                        );
                                     }
                                 }
                             } else if stripe_length <= dash_length + gap_length {
@@ -825,7 +1131,14 @@ pub fn generate_siding(editor: &mut WorldEditor, element: &ProcessedWay) {
 
             for (bx, _, bz) in bresenham_points {
                 if !editor.check_for_block(bx, 0, bz, Some(&[BLACK_CONCRETE, WHITE_CONCRETE])) {
-                    editor.set_block_absolute(siding_block, bx, editor.get_ground_level(bx, bz) + 1, bz, None, None);
+                    editor.set_block_absolute(
+                        siding_block,
+                        bx,
+                        editor.get_ground_level(bx, bz) + 1,
+                        bz,
+                        None,
+                        None,
+                    );
                 }
             }
         }
@@ -851,7 +1164,14 @@ pub fn generate_aeroway(editor: &mut WorldEditor, way: &ProcessedWay, args: &Arg
                     for dz in -way_width..=way_width {
                         let set_x = x + dx;
                         let set_z = z + dz;
-                        editor.set_block_absolute(surface_block, set_x, editor.get_ground_level(set_x, set_z), set_z, None, None);
+                        editor.set_block_absolute(
+                            surface_block,
+                            set_x,
+                            editor.get_ground_level(set_x, set_z),
+                            set_z,
+                            None,
+                            None,
+                        );
                     }
                 }
             }

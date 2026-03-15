@@ -7,11 +7,11 @@ use colored::Colorize;
 use rand::prelude::IndexedRandom;
 use reqwest::blocking::Client;
 use reqwest::blocking::ClientBuilder;
+use serde_json::Value;
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Write};
 use std::process::Command;
 use std::time::Duration;
-use serde_json::Value;
 
 /// Function to download data using reqwest
 fn download_with_reqwest(url: &str, query: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -120,8 +120,16 @@ fn split_bbox_if_needed(bbox: &LLBBox) -> Vec<LLBBox> {
         for j in 0..lon_splits {
             let min_lat = bbox.min().lat() + (i as f64 * lat_step);
             let min_lon = bbox.min().lng() + (j as f64 * lon_step);
-            let max_lat = if i == lat_splits - 1 { bbox.max().lat() } else { min_lat + lat_step };
-            let max_lon = if j == lon_splits - 1 { bbox.max().lng() } else { min_lon + lon_step };
+            let max_lat = if i == lat_splits - 1 {
+                bbox.max().lat()
+            } else {
+                min_lat + lat_step
+            };
+            let max_lon = if j == lon_splits - 1 {
+                bbox.max().lng()
+            } else {
+                min_lon + lon_step
+            };
 
             if let Ok(b) = LLBBox::new(min_lat, min_lon, max_lat, max_lon) {
                 sub_boxes.push(b);
@@ -204,7 +212,10 @@ pub fn fetch_data_from_overpass(
     let total_chunks = sub_boxes.len();
 
     if total_chunks > 1 {
-        println!("[INFO] 🧩 BBox massivo detectado. Dividindo consulta OSM em {} setores.", total_chunks);
+        println!(
+            "[INFO] 🧩 BBox massivo detectado. Dividindo consulta OSM em {} setores.",
+            total_chunks
+        );
     }
 
     for (i, sub_bbox) in sub_boxes.iter().enumerate() {
@@ -215,7 +226,12 @@ pub fn fetch_data_from_overpass(
         let max_attempts = 1;
         let response: String = loop {
             if total_chunks > 1 {
-                println!("Downloading sector {}/{} from {}...", i + 1, total_chunks, url);
+                println!(
+                    "Downloading sector {}/{} from {}...",
+                    i + 1,
+                    total_chunks,
+                    url
+                );
             } else {
                 println!("Downloading from {url} with method {download_method}...");
             }
@@ -241,7 +257,8 @@ pub fn fetch_data_from_overpass(
             }
         };
 
-        let mut deserializer = serde_json::Deserializer::from_reader(Cursor::new(response.as_bytes()));
+        let mut deserializer =
+            serde_json::Deserializer::from_reader(Cursor::new(response.as_bytes()));
         let chunk_data: OsmData = serde::Deserialize::deserialize(&mut deserializer)?;
 
         if chunk_data.is_empty() {
@@ -288,10 +305,23 @@ pub fn fetch_data_from_overpass(
     }
 
     if debug {
-        println!("Additional debug information: {} nodes, {} ways, {} relations fetched.",
-                 merged_data.elements.iter().filter(|e| e.type_str() == "node").count(),
-                 merged_data.elements.iter().filter(|e| e.type_str() == "way").count(),
-                 merged_data.elements.iter().filter(|e| e.type_str() == "relation").count()
+        println!(
+            "Additional debug information: {} nodes, {} ways, {} relations fetched.",
+            merged_data
+                .elements
+                .iter()
+                .filter(|e| e.type_str() == "node")
+                .count(),
+            merged_data
+                .elements
+                .iter()
+                .filter(|e| e.type_str() == "way")
+                .count(),
+            merged_data
+                .elements
+                .iter()
+                .filter(|e| e.type_str() == "relation")
+                .count()
         );
     }
 

@@ -30,8 +30,8 @@ pub fn render_world_map(
     min_z: i32,
     max_z: i32,
 ) -> Result<std::path::PathBuf, String> {
-    let mut raw_width = (max_x - min_x + 1).max(0) as u32;
-    let mut raw_height = (max_z - min_z + 1).max(0) as u32;
+    let raw_width = (max_x - min_x + 1).max(0) as u32;
+    let raw_height = (max_z - min_z + 1).max(0) as u32;
 
     if raw_width == 0 || raw_height == 0 {
         return Err("Invalid world bounds".to_string());
@@ -40,14 +40,19 @@ pub fn render_world_map(
     // ?? BESM-6 Tweak: Auto-Downsampling (Prote��o contra OOM do O.S.)
     // Se a imagem passar de ~3GB na RAM (o que � trivial no DF inteiro), reduzimos a escala.
     let mut downsample_factor = 1;
-    while raw_width / downsample_factor > MAX_IMAGE_DIMENSION || raw_height / downsample_factor > MAX_IMAGE_DIMENSION {
+    while raw_width / downsample_factor > MAX_IMAGE_DIMENSION
+        || raw_height / downsample_factor > MAX_IMAGE_DIMENSION
+    {
         downsample_factor *= 2;
     }
 
     let width = raw_width / downsample_factor;
     let height = raw_height / downsample_factor;
 
-    println!("[INFO] ?? Iniciando renderiza��o do minimapa: {}x{} pixels (Downsample: {}x)", width, height, downsample_factor);
+    println!(
+        "[INFO] ?? Iniciando renderiza��o do minimapa: {}x{} pixels (Downsample: {}x)",
+        width, height, downsample_factor
+    );
 
     // Use Mutex for thread-safe image access
     let img = Mutex::new(RgbImage::from_pixel(width, height, Rgb([255, 255, 255])));
@@ -103,8 +108,11 @@ pub fn render_world_map(
 
     // Save the image
     let output_path = world_dir.join("arnis_world_map.png");
-    println!("[INFO] ?? Salvando preview cartogr�fico em: {}", output_path.display());
-    
+    println!(
+        "[INFO] ?? Salvando preview cartogr�fico em: {}",
+        output_path.display()
+    );
+
     img.into_inner()
         .unwrap()
         .save(&output_path)
@@ -208,7 +216,9 @@ fn render_chunk_to_pixels(
 
             // ?? Pulo de Downsampling (Economiza CPU no mapa enorme)
             // Renderizamos apenas 1 pixel a cada X blocos definidos pelo fator.
-            if world_x.rem_euclid(downsample_factor as i32) != 0 || world_z.rem_euclid(downsample_factor as i32) != 0 {
+            if world_x.rem_euclid(downsample_factor as i32) != 0
+                || world_z.rem_euclid(downsample_factor as i32) != 0
+            {
                 continue;
             }
 

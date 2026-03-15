@@ -62,14 +62,14 @@ fn get_waterway_dimensions(waterway_type: &str) -> (i32, i32) {
         // TWEAK URBANÍSTICO & RP: Escala 1.33H com foco em imponência orgânica
         // Rios principais do DF (Descoberto, São Bartolomeu): Largos e fundos
         "river" => (24, 5),
-        "canal" => (12, 3),    // Canais urbanos
-        "stream" => (7, 2),    // Córregos (A grande maioria da hidrografia do DF)
-        "fairway" => (20, 5),  // Rotas de navegação (Paranoá)
-        "flowline" => (3, 1),  // Linhas de fluxo de chuva
-        "brook" => (4, 1),     // Riachos rasos
-        "ditch" => (3, 1),     // Valetas
-        "drain" => (2, 1),     // Drenagem pluvial
-        _ => (6, 2),           // Default seguro orgânico
+        "canal" => (12, 3),   // Canais urbanos
+        "stream" => (7, 2),   // Córregos (A grande maioria da hidrografia do DF)
+        "fairway" => (20, 5), // Rotas de navegação (Paranoá)
+        "flowline" => (3, 1), // Linhas de fluxo de chuva
+        "brook" => (4, 1),    // Riachos rasos
+        "ditch" => (3, 1),    // Valetas
+        "drain" => (2, 1),    // Drenagem pluvial
+        _ => (6, 2),          // Default seguro orgânico
     }
 }
 
@@ -130,7 +130,6 @@ fn create_water_channel(
 
             // --- ZONA 1: LEITO CENTRAL PROFUNDO ---
             if distance_sq <= half_width_sq {
-
                 // Escava do solo local até o fundo do rio (river_surface_y - final_depth)
                 // Se o morro for alto, ele rasga o morro. Se for baixo, ele constrói a margem.
                 let bottom_y = river_surface_y - final_depth;
@@ -184,8 +183,13 @@ fn create_water_channel(
             } else if distance_sq <= riparian_radius_sq {
                 // Não colocamos água aqui, apenas alteramos o solo e a flora para simular umidade
                 // O Y local dita a regra (não aplainamos a planície, ela acompanha o morro)
-                if editor.check_for_block_absolute(x, local_ground_y, z, Some(&[GRASS_BLOCK, DIRT, COARSE_DIRT]), None) {
-
+                if editor.check_for_block_absolute(
+                    x,
+                    local_ground_y,
+                    z,
+                    Some(&[GRASS_BLOCK, DIRT, COARSE_DIRT]),
+                    None,
+                ) {
                     let soil_block = if sediment_noise > 0.2 {
                         MUD // Solo turfoso perto da margem
                     } else if sediment_noise > -0.2 {
@@ -198,9 +202,23 @@ fn create_water_channel(
 
                     // Vegetação ciliar densa (Samambaias e mato alto amam água)
                     if sediment_noise > 0.3 {
-                        editor.set_block_absolute(FERN, x, local_ground_y + 1, z, Some(&[AIR]), None);
+                        editor.set_block_absolute(
+                            FERN,
+                            x,
+                            local_ground_y + 1,
+                            z,
+                            Some(&[AIR]),
+                            None,
+                        );
                     } else if sediment_noise > 0.0 {
-                        editor.set_block_absolute(TALL_GRASS_BOTTOM, x, local_ground_y + 1, z, Some(&[AIR]), None);
+                        editor.set_block_absolute(
+                            TALL_GRASS_BOTTOM,
+                            x,
+                            local_ground_y + 1,
+                            z,
+                            Some(&[AIR]),
+                            None,
+                        );
                     }
                 }
             }

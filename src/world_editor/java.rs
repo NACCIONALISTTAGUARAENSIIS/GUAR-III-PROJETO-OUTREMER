@@ -10,11 +10,9 @@ use colored::Colorize;
 use fastanvil::Region;
 use fastnbt::Value;
 use fnv::FnvHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 /// Cached base chunk sections (grass at Y=-62)
@@ -97,13 +95,13 @@ impl<'a> WorldEditor<'a> {
     pub(super) fn save_java_region(&mut self, rx: i32, rz: i32) {
         // Se a regi�o n�o existir na mem�ria (totalmente vazia), apenas cria blocos base
         let region_exists = self.world.regions.contains_key(&(rx, rz));
-        
+
         let mut ser_buffer = Vec::with_capacity(8192);
         let mut region = self.create_region(rx, rz);
-        
+
         if region_exists {
             let region_to_modify = self.world.regions.get(&(rx, rz)).unwrap();
-            
+
             // First pass: write all chunks that have content
             for (&(chunk_x, chunk_z), chunk_to_modify) in &region_to_modify.chunks {
                 if !chunk_to_modify.sections.is_empty() || !chunk_to_modify.other.is_empty() {
@@ -118,11 +116,13 @@ impl<'a> WorldEditor<'a> {
                     let level_data = create_level_wrapper(&chunk);
                     ser_buffer.clear();
                     fastnbt::to_writer(&mut ser_buffer, &level_data).unwrap();
-                    region.write_chunk(chunk_x as usize, chunk_z as usize, &ser_buffer).unwrap();
+                    region
+                        .write_chunk(chunk_x as usize, chunk_z as usize, &ser_buffer)
+                        .unwrap();
                 }
             }
         }
-        
+
         // Second pass: ensure all chunks exist (fill with base layer if not)
         for chunk_x in 0..32 {
             for chunk_z in 0..32 {
@@ -130,14 +130,21 @@ impl<'a> WorldEditor<'a> {
                 let abs_chunk_z = chunk_z + (rz * 32);
 
                 let chunk_exists = if region_exists {
-                    self.world.regions.get(&(rx, rz)).unwrap().chunks.contains_key(&(chunk_x, chunk_z))
+                    self.world
+                        .regions
+                        .get(&(rx, rz))
+                        .unwrap()
+                        .chunks
+                        .contains_key(&(chunk_x, chunk_z))
                 } else {
                     false
                 };
 
                 if !chunk_exists {
                     let (base_buffer, _) = Self::create_base_chunk(abs_chunk_x, abs_chunk_z);
-                    region.write_chunk(chunk_x as usize, chunk_z as usize, &base_buffer).unwrap();
+                    region
+                        .write_chunk(chunk_x as usize, chunk_z as usize, &base_buffer)
+                        .unwrap();
                 }
             }
         }
@@ -153,7 +160,7 @@ impl<'a> WorldEditor<'a> {
             #[cfg(feature = "gui")]
             send_log(LogLevel::Warning, "Failed to save world metadata.");
         }
-        
+
         emit_gui_progress_update(100.0, "Java World generation complete.");
     }
 }

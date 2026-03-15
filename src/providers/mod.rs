@@ -1,18 +1,18 @@
-pub mod osm_provider;
-pub mod gdf_provider;
-pub mod geojson_provider;
 pub mod citygml_provider;
-pub mod wfs_provider;
-pub mod gpkg_provider;
-pub mod pbf_provider;
 pub mod csv_provider;
-pub mod raster_provider;
-pub mod indoor_utility_provider; // 🚨 Tornado público para que outros módulos possam usá-lo
-pub mod mesh_provider;
-pub mod lidar_provider;
 pub mod dem_provider;
 pub mod dsm_provider;
+pub mod gdf_provider;
+pub mod geojson_provider;
+pub mod gpkg_provider;
+pub mod indoor_utility_provider; // 🚨 Tornado público para que outros módulos possam usá-lo
+pub mod lidar_provider;
+pub mod mesh_provider;
+pub mod osm_provider;
+pub mod pbf_provider;
+pub mod raster_provider;
 pub mod vegetation_provider;
+pub mod wfs_provider;
 
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::LLBBox;
@@ -109,10 +109,18 @@ impl GeometryType {
                 let mut min_z = i32::MAX;
                 let mut max_z = i32::MIN;
                 for p in pts {
-                    if p.x < min_x { min_x = p.x; }
-                    if p.x > max_x { max_x = p.x; }
-                    if p.z < min_z { min_z = p.z; }
-                    if p.z > max_z { max_z = p.z; }
+                    if p.x < min_x {
+                        min_x = p.x;
+                    }
+                    if p.x > max_x {
+                        max_x = p.x;
+                    }
+                    if p.z < min_z {
+                        min_z = p.z;
+                    }
+                    if p.z > max_z {
+                        max_z = p.z;
+                    }
                 }
                 (min_x, max_x, min_z, max_z)
             }
@@ -123,10 +131,18 @@ impl GeometryType {
                 let mut max_z = i32::MIN;
                 for ring in outer {
                     for p in ring {
-                        if p.x < min_x { min_x = p.x; }
-                        if p.x > max_x { max_x = p.x; }
-                        if p.z < min_z { min_z = p.z; }
-                        if p.z > max_z { max_z = p.z; }
+                        if p.x < min_x {
+                            min_x = p.x;
+                        }
+                        if p.x > max_x {
+                            max_x = p.x;
+                        }
+                        if p.z < min_z {
+                            min_z = p.z;
+                        }
+                        if p.z > max_z {
+                            max_z = p.z;
+                        }
                     }
                 }
                 (min_x, max_x, min_z, max_z)
@@ -235,18 +251,31 @@ impl ProviderManager {
             println!("[INFO] Motor iniciando provedor: {}", provider.name());
             match provider.fetch_features(bbox) {
                 Ok(mut features) => {
-                    println!(" -> {} features extraídas de {}.", features.len(), provider.name());
+                    println!(
+                        " -> {} features extraídas de {}.",
+                        features.len(),
+                        provider.name()
+                    );
                     all_features.append(&mut features);
                 }
                 Err(e) => {
-                    eprintln!("[AVISO] Timeout ou Falha Crítica no provedor {}: {}", provider.name(), e);
+                    eprintln!(
+                        "[AVISO] Timeout ou Falha Crítica no provedor {}: {}",
+                        provider.name(),
+                        e
+                    );
                 }
             }
         }
 
-        println!("[INFO] Merge Intelligence: Resolvendo colisões espaciais (Tier Governamental)...");
+        println!(
+            "[INFO] Merge Intelligence: Resolvendo colisões espaciais (Tier Governamental)..."
+        );
         let merged_features = self.resolve_collisions(all_features);
-        println!("[INFO] Dados governamentais e públicos fundidos com sucesso. Total: {} features.", merged_features.len());
+        println!(
+            "[INFO] Dados governamentais e públicos fundidos com sucesso. Total: {} features.",
+            merged_features.len()
+        );
 
         Ok(merged_features)
     }
@@ -266,8 +295,8 @@ impl ProviderManager {
             let mut is_collision = false;
 
             if new_feature.semantic_group != SemanticGroup::Terrain
-                && new_feature.semantic_group != SemanticGroup::Infrastructure {
-
+                && new_feature.semantic_group != SemanticGroup::Infrastructure
+            {
                 // Determina em quais baldes o Bounding Box desta nova feature cai
                 let (min_x, max_x, min_z, max_z) = new_feature.aabb;
                 let min_grid_x = min_x / GRID_SIZE;
@@ -283,7 +312,8 @@ impl ProviderManager {
                                 let accepted = &accepted_features[idx];
 
                                 if new_feature.semantic_group == accepted.semantic_group
-                                    && new_feature.intersects_aabb(accepted) {
+                                    && new_feature.intersects_aabb(accepted)
+                                {
                                     is_collision = true;
                                     break 'collision_check;
                                 }
@@ -298,7 +328,8 @@ impl ProviderManager {
                 let accepted_idx = accepted_features.len();
 
                 if new_feature.semantic_group != SemanticGroup::Terrain
-                    && new_feature.semantic_group != SemanticGroup::Infrastructure {
+                    && new_feature.semantic_group != SemanticGroup::Infrastructure
+                {
                     let (min_x, max_x, min_z, max_z) = new_feature.aabb;
                     let min_grid_x = min_x / GRID_SIZE;
                     let max_grid_x = max_x / GRID_SIZE;
@@ -324,7 +355,10 @@ impl ProviderManager {
 // ============================================================================
 // PONTE BESM-6 (Tradução Reversa para Compatibilidade Legada)
 // ============================================================================
-use crate::osm_parser::{ProcessedElement, ProcessedNode, ProcessedWay, ProcessedRelation, ProcessedMember, ProcessedMemberRole};
+use crate::osm_parser::{
+    ProcessedElement, ProcessedMember, ProcessedMemberRole, ProcessedNode, ProcessedRelation,
+    ProcessedWay,
+};
 
 impl Feature {
     /// Tradução Reversa: Converte a Feature Otimizada do Motor de volta para o formato
@@ -333,24 +367,25 @@ impl Feature {
         let mut fake_node_id = self.id.wrapping_mul(1000);
 
         match self.geometry {
-            GeometryType::Point(pt) => {
-                ProcessedElement::Node(ProcessedNode {
-                    id: self.id,
-                    x: pt.x,
-                    z: pt.z,
-                    tags: self.attributes,
-                })
-            },
+            GeometryType::Point(pt) => ProcessedElement::Node(ProcessedNode {
+                id: self.id,
+                x: pt.x,
+                z: pt.z,
+                tags: self.attributes,
+            }),
             GeometryType::LineString(pts) | GeometryType::Polygon(pts) => {
-                let nodes = pts.into_iter().map(|pt| {
-                    fake_node_id = fake_node_id.wrapping_add(1);
-                    ProcessedNode {
-                        id: fake_node_id,
-                        x: pt.x,
-                        z: pt.z,
-                        tags: HashMap::new(),
-                    }
-                }).collect();
+                let nodes = pts
+                    .into_iter()
+                    .map(|pt| {
+                        fake_node_id = fake_node_id.wrapping_add(1);
+                        ProcessedNode {
+                            id: fake_node_id,
+                            x: pt.x,
+                            z: pt.z,
+                            tags: HashMap::new(),
+                        }
+                    })
+                    .collect();
 
                 // 🚨 O REVESTIMENTO ARC É OBRIGATÓRIO AQUI!
                 ProcessedElement::Way(Arc::new(ProcessedWay {
@@ -358,7 +393,7 @@ impl Feature {
                     nodes,
                     tags: self.attributes,
                 }))
-            },
+            }
             GeometryType::MultiPolygon { outer, inner } => {
                 let mut members = Vec::new();
 
@@ -381,7 +416,7 @@ impl Feature {
                             id: way_id,
                             nodes,
                             tags: HashMap::new(),
-                        })
+                        }),
                     });
                 }
 
@@ -404,7 +439,7 @@ impl Feature {
                             id: way_id,
                             nodes,
                             tags: HashMap::new(),
-                        })
+                        }),
                     });
                 }
 

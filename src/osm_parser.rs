@@ -4,10 +4,10 @@ use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::progress::emit_gui_progress_update;
 use colored::Colorize;
+use rustc_hash::FxHashMap;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
-use rustc_hash::FxHashMap; // 🚨 BESM-6: Acesso de memória em velocidade terminal O(1)
+use std::sync::Arc; // 🚨 BESM-6: Acesso de memória em velocidade terminal O(1)
 
 // Raw data from OSM
 

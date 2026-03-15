@@ -1,12 +1,12 @@
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: Motor ECEF
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use rustc_hash::FxHashMap; // BESM-6: Hash O(1) de extrema performance
 use proj::Proj;
+use rustc_hash::FxHashMap; // BESM-6: Hash O(1) de extrema performance
 use tobj;
 
 /// Provedor de Malhas 3D de Fotogrametria (Wavefront .obj).
@@ -22,7 +22,13 @@ pub struct MeshProvider {
 }
 
 impl MeshProvider {
-    pub fn new(file_path: PathBuf, scale_h: f64, scale_v: f64, priority: u8, decimation_factor: f64) -> Self {
+    pub fn new(
+        file_path: PathBuf,
+        scale_h: f64,
+        scale_v: f64,
+        priority: u8,
+        decimation_factor: f64,
+    ) -> Self {
         Self {
             file_path,
             scale_h,
@@ -34,13 +40,18 @@ impl MeshProvider {
 }
 
 impl DataProvider for MeshProvider {
-    fn priority(&self) -> u8 { self.priority }
+    fn priority(&self) -> u8 {
+        self.priority
+    }
     fn name(&self) -> &str {
         "Photogrammetry Mesh Voxelizer (.obj)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ?? Iniciando Voxeliza��o de Fotogrametria 3D: {}", self.file_path.display());
+        println!(
+            "[INFO] ?? Iniciando Voxeliza��o de Fotogrametria 3D: {}",
+            self.file_path.display()
+        );
 
         // 1. Carregar a malha 3D via TOBJ (Zero-copy whenever possible)
         let load_options = tobj::LoadOptions {
@@ -77,7 +88,9 @@ impl DataProvider for MeshProvider {
             // O Wavefront OBJ usa coordenadas locais.
             // Padr�o Fotogram�trico: X = Easting (UTM), Z = Northing (UTM), Y = Eleva��o.
             for i in (0..positions.len()).step_by(3 * step_skip) {
-                if i + 2 >= positions.len() { break; }
+                if i + 2 >= positions.len() {
+                    break;
+                }
 
                 let utm_x = positions[i] as f64;
                 let elev_y = positions[i + 1] as f64;
@@ -86,7 +99,6 @@ impl DataProvider for MeshProvider {
                 // Reprojeta UTM para Lat/Lon
                 if let Ok((lon, lat)) = proj.convert((utm_x, utm_z)) {
                     if let Ok(llpoint) = LLPoint::new(lat, lon) {
-                        
                         // Early-Z Culling BBox
                         if !bbox.contains(&llpoint) {
                             continue;
@@ -99,23 +111,30 @@ impl DataProvider for MeshProvider {
 
                         // Agrega na coluna Voxel
                         let entry = voxel_grid.entry((mc_x, mc_z)).or_insert((elev_y, elev_y));
-                        if elev_y < entry.0 { entry.0 = elev_y; }
-                        if elev_y > entry.1 { entry.1 = elev_y; }
-                        
+                        if elev_y < entry.0 {
+                            entry.0 = elev_y;
+                        }
+                        if elev_y > entry.1 {
+                            entry.1 = elev_y;
+                        }
+
                         processed_vertices += 1;
                     }
                 }
             }
         }
 
-        println!("[INFO] ?? Malha fatiada: {} v�rtices colapsados em {} colunas Voxel.", processed_vertices, voxel_grid.len());
+        println!(
+            "[INFO] ?? Malha fatiada: {} v�rtices colapsados em {} colunas Voxel.",
+            processed_vertices,
+            voxel_grid.len()
+        );
 
         let mut features = Vec::with_capacity(voxel_grid.len());
         let mut next_id = 7_000_000_000; // Offset dedicado para Mesh Voxel
 
         // 3. Converter as Colunas Voxel em Features de Alta Fidelidade
         for ((mc_x, mc_z), (min_elev, max_elev)) in voxel_grid {
-            
             // Cria um pol�gono de 1x1 bloco exato para essa coluna
             let voxel_poly = vec![
                 XZPoint::new(mc_x, mc_z),
@@ -127,11 +146,17 @@ impl DataProvider for MeshProvider {
             let mut tags = HashMap::new();
             tags.insert("source".to_string(), "GDF_Mesh_Voxel".to_string());
             tags.insert("building".to_string(), "yes".to_string()); // For�a o motor a extrudar
-            
+
             // O Segredo da Geometria Complexa: Se houver diferen�a entre a base e o topo,
             // o Arnis vai criar um v�o livre de ar embaixo (min_height) e teto em (height).
-            tags.insert("min_height".to_string(), format!("{:.2}", min_elev * self.scale_v));
-            tags.insert("height".to_string(), format!("{:.2}", max_elev * self.scale_v));
+            tags.insert(
+                "min_height".to_string(),
+                format!("{:.2}", min_elev * self.scale_v),
+            );
+            tags.insert(
+                "height".to_string(),
+                format!("{:.2}", max_elev * self.scale_v),
+            );
 
             let feature = Feature::new(
                 next_id,

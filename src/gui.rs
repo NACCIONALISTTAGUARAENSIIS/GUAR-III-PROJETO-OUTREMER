@@ -1,16 +1,11 @@
 use crate::args::Args;
 use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
-use crate::coordinate_system::transformation::CoordTransformer;
-use crate::data_processing::{self, GenerationOptions};
-use crate::ground::{self, Ground};
-use crate::osm_parser;
+use crate::coordinate_system::geographic::LLBBox;
+use crate::ground::Ground;
 use crate::progress::{self, emit_gui_progress_update};
 use crate::retrieve_data;
 use crate::telemetry::{self, send_log, LogLevel};
 use crate::version_check;
-use crate::world_editor::WorldFormat;
-use colored::Colorize;
 use fastnbt::Value;
 use flate2::read::GzDecoder;
 use fs2::FileExt;
@@ -18,9 +13,9 @@ use log::LevelFilter;
 use rfd::FileDialog;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::{env, fs, io::Write};
 use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind};
-use std::str::FromStr;
 
 /// Manages the session.lock file for a Minecraft world directory
 struct SessionLock {
@@ -710,8 +705,8 @@ fn gui_start_generation(
     telemetry_consent: bool,
     world_format: String,
 ) -> Result<(), String> {
-    use progress::emit_gui_error;
-    use crate::args::{Downloader, DemSource, LayerPriority}; // Imports necessários para os Enums
+    use crate::args::{DemSource, Downloader, LayerPriority};
+    use progress::emit_gui_error; // Imports necessários para os Enums
 
     // Store telemetry consent for crash reporting
     telemetry::set_telemetry_consent(telemetry_consent);
@@ -740,13 +735,13 @@ fn gui_start_generation(
         threads: 0,                       // Auto
         offline: false,
         scale_h: world_scale,
-        scale_v: 1.15,                    // Rigor Governamental
-        scale: None,                      // Legacy
+        scale_v: 1.15, // Rigor Governamental
+        scale: None,   // Legacy
         local_shp: None,
         local_geojson: None,
         local_lidar: None,
         wfs_endpoint: None,
-        epsg: 31983,                      // Padrão Brasília
+        epsg: 31983, // Padrão Brasília
         dem: DemSource::AwsSrtm,
         local_dem: None,
         cache_dir: PathBuf::from("./arnis_cache"),
@@ -784,7 +779,9 @@ fn gui_start_generation(
         if let Err(e) = tokio::task::spawn_blocking(move || {
             // Chamamos a função principal definida no main.rs/lib.rs
             crate::run_generation_pipeline(args, None);
-        }).await {
+        })
+        .await
+        {
             let error_msg = format!("Erro Crítico no despachante do Pincelism: {}", e);
             eprintln!("{}", error_msg);
             emit_gui_error(&error_msg);

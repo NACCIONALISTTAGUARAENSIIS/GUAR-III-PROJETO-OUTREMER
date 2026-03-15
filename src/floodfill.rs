@@ -5,9 +5,9 @@
 //! A Voxelização Scanline elimina os bilhões de testes de intersecção na CPU
 //! e suporta anéis interiores (pátios, ilhas no Lago Paranoá).
 
+use crate::osm_parser::ProcessedElement;
 use itertools::Itertools;
 use std::time::{Duration, Instant};
-use crate::osm_parser::ProcessedElement;
 
 /// Maximum bounding box area (in blocks) for safety cut-off.
 /// Aumentado para 30M blocks para suportar o Lago Paranoá.
@@ -54,13 +54,15 @@ pub fn scanline_fill_complex(
     }
 
     // Determina o Bounding Box master
-    let (min_x, max_x) = polygon.outer
+    let (min_x, max_x) = polygon
+        .outer
         .iter()
         .map(|&(x, _)| x)
         .minmax()
         .into_option()
         .unwrap();
-    let (min_z, max_z) = polygon.outer
+    let (min_z, max_z) = polygon
+        .outer
         .iter()
         .map(|&(_, z)| z)
         .minmax()
@@ -108,7 +110,6 @@ pub fn scanline_fill_complex(
 
     // A Varredura (Scanline)
     for z in min_z..=max_z {
-
         // Timeout culling (Verifica a cada 10.000 pixels para não asfixiar o I/O)
         if filled_area.len() - last_timeout_check > 10_000 {
             if let Some(timeout) = timeout {
@@ -161,7 +162,10 @@ pub fn extract_complex_polygon_from_element(element: &ProcessedElement) -> Optio
     match element {
         ProcessedElement::Way(w) => {
             let outer: Vec<(i32, i32)> = w.nodes.iter().map(|n| (n.x, n.z)).collect();
-            Some(ComplexPolygon { outer, inners: Vec::new() })
+            Some(ComplexPolygon {
+                outer,
+                inners: Vec::new(),
+            })
         }
         ProcessedElement::Relation(rel) => {
             let mut outer_ring = Vec::new();
@@ -179,7 +183,10 @@ pub fn extract_complex_polygon_from_element(element: &ProcessedElement) -> Optio
             if outer_ring.is_empty() {
                 None
             } else {
-                Some(ComplexPolygon { outer: outer_ring, inners: inner_rings })
+                Some(ComplexPolygon {
+                    outer: outer_ring,
+                    inners: inner_rings,
+                })
             }
         }
         _ => None,

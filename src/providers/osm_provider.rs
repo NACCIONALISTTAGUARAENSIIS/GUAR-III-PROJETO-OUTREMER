@@ -1,5 +1,5 @@
-use crate::coordinate_system::geographic::LLBBox;
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::LLBBox;
 use crate::osm_parser::{parse_osm_data, ProcessedElement};
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
@@ -18,19 +18,36 @@ impl OSMProvider {
     /// Classifica a feature do OSM no Grupo Semântico correto
     /// O(1) Fast-fail checks order based on statistical probability of elements in urban areas.
     fn determine_semantic_group(tags: &HashMap<String, String>) -> SemanticGroup {
-        if tags.contains_key("building") || tags.contains_key("building:part") || tags.contains_key("historic") {
+        if tags.contains_key("building")
+            || tags.contains_key("building:part")
+            || tags.contains_key("historic")
+        {
             return SemanticGroup::Building;
         }
-        if tags.contains_key("highway") || tags.contains_key("railway") || tags.contains_key("aeroway") {
+        if tags.contains_key("highway")
+            || tags.contains_key("railway")
+            || tags.contains_key("aeroway")
+        {
             return SemanticGroup::Highway;
         }
-        if tags.contains_key("waterway") || tags.contains_key("water") || tags.get("natural").map_or(false, |v| v == "water" || v == "bay") {
+        if tags.contains_key("waterway")
+            || tags.contains_key("water")
+            || tags
+                .get("natural")
+                .map_or(false, |v| v == "water" || v == "bay")
+        {
             return SemanticGroup::Waterway;
         }
-        if tags.contains_key("landuse") || tags.contains_key("leisure") || tags.contains_key("natural") {
+        if tags.contains_key("landuse")
+            || tags.contains_key("leisure")
+            || tags.contains_key("natural")
+        {
             return SemanticGroup::Landuse;
         }
-        if tags.contains_key("power") || tags.contains_key("amenity") || tags.contains_key("barrier") {
+        if tags.contains_key("power")
+            || tags.contains_key("amenity")
+            || tags.contains_key("barrier")
+        {
             return SemanticGroup::Infrastructure;
         }
 
@@ -58,7 +75,9 @@ impl OSMProvider {
 
 // Implementação do Contrato Universal (Trait)
 impl DataProvider for OSMProvider {
-    fn priority(&self) -> u8 { 10 }
+    fn priority(&self) -> u8 {
+        10
+    }
     fn name(&self) -> &str {
         "OpenStreetMap (Overpass API)"
     }
@@ -66,8 +85,9 @@ impl DataProvider for OSMProvider {
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         // 1. Usa o sistema legado do Arnis para baixar o JSON
         // 🚨 BESM-6 TWEAK: Chamada corrigida para o novo retrieve_data.rs
-        let osm_json = crate::retrieve_data::fetch_data_from_overpass(*bbox, false, "requests", None)
-            .map_err(|e| format!("Falha na Overpass API: {}", e))?;
+        let osm_json =
+            crate::retrieve_data::fetch_data_from_overpass(*bbox, false, "requests", None)
+                .map_err(|e| format!("Falha na Overpass API: {}", e))?;
 
         // 2. Usa o sistema legado para parsear em "ProcessedElements"
         let processed_elements = parse_osm_data(osm_json, *bbox, self.scale_h, false);
@@ -83,9 +103,7 @@ impl DataProvider for OSMProvider {
             let id = element.id();
 
             let geometry = match element {
-                ProcessedElement::Node(node) => {
-                    GeometryType::Point(XZPoint::new(node.x, node.z))
-                }
+                ProcessedElement::Node(node) => GeometryType::Point(XZPoint::new(node.x, node.z)),
                 ProcessedElement::Way(way) => {
                     // Proteção contra Ways degeneradas do OSM (Dados Corrompidos)
                     if way.nodes.is_empty() {

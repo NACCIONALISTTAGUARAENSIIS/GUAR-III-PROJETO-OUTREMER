@@ -7,10 +7,6 @@ use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
 use rand::prelude::IndexedRandom;
-use crate::providers::vegetation_provider::{
-    BIOME_NONE, BIOME_MATA_GALERIA, BIOME_CERRADAO, BIOME_CERRADO_SS,
-    BIOME_CAMPO_SUJO, BIOME_VEREDA, BIOME_CAMPO_RUPESTRE, MASK_APP_SICAR
-};
 use rand::Rng;
 
 pub fn generate_landuse(
@@ -201,9 +197,17 @@ pub fn generate_landuse(
                 if editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK, PODZOL])) {
                     let random_choice: i32 = rng.random_range(0..100);
                     if random_choice < 6 {
-                        let tree_type = *trees_ok_to_generate.choose(&mut rng).unwrap_or(&TreeType::Acacia);
-                        Tree::create_of_type(editor, (x, 1, z), tree_type, Some(building_footprints));
-                    } else if random_choice < 14 { // 8% chance de galhos (reduzido para não travar RP)
+                        let tree_type = *trees_ok_to_generate
+                            .choose(&mut rng)
+                            .unwrap_or(&TreeType::Acacia);
+                        Tree::create_of_type(
+                            editor,
+                            (x, 1, z),
+                            tree_type,
+                            Some(building_footprints),
+                        );
+                    } else if random_choice < 14 {
+                        // 8% chance de galhos (reduzido para não travar RP)
                         editor.set_block(DEAD_BUSH, x, 1, z, None, None);
                     } else if random_choice < 70 {
                         editor.set_block(GRASS, x, 1, z, None, None);
@@ -303,12 +307,27 @@ pub fn generate_landuse(
                     }
                 } else if random_choice < 55 {
                     let construction_items: [Block; 13] = [
-                        OAK_LOG, COBBLESTONE, GRAVEL, GLOWSTONE, STONE, COBBLESTONE_WALL,
-                        BLACK_CONCRETE, SAND, OAK_PLANKS, DIRT, BRICK, CRAFTING_TABLE, FURNACE,
+                        OAK_LOG,
+                        COBBLESTONE,
+                        GRAVEL,
+                        GLOWSTONE,
+                        STONE,
+                        COBBLESTONE_WALL,
+                        BLACK_CONCRETE,
+                        SAND,
+                        OAK_PLANKS,
+                        DIRT,
+                        BRICK,
+                        CRAFTING_TABLE,
+                        FURNACE,
                     ];
                     editor.set_block(
                         construction_items[rng.random_range(0..construction_items.len())],
-                        x, 1, z, None, None,
+                        x,
+                        1,
+                        z,
+                        None,
+                        None,
                     );
                 } else if random_choice < 65 {
                     if random_choice < 60 {
@@ -351,7 +370,8 @@ pub fn generate_landuse(
                         "clay" | "kaolinite" => CLAY,
                         _ => STONE,
                     };
-                    let random_choice: i32 = rng.random_range(0..100 + editor.get_absolute_y(x, 0, z));
+                    let random_choice: i32 =
+                        rng.random_range(0..100 + editor.get_absolute_y(x, 0, z));
                     if random_choice < 5 {
                         editor.set_block(ore_block, x, 0, z, Some(&[STONE]), None);
                     }

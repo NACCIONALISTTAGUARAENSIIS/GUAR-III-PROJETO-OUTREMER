@@ -2,7 +2,7 @@
 //!
 //! Diferente do DEM (Bare Earth), o DSM captura a primeira superf�cie refletora do laser/radar,
 //! englobando copas de �rvores, telhados de pr�dios, pontes e viadutos.
-//! � utilizado primariamente para o c�lculo de altimetria de extrus�o: 
+//! � utilizado primariamente para o c�lculo de altimetria de extrus�o:
 //! Altura do Prédio = (DSM_Y - DEM_Y).
 //!
 //! Emprega a Voxeliza��o Local Determin�stica com Pr�-Quantiza��o Inteira em O(1).
@@ -69,7 +69,8 @@ impl DsmProvider {
         let mut decoder = Decoder::new(file)
             .map_err(|e| format!("Falha ao inicializar descodificador DSM GeoTIFF: {}", e))?;
 
-        let (width, height) = decoder.dimensions()
+        let (width, height) = decoder
+            .dimensions()
             .map_err(|e| format!("Falha ao ler dimens�es do DSM GeoTIFF: {}", e))?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -81,11 +82,15 @@ impl DsmProvider {
         let mut mapped_count = 0u64;
 
         // Limites de Culling (O Scanline Engine define a BBox da regi�o atual)
-        let start_x = ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees_x).max(0.0) as u32;
-        let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees_x).min(width as f64) as u32;
-        
-        let start_y = ((self.top_left_lat - bbox.max().lat()) / self.pixel_size_degrees_y).max(0.0) as u32;
-        let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees_y).min(height as f64) as u32;
+        let start_x =
+            ((bbox.min().lng() - self.top_left_lon) / self.pixel_size_degrees_x).max(0.0) as u32;
+        let end_x = ((bbox.max().lng() - self.top_left_lon) / self.pixel_size_degrees_x)
+            .min(width as f64) as u32;
+
+        let start_y =
+            ((self.top_left_lat - bbox.max().lat()) / self.pixel_size_degrees_y).max(0.0) as u32;
+        let end_y = ((self.top_left_lat - bbox.min().lat()) / self.pixel_size_degrees_y)
+            .min(height as f64) as u32;
 
         if start_x >= width || start_y >= height || start_x >= end_x || start_y >= end_y {
             println!("[AVISO] O DSM GeoTIFF est� fora da Bounding Box atual. Retornando grid de superf�cie vazio.");
@@ -101,7 +106,9 @@ impl DsmProvider {
                         let pixel_index = (y * width + x) as usize;
                         let elevation = image_data[pixel_index];
 
-                        if (elevation - self.nodata_value).abs() < f32::EPSILON || elevation.is_nan() {
+                        if (elevation - self.nodata_value).abs() < f32::EPSILON
+                            || elevation.is_nan()
+                        {
                             continue;
                         }
 
@@ -111,12 +118,15 @@ impl DsmProvider {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
-                                
+
                                 // Voxeliza��o: Arredondamento do teto (A superf�cie mais alta � a que dita o fim do pr�dio)
-                                let voxel_y = self.ground_level_offset + (elevation as f64 * self.scale_v).round() as i32;
-                                
+                                let voxel_y = self.ground_level_offset
+                                    + (elevation as f64 * self.scale_v).round() as i32;
+
                                 // O(1) Hash Map: No caso da superf�cie, garantimos sempre a reten��o do ponto mais alto no metro quadrado
-                                let entry = quantization_grid.entry((xz_point.x, xz_point.z)).or_insert(voxel_y);
+                                let entry = quantization_grid
+                                    .entry((xz_point.x, xz_point.z))
+                                    .or_insert(voxel_y);
                                 if voxel_y > *entry {
                                     *entry = voxel_y;
                                 }
@@ -143,9 +153,12 @@ impl DsmProvider {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
-                                let voxel_y = self.ground_level_offset + (elevation as f64 * self.scale_v).round() as i32;
-                                
-                                let entry = quantization_grid.entry((xz_point.x, xz_point.z)).or_insert(voxel_y);
+                                let voxel_y = self.ground_level_offset
+                                    + (elevation as f64 * self.scale_v).round() as i32;
+
+                                let entry = quantization_grid
+                                    .entry((xz_point.x, xz_point.z))
+                                    .or_insert(voxel_y);
                                 if voxel_y > *entry {
                                     *entry = voxel_y;
                                 }
@@ -172,9 +185,12 @@ impl DsmProvider {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             if bbox.contains(&llpoint) {
                                 let xz_point = transformer.transform_point(llpoint);
-                                let voxel_y = self.ground_level_offset + (elevation as f64 * self.scale_v).round() as i32;
-                                
-                                let entry = quantization_grid.entry((xz_point.x, xz_point.z)).or_insert(voxel_y);
+                                let voxel_y = self.ground_level_offset
+                                    + (elevation as f64 * self.scale_v).round() as i32;
+
+                                let entry = quantization_grid
+                                    .entry((xz_point.x, xz_point.z))
+                                    .or_insert(voxel_y);
                                 if voxel_y > *entry {
                                     *entry = voxel_y;
                                 }
@@ -191,7 +207,7 @@ impl DsmProvider {
 
         // Garbage Collection Antecipado
         quantization_grid.shrink_to_fit();
-        
+
         println!(
             "[INFO] ? Matriz de Superf�cie (DSM) quantizada. {} pixels processados, {} topos de estrutura ancorados.",
             read_count, mapped_count

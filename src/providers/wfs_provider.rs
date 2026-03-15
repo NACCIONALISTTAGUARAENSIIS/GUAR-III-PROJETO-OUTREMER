@@ -4,13 +4,13 @@
 //! em tempo real para extrair infraestruturas subterrâneas e de serviços.
 //! Aplica a Voxelização Local Determinística em profundidade (Z-Index invertido).
 
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
-use serde_json::Value;
 
 pub struct WFSProvider {
     pub endpoint: String,
@@ -61,10 +61,16 @@ impl WFSProvider {
                         } else if tipo.contains("pluvial") || tipo.contains("drain") {
                             tags.insert("man_made".to_string(), "pipeline".to_string());
                             tags.insert("substance".to_string(), "drain".to_string());
-                        } else if tipo.contains("agua") || tipo.contains("água") || tipo.contains("water") {
+                        } else if tipo.contains("agua")
+                            || tipo.contains("água")
+                            || tipo.contains("water")
+                        {
                             tags.insert("man_made".to_string(), "pipeline".to_string());
                             tags.insert("substance".to_string(), "water".to_string());
-                        } else if tipo.contains("energia") || tipo.contains("eletrica") || tipo.contains("power") {
+                        } else if tipo.contains("energia")
+                            || tipo.contains("eletrica")
+                            || tipo.contains("power")
+                        {
                             tags.insert("power".to_string(), "cable".to_string());
                         }
                     }
@@ -117,7 +123,12 @@ impl WFSProvider {
 
     /// Processa a coordenada extraída do WFS (assumindo WGS84 EPSG:4326 via GeoJSON output)
     #[inline(always)]
-    fn parse_coord(coord: &Value, bbox: &LLBBox, transformer: &CoordTransformer, is_completely_outside: &mut bool) -> Option<XZPoint> {
+    fn parse_coord(
+        coord: &Value,
+        bbox: &LLBBox,
+        transformer: &CoordTransformer,
+        is_completely_outside: &mut bool,
+    ) -> Option<XZPoint> {
         if let Some(arr) = coord.as_array() {
             if arr.len() >= 2 {
                 let lon = arr[0].as_f64()?;
@@ -136,7 +147,9 @@ impl WFSProvider {
 }
 
 impl DataProvider for WFSProvider {
-    fn priority(&self) -> u8 { self.priority }
+    fn priority(&self) -> u8 {
+        self.priority
+    }
     fn name(&self) -> &str {
         "Submundo WFS (Infraestrutura Subterrânea Live)"
     }
@@ -146,7 +159,11 @@ impl DataProvider for WFSProvider {
 
         // Constrói a query BBox no formato padrão OGC WFS (minX, minY, maxX, maxY)
         // Forçamos o formato GeoJSON para reaproveitar o nosso motor de parse robusto.
-        let separator = if self.endpoint.contains('?') { "&" } else { "?" };
+        let separator = if self.endpoint.contains('?') {
+            "&"
+        } else {
+            "?"
+        };
         let request_url = format!(
             "{}{}service=WFS&version=1.0.0&request=GetFeature&bbox={},{},{},{},EPSG:4326&outputFormat=application/json",
             self.endpoint,
@@ -160,14 +177,20 @@ impl DataProvider for WFSProvider {
             .build()
             .map_err(|e| format!("Falha ao construir o cliente HTTP WFS: {}", e))?;
 
-        let response = client.get(&request_url).send()
+        let response = client
+            .get(&request_url)
+            .send()
             .map_err(|e| format!("Timeout ou falha na ligação ao servidor WFS: {}", e))?;
 
         if !response.status().is_success() {
-            return Err(format!("Servidor WFS rejeitou o pedido com o código: {}", response.status()));
+            return Err(format!(
+                "Servidor WFS rejeitou o pedido com o código: {}",
+                response.status()
+            ));
         }
 
-        let json_text = response.text()
+        let json_text = response
+            .text()
             .map_err(|e| format!("Falha ao descodificar a resposta de texto WFS: {}", e))?;
 
         let geojson: Value = serde_json::from_str(&json_text)
@@ -177,8 +200,13 @@ impl DataProvider for WFSProvider {
             .and_then(|f| f.as_array())
             .ok_or("WFS GeoJSON não contém a matriz 'features'. Pode estar vazio ou o formato não é suportado.")?;
 
-        let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
-            .map_err(|e| format!("Falha ao instanciar o transformador de coordenadas WFS: {}", e))?;
+        let (transformer, _) =
+            CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h).map_err(|e| {
+                format!(
+                    "Falha ao instanciar o transformador de coordenadas WFS: {}",
+                    e
+                )
+            })?;
 
         let mut features = Vec::with_capacity(feature_array.len());
 
@@ -200,37 +228,57 @@ impl DataProvider for WFSProvider {
             let tags = Self::translate_wfs_attributes(properties);
 
             // Resolução Semântica
-            let semantic_group = if tags.contains_key("power") { SemanticGroup::Power }
-            else if tags.contains_key("substance") && tags.get("substance").unwrap() == "sewage" { SemanticGroup::Sewage }
-            else if tags.contains_key("substance") && tags.get("substance").unwrap() == "water" { SemanticGroup::Utility }
-            else { SemanticGroup::Underground };
+            let semantic_group = if tags.contains_key("power") {
+                SemanticGroup::Power
+            } else if tags.contains_key("substance") && tags.get("substance").unwrap() == "sewage" {
+                SemanticGroup::Sewage
+            } else if tags.contains_key("substance") && tags.get("substance").unwrap() == "water" {
+                SemanticGroup::Utility
+            } else {
+                SemanticGroup::Underground
+            };
 
             let mut is_completely_outside = true;
 
             let geometry = match geom_type {
                 "Point" => {
-                    if let Some(pt) = Self::parse_coord(coords, bbox, &transformer, &mut is_completely_outside) {
+                    if let Some(pt) =
+                        Self::parse_coord(coords, bbox, &transformer, &mut is_completely_outside)
+                    {
                         GeometryType::Point(pt)
-                    } else { continue; }
+                    } else {
+                        continue;
+                    }
                 }
                 "LineString" => {
                     if let Some(arr) = coords.as_array() {
                         let mut line = Vec::with_capacity(arr.len());
                         for c in arr {
-                            if let Some(pt) = Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside) {
+                            if let Some(pt) =
+                                Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside)
+                            {
                                 line.push(pt);
                             }
                         }
-                        if line.len() < 2 { continue; }
+                        if line.len() < 2 {
+                            continue;
+                        }
                         GeometryType::LineString(line)
-                    } else { continue; }
+                    } else {
+                        continue;
+                    }
                 }
                 "Polygon" => {
                     if let Some(rings) = coords.as_array() {
                         if let Some(exterior_ring) = rings.first().and_then(|r| r.as_array()) {
                             let mut outer = Vec::with_capacity(exterior_ring.len());
                             for c in exterior_ring {
-                                if let Some(pt) = Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside) {
+                                if let Some(pt) = Self::parse_coord(
+                                    c,
+                                    bbox,
+                                    &transformer,
+                                    &mut is_completely_outside,
+                                ) {
                                     outer.push(pt);
                                 }
                             }
@@ -240,18 +288,31 @@ impl DataProvider for WFSProvider {
                                 outer.push(first);
                             }
 
-                            if outer.len() < 4 { continue; }
+                            if outer.len() < 4 {
+                                continue;
+                            }
                             GeometryType::Polygon(outer)
-                        } else { continue; }
-                    } else { continue; }
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
                 "MultiPolygon" => {
                     if let Some(multipoly) = coords.as_array() {
                         if let Some(first_poly) = multipoly.first().and_then(|p| p.as_array()) {
-                            if let Some(exterior_ring) = first_poly.first().and_then(|r| r.as_array()) {
+                            if let Some(exterior_ring) =
+                                first_poly.first().and_then(|r| r.as_array())
+                            {
                                 let mut outer = Vec::with_capacity(exterior_ring.len());
                                 for c in exterior_ring {
-                                    if let Some(pt) = Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside) {
+                                    if let Some(pt) = Self::parse_coord(
+                                        c,
+                                        bbox,
+                                        &transformer,
+                                        &mut is_completely_outside,
+                                    ) {
                                         outer.push(pt);
                                     }
                                 }
@@ -261,11 +322,19 @@ impl DataProvider for WFSProvider {
                                     outer.push(first);
                                 }
 
-                                if outer.len() < 4 { continue; }
+                                if outer.len() < 4 {
+                                    continue;
+                                }
                                 GeometryType::Polygon(outer)
-                            } else { continue; }
-                        } else { continue; }
-                    } else { continue; }
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
                 _ => continue,
             };

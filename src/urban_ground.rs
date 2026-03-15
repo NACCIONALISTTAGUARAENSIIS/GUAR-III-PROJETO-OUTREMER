@@ -34,13 +34,13 @@ impl Default for UrbanGroundConfig {
         Self {
             // BRAS�LIA TWEAK ELITE: Finer granularity (16 blocks = 1 Chunk).
             // Garante o alinhamento com a grade do Minecraft (>> 4).
-            cell_size: 16, 
+            cell_size: 16,
             min_elements_per_cell: 1,
             // ?? BESM-6: Elevado para 3 para ignorar cabanas/ranchos rurais isolados no Cerrado,
             // mas baixo o suficiente para pegar postos de gasolina/com�rcios locais.
-            min_elements_for_cluster: 3, 
+            min_elements_for_cluster: 3,
             // ?? BESM-6: Expans�o suavizada. O ch�o de concreto envolver� as edifica��es.
-            cell_expansion: 2, 
+            cell_expansion: 2,
         }
     }
 }
@@ -81,11 +81,11 @@ impl UrbanGroundLookup {
             return false;
         }
 
-        // Fast path matem�tico O(1) via Arithmetic Right Shift. 
+        // Fast path matem�tico O(1) via Arithmetic Right Shift.
         // O Rust lida perfeitamente com valores negativos no >> 4 (que equivale ao floor division).
         let cx = x >> 4;
         let cz = z >> 4;
-        
+
         self.urban_cells.contains(&(cx, cz))
     }
 
@@ -104,7 +104,7 @@ impl UrbanGroundLookup {
 /// Computes urban ground areas from building locations and roads.
 pub struct UrbanGroundComputer {
     config: UrbanGroundConfig,
-    // ?? BESM-6: Mem�ria Optimizada O(1). 
+    // ?? BESM-6: Mem�ria Optimizada O(1).
     // Em vez de guardar as exatas 100 mil coordenadas dos pr�dios, guardamos apenas
     // a c�lula onde eles ca�ram e incrementamos o contador de densidade.
     density_grid: FxHashMap<(i32, i32), u16>,
@@ -132,9 +132,9 @@ impl UrbanGroundComputer {
     pub fn add_anchor(&mut self, x: i32, z: i32) {
         let cell_x = x >> 4;
         let cell_z = z >> 4;
-        
+
         let counter = self.density_grid.entry((cell_x, cell_z)).or_insert(0);
-        
+
         // Evita overflow se houverem milhares de pr�dios na mesma c�lula
         if *counter < u16::MAX {
             *counter += 1;
@@ -175,14 +175,13 @@ impl UrbanGroundComputer {
             urban_cells.extend(cluster.cells.iter().copied());
         }
 
-        UrbanGroundLookup {
-            urban_cells,
-        }
+        UrbanGroundLookup { urban_cells }
     }
 
     /// Finds connected clusters of urban cells.
     fn find_urban_clusters(&self) -> Vec<UrbanCluster> {
-        let dense_cells: FxHashSet<(i32, i32)> = self.density_grid
+        let dense_cells: FxHashSet<(i32, i32)> = self
+            .density_grid
             .iter()
             .filter(|(_, &count)| count >= self.config.min_elements_per_cell)
             .map(|(&cell, _)| cell)

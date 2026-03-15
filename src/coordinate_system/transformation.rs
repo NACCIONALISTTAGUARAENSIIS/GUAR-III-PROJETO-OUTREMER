@@ -50,7 +50,10 @@ impl CoordTransformer {
 
         // Prote��o Cr�tica contra Divis�o por Zero e Coordenadas Singulares
         if len_lat <= f64::EPSILON || len_lng <= f64::EPSILON {
-            return Err(format!("{}: BBox covers zero area (min and max coordinates are identical).", &err_header));
+            return Err(format!(
+                "{}: BBox covers zero area (min and max coordinates are identical).",
+                &err_header
+            ));
         }
 
         // 1. O Centro de Refer�ncia � SEMPRE o Marco Zero de Bras�lia, nunca o centro da BBox.
@@ -103,10 +106,18 @@ impl CoordTransformer {
             let enu_x = rot_matrix[0][0] * dx + rot_matrix[0][1] * dy + rot_matrix[0][2] * dz; // East
             let enu_n = rot_matrix[1][0] * dx + rot_matrix[1][1] * dy + rot_matrix[1][2] * dz; // North
 
-            if enu_x < min_enu_x { min_enu_x = enu_x; }
-            if enu_x > max_enu_x { max_enu_x = enu_x; }
-            if enu_n < min_enu_n { min_enu_n = enu_n; }
-            if enu_n > max_enu_n { max_enu_n = enu_n; }
+            if enu_x < min_enu_x {
+                min_enu_x = enu_x;
+            }
+            if enu_x > max_enu_x {
+                max_enu_x = enu_x;
+            }
+            if enu_n < min_enu_n {
+                min_enu_n = enu_n;
+            }
+            if enu_n > max_enu_n {
+                max_enu_n = enu_n;
+            }
         }
 
         // ?? BESM-6 Tweak: A Escala Horizontal (1.33) Governamental Global
@@ -144,8 +155,10 @@ impl CoordTransformer {
         let dy = ecef.1 - self.origin_ecef.1;
         let dz = ecef.2 - self.origin_ecef.2;
 
-        let enu_x = self.rot_matrix[0][0] * dx + self.rot_matrix[0][1] * dy + self.rot_matrix[0][2] * dz;
-        let enu_n = self.rot_matrix[1][0] * dx + self.rot_matrix[1][1] * dy + self.rot_matrix[1][2] * dz;
+        let enu_x =
+            self.rot_matrix[0][0] * dx + self.rot_matrix[0][1] * dy + self.rot_matrix[0][2] * dz;
+        let enu_n =
+            self.rot_matrix[1][0] * dx + self.rot_matrix[1][1] * dy + self.rot_matrix[1][2] * dz;
 
         // Dist�ncia direta do Marco Zero x Escala (Z invertido para bater com o Norte=Z negativo do MC)
         let final_x = enu_x * self.scale;

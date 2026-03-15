@@ -401,7 +401,10 @@ impl Block {
             113 => Some(Value::Compound({
                 let mut map: HashMap<String, Value> = HashMap::new();
                 map.insert("rotation".to_string(), Value::String("6".to_string()));
-                map.insert("waterlogged".to_string(), Value::String("false".to_string()));
+                map.insert(
+                    "waterlogged".to_string(),
+                    Value::String("false".to_string()),
+                );
                 map
             })),
             159 => Some(Value::Compound({
@@ -411,7 +414,10 @@ impl Block {
             })),
             116 => Some(Value::Compound({
                 let mut map = HashMap::new();
-                map.insert("shape".to_string(), Value::String("north_south".to_string()));
+                map.insert(
+                    "shape".to_string(),
+                    Value::String("north_south".to_string()),
+                );
                 map
             })),
             117 => Some(Value::Compound({
@@ -421,22 +427,34 @@ impl Block {
             })),
             118 => Some(Value::Compound({
                 let mut map = HashMap::new();
-                map.insert("shape".to_string(), Value::String("ascending_east".to_string()));
+                map.insert(
+                    "shape".to_string(),
+                    Value::String("ascending_east".to_string()),
+                );
                 map
             })),
             119 => Some(Value::Compound({
                 let mut map = HashMap::new();
-                map.insert("shape".to_string(), Value::String("ascending_west".to_string()));
+                map.insert(
+                    "shape".to_string(),
+                    Value::String("ascending_west".to_string()),
+                );
                 map
             })),
             120 => Some(Value::Compound({
                 let mut map = HashMap::new();
-                map.insert("shape".to_string(), Value::String("ascending_north".to_string()));
+                map.insert(
+                    "shape".to_string(),
+                    Value::String("ascending_north".to_string()),
+                );
                 map
             })),
             121 => Some(Value::Compound({
                 let mut map = HashMap::new();
-                map.insert("shape".to_string(), Value::String("ascending_south".to_string()));
+                map.insert(
+                    "shape".to_string(),
+                    Value::String("ascending_south".to_string()),
+                );
                 map
             })),
             122 => Some(Value::Compound({
@@ -667,9 +685,15 @@ pub fn create_stair_with_properties(
         }
     }
     let mut map = HashMap::new();
-    map.insert("facing".to_string(), Value::String(facing.as_str().to_string()));
+    map.insert(
+        "facing".to_string(),
+        Value::String(facing.as_str().to_string()),
+    );
     if !matches!(shape, StairShape::Straight) {
-        map.insert("shape".to_string(), Value::String(shape.as_str().to_string()));
+        map.insert(
+            "shape".to_string(),
+            Value::String(shape.as_str().to_string()),
+        );
     }
     let properties = Value::Compound(map);
     let block_with_props = BlockWithProperties::new(base_stair_block, Some(properties));
@@ -1067,38 +1091,42 @@ pub fn get_floor_block_with_rng(rng: &mut impl rand::Rng) -> Block {
 static DEFINED_COLORS: &[ColorBlockMapping] = &[
     // 1. Terra Vermelha do Cerrado (Latossolo)
     ((135, 55, 40), &[RED_TERRACOTTA, RED_CONCRETE, COARSE_DIRT]),
-
     // 2. Telhados Coloniais / Barro (Laranja Fundo/Terracota)
     ((180, 80, 45), &[ORANGE_TERRACOTTA, BRICK, GRANITE]),
-
     // 3. Vegetação de Cerrado Seco / Áreas Verdes (Grass, Moss e Podzol para áreas secas)
     ((85, 95, 65), &[GRASS_BLOCK, MOSS_BLOCK, PODZOL]),
-
     // 4. Concreto Monumental (Off-white / Cinza Claro Poeira)
-    ((185, 185, 180), &[POLISHED_ANDESITE, SMOOTH_STONE, LIGHT_GRAY_CONCRETE]),
-
+    (
+        (185, 185, 180),
+        &[POLISHED_ANDESITE, SMOOTH_STONE, LIGHT_GRAY_CONCRETE],
+    ),
     // 5. Brutalismo Raiz (Concreto Envelhecido / Fachadas UnB)
-    ((140, 140, 135), &[GRAY_TERRACOTTA, LIGHT_GRAY_TERRACOTTA, STONE]),
-
+    (
+        (140, 140, 135),
+        &[GRAY_TERRACOTTA, LIGHT_GRAY_TERRACOTTA, STONE],
+    ),
     // 6. Asfalto Urbano (Eixos e EPTG)
-    ((90, 90, 95), &[GRAY_CONCRETE, BLACK_CONCRETE, POLISHED_BASALT]),
-
+    (
+        (90, 90, 95),
+        &[GRAY_CONCRETE, BLACK_CONCRETE, POLISHED_BASALT],
+    ),
     // 7. Branco Institucional (Palácios / Catedral)
-    ((240, 240, 235), &[WHITE_CONCRETE, QUARTZ_BLOCK, SMOOTH_QUARTZ]),
-
+    (
+        (240, 240, 235),
+        &[WHITE_CONCRETE, QUARTZ_BLOCK, SMOOTH_QUARTZ],
+    ),
     // 8. Casas do DF / Pastel Bege (Típico Residencial Guará/Taguatinga)
-    ((235, 220, 190), &[SMOOTH_SANDSTONE, WHITE_TERRACOTTA, SANDSTONE]),
-
+    (
+        (235, 220, 190),
+        &[SMOOTH_SANDSTONE, WHITE_TERRACOTTA, SANDSTONE],
+    ),
     // 9. Casas Pastel Amarelo Clássico
     ((240, 230, 150), &[YELLOW_TERRACOTTA, END_STONE_BRICKS]),
-
     // 10. Ipê Amarelo
     ((255, 210, 0), &[YELLOW_CONCRETE, YELLOW_WOOL]),
-
     // 11. Ipê Rosa / Roxo
     ((255, 105, 180), &[MAGENTA_CONCRETE]),
     ((160, 32, 240), &[PURPLE_CONCRETE]),
-
     // --- PADRÕES TÉCNICOS ---
     ((233, 107, 57), &[BRICK, NETHER_BRICK]),
     ((159, 82, 36), &[BROWN_CONCRETE, MUD_BRICKS, BRICK]),
@@ -1163,12 +1191,13 @@ pub fn get_castle_wall_block() -> Block {
 /// Elimina a dependência exclusiva de cores mapeadas do OSM.
 pub fn resolve_advanced_material(tags: &HashMap<String, String>, default_block: Block) -> Block {
     // 1. Verificamos a Era de Construção (Temporal Inference)
-    let is_classic = if let Some(year_str) = tags.get("start_date").or_else(|| tags.get("year_built")) {
-        // Se foi construído antes da inauguração de Brasília (1960) ou é taggeado como histórico
-        year_str.parse::<i32>().unwrap_or(2000) < 1960 || tags.contains_key("historic")
-    } else {
-        tags.contains_key("historic")
-    };
+    let is_classic =
+        if let Some(year_str) = tags.get("start_date").or_else(|| tags.get("year_built")) {
+            // Se foi construído antes da inauguração de Brasília (1960) ou é taggeado como histórico
+            year_str.parse::<i32>().unwrap_or(2000) < 1960 || tags.contains_key("historic")
+        } else {
+            tags.contains_key("historic")
+        };
 
     if is_classic {
         // Arquitetura Colonial / Fazendas do Planalto Central pré-JK
@@ -1179,7 +1208,10 @@ pub fn resolve_advanced_material(tags: &HashMap<String, String>, default_block: 
     }
 
     // 2. Verificamos se há um material de construção explicitamente declarado no GDF ou OSM
-    if let Some(material) = tags.get("building:material").or_else(|| tags.get("material")) {
+    if let Some(material) = tags
+        .get("building:material")
+        .or_else(|| tags.get("material"))
+    {
         let mat_lower = material.to_lowercase();
 
         if mat_lower.contains("glass") || mat_lower.contains("vidro") {
@@ -1196,7 +1228,10 @@ pub fn resolve_advanced_material(tags: &HashMap<String, String>, default_block: 
     }
 
     // 3. Se não houver material explícito, usamos a Arquitetura por Tipologia
-    let b_type = tags.get("building").map(|s: &String| s.as_str()).unwrap_or("yes");
+    let b_type = tags
+        .get("building")
+        .map(|s: &String| s.as_str())
+        .unwrap_or("yes");
 
     if b_type == "hospital" || b_type == "clinic" {
         return WHITE_CONCRETE; // Sanitário e limpo

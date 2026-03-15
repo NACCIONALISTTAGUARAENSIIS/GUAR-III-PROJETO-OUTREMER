@@ -61,7 +61,14 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
             // Pedestal Monumental 3x3 para suportar a escala 1.33H
             for dx in -1i32..=1i32 {
                 for dz in -1i32..=1i32 {
-                    editor.set_block_absolute(SMOOTH_QUARTZ, x + dx, base_y + 1, z + dz, None, None);
+                    editor.set_block_absolute(
+                        SMOOTH_QUARTZ,
+                        x + dx,
+                        base_y + 1,
+                        z + dz,
+                        None,
+                        None,
+                    );
                 }
             }
             editor.set_block_absolute(SMOOTH_QUARTZ, x, base_y + 2, z, None, None);
@@ -85,7 +92,11 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
             }
         }
         "stone" | "stolperstein" => {
-            let stone_block = if memorial_type == "stolperstein" { GOLD_BLOCK } else { POLISHED_ANDESITE };
+            let stone_block = if memorial_type == "stolperstein" {
+                GOLD_BLOCK
+            } else {
+                POLISHED_ANDESITE
+            };
             editor.set_block_absolute(stone_block, x, base_y, z, None, None);
         }
         "cross" | "war_memorial" => {
@@ -93,8 +104,12 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
         }
         "obelisk" => {
             // TWEAK: Mastros da Bandeira e Obeliscos do DF
-            let is_flagpole = node.tags.contains_key("flag:type") ||
-                node.tags.get("name").map(|s: &String| s.contains("Bandeira")).unwrap_or(false);
+            let is_flagpole = node.tags.contains_key("flag:type")
+                || node
+                    .tags
+                    .get("name")
+                    .map(|s: &String| s.contains("Bandeira"))
+                    .unwrap_or(false);
 
             let parsed_height = node
                 .tags
@@ -107,7 +122,14 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
             // Base estável 5x5 (Rigor Urbanístico)
             for dx in -2i32..=2i32 {
                 for dz in -2i32..=2i32 {
-                    editor.set_block_absolute(POLISHED_ANDESITE, x + dx, base_y + 1, z + dz, None, None);
+                    editor.set_block_absolute(
+                        POLISHED_ANDESITE,
+                        x + dx,
+                        base_y + 1,
+                        z + dz,
+                        None,
+                        None,
+                    );
                 }
             }
 
@@ -128,7 +150,14 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
                 for y_off in 2..=obelisk_height {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, base_y + y_off, z, None, None);
                 }
-                editor.set_block_absolute(QUARTZ_SLAB_TOP, x, base_y + obelisk_height + 1, z, None, None);
+                editor.set_block_absolute(
+                    QUARTZ_SLAB_TOP,
+                    x,
+                    base_y + obelisk_height + 1,
+                    z,
+                    None,
+                    None,
+                );
             }
         }
         "stele" => {
@@ -245,7 +274,9 @@ pub fn generate_pyramid(
     let mut last_placed_layer: Option<i32> = None;
     for layer in 0..pyramid_height {
         let radius = half_base * (1.0 - layer as f64 / pyramid_height as f64);
-        if radius < 0.0 { break; }
+        if radius < 0.0 {
+            break;
+        }
 
         let y = base_y + 1 + layer;
         let mut placed = false;
@@ -264,17 +295,31 @@ pub fn generate_pyramid(
 
                 editor.set_block_absolute(
                     block,
-                    x, y, z,
+                    x,
+                    y,
+                    z,
                     Some(&[
-                        GRASS_BLOCK, DIRT, STONE, SAND, GRAVEL,
-                        COARSE_DIRT, PODZOL, DIRT_PATH, WHITE_CONCRETE, AIR
+                        GRASS_BLOCK,
+                        DIRT,
+                        STONE,
+                        SAND,
+                        GRAVEL,
+                        COARSE_DIRT,
+                        PODZOL,
+                        DIRT_PATH,
+                        WHITE_CONCRETE,
+                        AIR,
                     ]),
                     None,
                 );
                 placed = true;
             }
         }
-        if placed { last_placed_layer = Some(y); } else { break; }
+        if placed {
+            last_placed_layer = Some(y);
+        } else {
+            break;
+        }
     }
 
     if let Some(top_y) = last_placed_layer {

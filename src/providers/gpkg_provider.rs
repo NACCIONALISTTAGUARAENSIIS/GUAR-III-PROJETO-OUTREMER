@@ -1,15 +1,15 @@
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: Motor ECEF
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use rusqlite::{Connection, types::ValueRef};
+use geo::Geometry;
 use geozero::wkb::GpkgWkb;
 use geozero::ToGeo;
-use geo::Geometry;
 use proj::Proj;
+use rusqlite::{types::ValueRef, Connection};
 
 /// Provedor de Banco de Dados GeoPackage (OGC Padr�o Moderno).
 /// Varre todas as tabelas espaciais do DB SQLite, decodifica a geometria bin�ria WKB propriet�ria,
@@ -22,7 +22,12 @@ pub struct GpkgProvider {
 }
 
 impl GpkgProvider {
-    pub fn new(file_path: PathBuf, scale_h: f64, priority: u8, semantic_override: Option<SemanticGroup>) -> Self {
+    pub fn new(
+        file_path: PathBuf,
+        scale_h: f64,
+        priority: u8,
+        semantic_override: Option<SemanticGroup>,
+    ) -> Self {
         Self {
             file_path,
             scale_h,
@@ -60,7 +65,10 @@ impl GpkgProvider {
                         "commercial"
                     } else if uso.contains("residencial") || uso.contains("residential") {
                         "residential"
-                    } else if uso.contains("institucional") || uso.contains("equipamento") || uso.contains("civic") {
+                    } else if uso.contains("institucional")
+                        || uso.contains("equipamento")
+                        || uso.contains("civic")
+                    {
                         "civic"
                     } else if uso.contains("industrial") {
                         "industrial"
@@ -73,7 +81,8 @@ impl GpkgProvider {
                     tags.insert("name".to_string(), val_str.clone());
                 }
                 "TIPO_VIA" | "CLASSE_VIA" | "HIGHWAY" => {
-                    tags.insert("highway".to_string(), "residential".to_string()); // Fallback
+                    tags.insert("highway".to_string(), "residential".to_string());
+                    // Fallback
                 }
                 "NATURAL" | "VEGETACAO" | "ARVORE" | "BIOMA" => {
                     tags.insert("natural".to_string(), val_str.to_lowercase());
@@ -85,7 +94,10 @@ impl GpkgProvider {
             }
         }
 
-        if !tags.contains_key("building") && !tags.contains_key("highway") && !tags.contains_key("natural") {
+        if !tags.contains_key("building")
+            && !tags.contains_key("highway")
+            && !tags.contains_key("natural")
+        {
             tags.insert("building".to_string(), "yes".to_string());
         }
 
@@ -95,28 +107,36 @@ impl GpkgProvider {
 }
 
 impl DataProvider for GpkgProvider {
-    fn priority(&self) -> u8 { self.priority }
+    fn priority(&self) -> u8 {
+        self.priority
+    }
     fn name(&self) -> &str {
         "GDF GeoPackage (SQLite Spatial DB)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] ??? Abrindo conex�o SQLite/GeoPackage em: {}", self.file_path.display());
+        println!(
+            "[INFO] ??? Abrindo conex�o SQLite/GeoPackage em: {}",
+            self.file_path.display()
+        );
 
         let conn = Connection::open(&self.file_path)
             .map_err(|e| format!("Falha ao abrir GeoPackage SQLite: {}", e))?;
 
         // 1. Interrogar o �ndice mestre para encontrar todas as tabelas e colunas com Geometria
-        let mut stmt_geom_cols = conn.prepare("SELECT table_name, column_name, srs_id FROM gpkg_geometry_columns")
+        let mut stmt_geom_cols = conn
+            .prepare("SELECT table_name, column_name, srs_id FROM gpkg_geometry_columns")
             .map_err(|e| format!("Falha ao ler gpkg_geometry_columns: {}", e))?;
-        
-        let tables_iter = stmt_geom_cols.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, u32>(2)?
-            ))
-        }).map_err(|e| format!("Erro de query SQLite: {}", e))?;
+
+        let tables_iter = stmt_geom_cols
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                ))
+            })
+            .map_err(|e| format!("Erro de query SQLite: {}", e))?;
 
         // Mestre de Transforma��o para a Malha Voxel Minecraft
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -130,7 +150,10 @@ impl DataProvider for GpkgProvider {
 
         for table_res in tables_iter {
             if let Ok((table_name, geom_column, srs_id)) = table_res {
-                println!("[INFO] Inspecionando tabela espacial: {} (EPSG:{})", table_name, srs_id);
+                println!(
+                    "[INFO] Inspecionando tabela espacial: {} (EPSG:{})",
+                    table_name, srs_id
+                );
 
                 // Prepara a proje��o geogr�fica espec�fica desta tabela
                 if !proj_cache.contains_key(&srs_id) && srs_id != 4326 {
@@ -138,7 +161,10 @@ impl DataProvider for GpkgProvider {
                     if let Ok(proj) = Proj::new_known_crs(&proj_str, "EPSG:4326", None) {
                         proj_cache.insert(srs_id, proj);
                     } else {
-                        eprintln!("[AVISO] EPSG:{} n�o suportado. Pulando tabela {}.", srs_id, table_name);
+                        eprintln!(
+                            "[AVISO] EPSG:{} n�o suportado. Pulando tabela {}.",
+                            srs_id, table_name
+                        );
                         continue;
                     }
                 }
@@ -151,10 +177,16 @@ impl DataProvider for GpkgProvider {
                 };
 
                 let column_count = stmt_data.column_count();
-                let column_names: Vec<String> = stmt_data.column_names().into_iter().map(|s| s.to_string()).collect();
+                let column_names: Vec<String> = stmt_data
+                    .column_names()
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect();
                 let geom_col_index = column_names.iter().position(|r| r == &geom_column);
 
-                if geom_col_index.is_none() { continue; }
+                if geom_col_index.is_none() {
+                    continue;
+                }
                 let geom_idx = geom_col_index.unwrap();
 
                 let mut rows = match stmt_data.query([]) {
@@ -178,9 +210,11 @@ impl DataProvider for GpkgProvider {
                     // Extrai os outros atributos para o HashMap
                     let mut raw_attributes = HashMap::new();
                     for i in 0..column_count {
-                        if i == geom_idx { continue; }
+                        if i == geom_idx {
+                            continue;
+                        }
                         let col_name = &column_names[i];
-                        
+
                         let val_str = match row.get_ref(i) {
                             Ok(ValueRef::Integer(n)) => n.to_string(),
                             Ok(ValueRef::Real(f)) => f.to_string(),
@@ -193,10 +227,15 @@ impl DataProvider for GpkgProvider {
                     let tags = Self::translate_attributes(&raw_attributes);
 
                     let semantic_group = self.semantic_override.unwrap_or_else(|| {
-                        if tags.contains_key("building") { SemanticGroup::Building }
-                        else if tags.contains_key("highway") { SemanticGroup::Highway }
-                        else if tags.contains_key("natural") { SemanticGroup::Natural }
-                        else { SemanticGroup::Other }
+                        if tags.contains_key("building") {
+                            SemanticGroup::Building
+                        } else if tags.contains_key("highway") {
+                            SemanticGroup::Highway
+                        } else if tags.contains_key("natural") {
+                            SemanticGroup::Natural
+                        } else {
+                            SemanticGroup::Other
+                        }
                     });
 
                     // 3. Helper de Proje��o Interna e Early-Z Culling
@@ -225,7 +264,9 @@ impl DataProvider for GpkgProvider {
                         Geometry::Point(p) => {
                             if let Some(xz) = process_coord(p.x(), p.y()) {
                                 GeometryType::Point(xz)
-                            } else { continue; }
+                            } else {
+                                continue;
+                            }
                         }
                         Geometry::LineString(ls) => {
                             let mut points = Vec::with_capacity(ls.0.len());
@@ -234,7 +275,9 @@ impl DataProvider for GpkgProvider {
                                     points.push(xz);
                                 }
                             }
-                            if points.len() < 2 { continue; }
+                            if points.len() < 2 {
+                                continue;
+                            }
                             GeometryType::LineString(points)
                         }
                         Geometry::Polygon(poly) => {
@@ -245,14 +288,16 @@ impl DataProvider for GpkgProvider {
                                     outer.push(xz);
                                 }
                             }
-                            
+
                             // Garante fechamento
                             if outer.len() > 2 && outer.first() != outer.last() {
                                 let first = outer[0];
                                 outer.push(first);
                             }
-                            
-                            if outer.len() < 4 { continue; }
+
+                            if outer.len() < 4 {
+                                continue;
+                            }
                             GeometryType::Polygon(outer)
                         }
                         Geometry::MultiPolygon(mp) => {
@@ -265,15 +310,19 @@ impl DataProvider for GpkgProvider {
                                         outer.push(xz);
                                     }
                                 }
-                                
+
                                 if outer.len() > 2 && outer.first() != outer.last() {
                                     let first = outer[0];
                                     outer.push(first);
                                 }
-                                
-                                if outer.len() < 4 { continue; }
+
+                                if outer.len() < 4 {
+                                    continue;
+                                }
                                 GeometryType::Polygon(outer)
-                            } else { continue; }
+                            } else {
+                                continue;
+                            }
                         }
                         _ => continue, // Multipoint, GeometryCollection, etc n�o s�o suportados.
                     };
@@ -299,7 +348,10 @@ impl DataProvider for GpkgProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ? GeoPackage varrido com sucesso: {} blocos espaciais extra�dos.", features.len());
+        println!(
+            "[INFO] ? GeoPackage varrido com sucesso: {} blocos espaciais extra�dos.",
+            features.len()
+        );
         Ok(features)
     }
 }

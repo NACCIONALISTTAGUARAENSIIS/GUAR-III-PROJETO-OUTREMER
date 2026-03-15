@@ -1,8 +1,8 @@
 use crate::coordinate_system::geographic::LLBBox;
 use clap::{ArgAction, Parser, ValueEnum};
 use std::path::PathBuf;
-use std::time::Duration;
 use std::process::Command;
+use std::time::Duration;
 
 /// Enum for explicit DEM source selection
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -79,7 +79,6 @@ pub struct Args {
     // ==========================================================
     // ESCALA H�BRIDA OFICIAL (G�meo Digital DF)
     // ==========================================================
-    
     /// Horizontal scale (X, Z) to use, in blocks per meter. Default is 1.33 for proper street proportions.
     #[arg(long, default_value_t = 1.33)]
     pub scale_h: f64,
@@ -90,12 +89,11 @@ pub struct Args {
 
     /// TWEAK COMPATIBILIDADE: Mantido para retrocompatibilidade. Em nova arquitetura, use --scale-h.
     #[arg(long, hide = true)]
-    pub scale: Option<f64>, 
+    pub scale: Option<f64>,
 
     // ==========================================================
     // INTEGRA��O DE DADOS GOVERNAMENTAIS (GDF / CODEPLAN)
     // ==========================================================
-
     /// Path to local Shapefiles (.shp) from Geoportal DF (buildings, landuse, etc.)
     #[arg(long)]
     pub local_shp: Option<PathBuf>,
@@ -132,7 +130,7 @@ pub struct Args {
     #[arg(long, default_value_t = 10000.0)]
     pub max_area_km2: f64,
 
-    /// Safety limit: Maximum number of DEM tiles allowed to download. 
+    /// Safety limit: Maximum number of DEM tiles allowed to download.
     #[arg(long, default_value_t = 200)]
     pub max_dem_tiles: usize,
 
@@ -151,7 +149,6 @@ pub struct Args {
     // ==========================================================
     // INTEGRA��O DE ALTA PERFORMANCE & G�MEO DIGITAL (BESM-6)
     // ==========================================================
-
     /// PostgreSQL/PostGIS connection URL for direct spatial queries (e.g., postgres://user:pass@localhost:5432/gis)
     #[arg(long)]
     pub postgis_url: Option<String>,
@@ -179,7 +176,6 @@ pub struct Args {
     // ==========================================================
     // CONFIGURA��ES BASE
     // ==========================================================
-
     /// Ground level to use in the Minecraft world
     #[arg(long, default_value_t = -62)]
     pub ground_level: i32,
@@ -252,9 +248,11 @@ fn get_physical_cores() -> usize {
             }
         }
     }
-    
+
     // Fallback if lscpu fails or non-Linux system: halving logical cores is a standard assumption for SMT
-    let logical_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let logical_cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     (logical_cores / 2).max(1)
 }
 
@@ -295,8 +293,13 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
     }
 
     // ?? BESM-6 Tweak: Validao Antidegenerao da BBox
-    if args.bbox.max().lat() <= args.bbox.min().lat() || args.bbox.max().lng() <= args.bbox.min().lng() {
-        return Err("Invalid bounding box: Max coordinates must be strictly greater than Min coordinates.".to_string());
+    if args.bbox.max().lat() <= args.bbox.min().lat()
+        || args.bbox.max().lng() <= args.bbox.min().lng()
+    {
+        return Err(
+            "Invalid bounding box: Max coordinates must be strictly greater than Min coordinates."
+                .to_string(),
+        );
     }
 
     // ?? BESM-6 Tweak: Geodesic Area Calculation (Haversine Absoluto)
@@ -317,7 +320,7 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
     }
 
     // ?? BESM-6 Tweak: Prote��o Log�stica (Pre-flight IO Check).
-    // Estimativa braba: ~100MB por km2 na escala 1.33. 
+    // Estimativa braba: ~100MB por km2 na escala 1.33.
     // Se a estimativa ultrapassar os 180GB estipulados para a Oracle, trava.
     let estimated_weight_gb = (area_km2 * 100.0) / 1024.0;
     if estimated_weight_gb > 180.0 {
@@ -330,13 +333,17 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
     // Cache directory only created if online
     if !args.offline && !args.cache_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(&args.cache_dir) {
-            return Err(format!("Failed to create cache directory at {}: {}", args.cache_dir.display(), e));
+            return Err(format!(
+                "Failed to create cache directory at {}: {}",
+                args.cache_dir.display(),
+                e
+            ));
         }
     }
 
     // ?? BESM-6 Tweak: Safe thread limit (N�cleos F�sicos Estritos)
     let max_safe_threads = get_physical_cores();
-    
+
     // Se o usu�rio passou 0, atribu�mos o safe limit f�sico automaticamente.
     if args.threads == 0 {
         args.threads = max_safe_threads;
@@ -349,10 +356,10 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
 
     // Offline Mode Validations
     if args.offline {
-        let has_local_vector_source = args.file.is_some() 
-            || args.local_shp.is_some() 
-            || args.local_gpkg.is_some() 
-            || args.local_pbf.is_some() 
+        let has_local_vector_source = args.file.is_some()
+            || args.local_shp.is_some()
+            || args.local_gpkg.is_some()
+            || args.local_pbf.is_some()
             || args.local_citygml.is_some()
             || args.postgis_url.is_some();
 
@@ -360,92 +367,144 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
             return Err("Offline mode requires a local vector source (--file, --local-shp, --local-gpkg, --local-pbf, --local-citygml, or --postgis-url). Cannot fetch from API.".to_string());
         }
         if args.terrain && args.local_lidar.is_none() && args.local_dem.is_none() {
-            return Err("Offline terrain generation requires --local-lidar or --local-dem.".to_string());
+            return Err(
+                "Offline terrain generation requires --local-lidar or --local-dem.".to_string(),
+            );
         }
         if args.enable_underground_wfs || args.mvt_endpoint.is_some() {
-            return Err("Cannot enable WFS or MVT streaming endpoints while running in --offline mode.".to_string());
+            return Err(
+                "Cannot enable WFS or MVT streaming endpoints while running in --offline mode."
+                    .to_string(),
+            );
         }
     }
 
     // Validate Shapefile integration path
     if let Some(ref shp_path) = args.local_shp {
         if !shp_path.exists() || !shp_path.is_dir() {
-            return Err(format!("Shapefile directory does not exist or is not a directory: {}", shp_path.display()));
+            return Err(format!(
+                "Shapefile directory does not exist or is not a directory: {}",
+                shp_path.display()
+            ));
         }
     }
 
     // Validate GeoJSON integration path
     if let Some(ref geojson_path) = args.local_geojson {
         if !geojson_path.exists() || !geojson_path.is_file() {
-            return Err(format!("GeoJSON file does not exist or is not a file: {}", geojson_path.display()));
+            return Err(format!(
+                "GeoJSON file does not exist or is not a file: {}",
+                geojson_path.display()
+            ));
         }
     }
 
     // Validate GeoPackage integration path
     if let Some(ref gpkg_path) = args.local_gpkg {
         if !gpkg_path.exists() || !gpkg_path.is_file() {
-            return Err(format!("GeoPackage file does not exist or is not a file: {}", gpkg_path.display()));
+            return Err(format!(
+                "GeoPackage file does not exist or is not a file: {}",
+                gpkg_path.display()
+            ));
         }
         let ext = gpkg_path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext.to_lowercase() != "gpkg" {
-            return Err(format!("GeoPackage source must be a .gpkg file. Found: {}", gpkg_path.display()));
+            return Err(format!(
+                "GeoPackage source must be a .gpkg file. Found: {}",
+                gpkg_path.display()
+            ));
         }
     }
 
     // Validate PBF integration path
     if let Some(ref pbf_path) = args.local_pbf {
         if !pbf_path.exists() || !pbf_path.is_file() {
-            return Err(format!("PBF file does not exist or is not a file: {}", pbf_path.display()));
+            return Err(format!(
+                "PBF file does not exist or is not a file: {}",
+                pbf_path.display()
+            ));
         }
         let ext = pbf_path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext.to_lowercase() != "pbf" {
-            return Err(format!("PBF source must be a .pbf file. Found: {}", pbf_path.display()));
+            return Err(format!(
+                "PBF source must be a .pbf file. Found: {}",
+                pbf_path.display()
+            ));
         }
     }
 
     // Validate CityGML integration path
     if let Some(ref citygml_path) = args.local_citygml {
         if !citygml_path.exists() || !citygml_path.is_file() {
-            return Err(format!("CityGML file does not exist or is not a file: {}", citygml_path.display()));
+            return Err(format!(
+                "CityGML file does not exist or is not a file: {}",
+                citygml_path.display()
+            ));
         }
-        let ext = citygml_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext = citygml_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
         if ext.to_lowercase() != "gml" && ext.to_lowercase() != "xml" {
-            return Err(format!("CityGML source must be a .gml or .xml file. Found: {}", citygml_path.display()));
+            return Err(format!(
+                "CityGML source must be a .gml or .xml file. Found: {}",
+                citygml_path.display()
+            ));
         }
     }
 
     // Validate Photogrammetry Mesh integration path
     if let Some(ref mesh_path) = args.local_mesh {
         if !mesh_path.exists() {
-            return Err(format!("Photogrammetry mesh directory or file does not exist: {}", mesh_path.display()));
+            return Err(format!(
+                "Photogrammetry mesh directory or file does not exist: {}",
+                mesh_path.display()
+            ));
         }
     }
 
     // Validate LiDAR integration path
     if let Some(ref lidar_path) = args.local_lidar {
         if !lidar_path.exists() || !lidar_path.is_file() {
-            return Err(format!("LiDAR source file does not exist: {}", lidar_path.display()));
+            return Err(format!(
+                "LiDAR source file does not exist: {}",
+                lidar_path.display()
+            ));
         }
-        let ext = lidar_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext = lidar_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
         if ext.to_lowercase() != "las" && ext.to_lowercase() != "laz" {
-            return Err(format!("LiDAR source must be a .las or .laz file. Found: {}", lidar_path.display()));
+            return Err(format!(
+                "LiDAR source must be a .las or .laz file. Found: {}",
+                lidar_path.display()
+            ));
         }
     }
 
     // Validate Local DEM integration path
     if let Some(ref dem_path) = args.local_dem {
         if !dem_path.exists() || !dem_path.is_file() {
-            return Err(format!("Local DEM file does not exist: {}", dem_path.display()));
+            return Err(format!(
+                "Local DEM file does not exist: {}",
+                dem_path.display()
+            ));
         }
         let ext = dem_path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext.to_lowercase() != "tif" && ext.to_lowercase() != "tiff" {
-            return Err(format!("Local DEM source must be a GeoTIFF (.tif/.tiff) file. Found: {}", dem_path.display()));
+            return Err(format!(
+                "Local DEM source must be a GeoTIFF (.tif/.tiff) file. Found: {}",
+                dem_path.display()
+            ));
         }
     }
 
     // Validate WFS Endpoint dependency
     if args.enable_underground_wfs && args.wfs_endpoint.is_none() {
-        return Err("You must provide a --wfs-endpoint when --enable-underground-wfs is true.".to_string());
+        return Err(
+            "You must provide a --wfs-endpoint when --enable-underground-wfs is true.".to_string(),
+        );
     }
 
     // Validate spawn point: both or neither must be provided
@@ -604,12 +663,14 @@ mod tests {
             tmp_path,
             "--bbox",
             "1,2,3,4",
-            "--enable-underground-wfs"
+            "--enable-underground-wfs",
         ];
         let mut args = Args::parse_from(cmd.iter());
         let result = validate_args(&mut args);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must provide a --wfs-endpoint"));
+        assert!(result
+            .unwrap_err()
+            .contains("must provide a --wfs-endpoint"));
     }
 
     #[test]
@@ -628,7 +689,7 @@ mod tests {
             "--offline",
             "--enable-underground-wfs",
             "--wfs-endpoint",
-            "http://dummy"
+            "http://dummy",
         ];
         let mut args = Args::parse_from(cmd.iter());
         let result = validate_args(&mut args);
@@ -641,13 +702,7 @@ mod tests {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmp_path = tmpdir.path().to_str().unwrap();
 
-        let cmd = [
-            "arnis",
-            "--output-dir",
-            tmp_path,
-            "--bbox",
-            "1,1,1,1",
-        ];
+        let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,1,1,1"];
         let mut args = Args::parse_from(cmd.iter());
         let result = validate_args(&mut args);
         assert!(result.is_err());

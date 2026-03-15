@@ -2,7 +2,6 @@ use crate::block_definitions::*;
 use crate::osm_parser::ProcessedWay;
 use crate::world_editor::WorldEditor;
 // 🚨 BESM-6: Motor de Fotogrametria Monumental
-use crate::providers::mesh_provider::MeshProvider;
 use std::f64::consts::PI;
 
 /// Escala global do mapa para refer�ncia matem�tica interna (Tier Governamental)
@@ -18,12 +17,16 @@ pub fn generate_unique_landmark(
     ground_y: i32,
 ) -> bool {
     // ?? BESM-6 Tweak: A Guarda de Respeito Fotogram�trico
-    // Se o elemento veio dos nossos provedores de ultra-precis�o 3D (LOD2/LOD3/Mesh), 
-    // n�s ABORTAMOS a gera��o procedimental aproximada e deixamos o motor Voxel desenhar 
+    // Se o elemento veio dos nossos provedores de ultra-precis�o 3D (LOD2/LOD3/Mesh),
+    // n�s ABORTAMOS a gera��o procedimental aproximada e deixamos o motor Voxel desenhar
     // o modelo a laser exato que extra�mos do governo no main.rs.
-    let source = element.tags.get("source").map(|s: &String| s.as_str()).unwrap_or("");
+    let source = element
+        .tags
+        .get("source")
+        .map(|s: &String| s.as_str())
+        .unwrap_or("");
     if source == "GDF_CityGML_3D" || source == "GDF_Mesh_Voxel" || source == "Photogrammetry_Mesh" {
-        return false; 
+        return false;
     }
 
     let name = element
@@ -33,7 +36,8 @@ pub fn generate_unique_landmark(
         .map(|s: &String| s.to_lowercase())
         .unwrap_or_default();
 
-    let is_station = element.tags.get("building").map(|s: &String| s.as_str()) == Some("train_station")
+    let is_station = element.tags.get("building").map(|s: &String| s.as_str())
+        == Some("train_station")
         || element.tags.get("railway").map(|s: &String| s.as_str()) == Some("station")
         || element.tags.get("station").map(|s: &String| s.as_str()) == Some("subway");
 
@@ -74,7 +78,11 @@ pub fn generate_unique_landmark(
         return true;
     }
 
-    if name.contains("minist�rio da") || name.contains("ministerio da") || name.contains("minist�rio do") || name.contains("ministerio do") {
+    if name.contains("minist�rio da")
+        || name.contains("ministerio da")
+        || name.contains("minist�rio do")
+        || name.contains("ministerio do")
+    {
         generate_ministerio(editor, element, ground_y);
         return true;
     }
@@ -108,12 +116,16 @@ pub fn generate_unique_landmark(
         return true;
     }
 
-    if name.contains("rodovi�ria do plano piloto") || name.contains("rodoviaria do plano piloto") {
+    if name.contains("rodovi�ria do plano piloto") || name.contains("rodoviaria do plano piloto")
+    {
         generate_rodoviaria(editor, element, ground_y);
         return true;
     }
 
-    if name.contains("est�dio nacional") || name.contains("man� garrincha") || name.contains("mane garrincha") {
+    if name.contains("est�dio nacional")
+        || name.contains("man� garrincha")
+        || name.contains("mane garrincha")
+    {
         generate_estadio_nacional(editor, element, ground_y);
         return true;
     }
@@ -132,7 +144,9 @@ pub fn generate_unique_landmark(
         return true;
     }
 
-    if (name.contains("caixa econ�mica") || name.contains("caixa economica")) && name.contains("matriz") {
+    if (name.contains("caixa econ�mica") || name.contains("caixa economica"))
+        && name.contains("matriz")
+    {
         generate_sede_cef(editor, element, ground_y);
         return true;
     }
@@ -165,7 +179,9 @@ pub fn generate_unique_landmark(
     // 5. MONUMENTOS DE BAIRRO
     // =====================================================
 
-    if name.contains("igrejinha") || (name.contains("nossa senhora de f�tima") && name.contains("igreja")) {
+    if name.contains("igrejinha")
+        || (name.contains("nossa senhora de f�tima") && name.contains("igreja"))
+    {
         generate_igrejinha(editor, element, ground_y);
         return true;
     }
@@ -188,13 +204,17 @@ pub fn generate_unique_landmark(
 // ============================================================================
 
 struct OrientedBounds {
-    min_x: i32, max_x: i32, min_z: i32, max_z: i32,
-    cx: i32, cz: i32,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    cx: i32,
+    cz: i32,
     angle_rad: f64, // O �ngulo de rota��o da planta baixa no mapa real
 }
 
 /// Extrai a bounding box E calcula o �ngulo de inclina��o do maior segmento do pr�dio.
-/// ?? BESM-6 Tweak: Aplica o alargamento horizontal (H_SCALE) no esqueleto do pr�dio, 
+/// ?? BESM-6 Tweak: Aplica o alargamento horizontal (H_SCALE) no esqueleto do pr�dio,
 /// empurrando as bordas para longe do centro de massa para acompanhar as rodovias.
 fn get_oriented_bounds(element: &ProcessedWay) -> OrientedBounds {
     let raw_min_x = element.nodes.iter().map(|n| n.x).min().unwrap_or(0);
@@ -217,16 +237,24 @@ fn get_oriented_bounds(element: &ProcessedWay) -> OrientedBounds {
     let mut main_angle = 0.0;
 
     for i in 0..element.nodes.len().saturating_sub(1) {
-        let dx = (element.nodes[i+1].x - element.nodes[i].x) as f64;
-        let dz = (element.nodes[i+1].z - element.nodes[i].z) as f64;
-        let len = dx*dx + dz*dz;
+        let dx = (element.nodes[i + 1].x - element.nodes[i].x) as f64;
+        let dz = (element.nodes[i + 1].z - element.nodes[i].z) as f64;
+        let len = dx * dx + dz * dz;
         if len > longest_segment {
             longest_segment = len;
             main_angle = dz.atan2(dx); // atan2 retorna o �ngulo do vetor
         }
     }
 
-    OrientedBounds { min_x, max_x, min_z, max_z, cx, cz, angle_rad: main_angle }
+    OrientedBounds {
+        min_x,
+        max_x,
+        min_z,
+        max_z,
+        cx,
+        cz,
+        angle_rad: main_angle,
+    }
 }
 
 /// Helper para converter coordenadas locais (do desenho geom�trico puro) para globais,
@@ -269,7 +297,9 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
     for y in (ground_y + 4)..=(ground_y + tower_height) {
         for lx in -rx..=rx {
             for lz in -rz..=rz {
-                if lx >= -h_gap && lx <= h_gap { continue; } // O Vazio do H
+                if lx >= -h_gap && lx <= h_gap {
+                    continue;
+                } // O Vazio do H
 
                 let px = rot_x(lx as f64, lz as f64, angle, cx);
                 let pz = rot_z(lx as f64, lz as f64, angle, cz);
@@ -302,7 +332,11 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
 
                 for y in (ground_y + 4)..=(ground_y + 4 + flat_h) {
                     let is_surface = y == ground_y + 4 + flat_h;
-                    let block = if is_surface { SMOOTH_QUARTZ } else { WHITE_CONCRETE };
+                    let block = if is_surface {
+                        SMOOTH_QUARTZ
+                    } else {
+                        WHITE_CONCRETE
+                    };
                     editor.set_block_absolute(block, px, y, pz, None, None);
                 }
             }
@@ -325,7 +359,11 @@ fn generate_congresso(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
 
                 for y in (ground_y + 4)..=(ground_y + 4 + max_h - h) {
                     let is_surface = y == ground_y + 4 + max_h - h || y == ground_y + 4;
-                    let block = if is_surface { SMOOTH_QUARTZ } else { WHITE_CONCRETE };
+                    let block = if is_surface {
+                        SMOOTH_QUARTZ
+                    } else {
+                        WHITE_CONCRETE
+                    };
                     editor.set_block_absolute(block, px, y, pz, None, None);
                 }
             }
@@ -340,14 +378,25 @@ fn generate_palacio_planalto(editor: &mut WorldEditor, element: &ProcessedWay, g
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
 
                 if y == ground_y + 1 || y == ground_y + height {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
                 } else if is_edge && (x + z) % 6 == 0 {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
-                } else if !is_edge && (x > bounds.min_x + 2 && x < bounds.max_x - 2 && z > bounds.min_z + 2 && z < bounds.max_z - 2) {
-                    let is_inner_edge = x == bounds.min_x + 3 || x == bounds.max_x - 3 || z == bounds.min_z + 3 || z == bounds.max_z - 3;
+                } else if !is_edge
+                    && (x > bounds.min_x + 2
+                        && x < bounds.max_x - 2
+                        && z > bounds.min_z + 2
+                        && z < bounds.max_z - 2)
+                {
+                    let is_inner_edge = x == bounds.min_x + 3
+                        || x == bounds.max_x - 3
+                        || z == bounds.min_z + 3
+                        || z == bounds.max_z - 3;
                     if is_inner_edge {
                         editor.set_block_absolute(BLACK_STAINED_GLASS, x, y, z, None, None);
                     } else if y % 4 == 0 {
@@ -366,14 +415,25 @@ fn generate_stf(editor: &mut WorldEditor, element: &ProcessedWay, ground_y: i32)
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
 
                 if y == ground_y + 1 || y == ground_y + height {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
                 } else if is_edge && (x + z) % 5 == 0 {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
-                } else if !is_edge && (x > bounds.min_x + 2 && x < bounds.max_x - 2 && z > bounds.min_z + 2 && z < bounds.max_z - 2) {
-                    let is_inner_edge = x == bounds.min_x + 3 || x == bounds.max_x - 3 || z == bounds.min_z + 3 || z == bounds.max_z - 3;
+                } else if !is_edge
+                    && (x > bounds.min_x + 2
+                        && x < bounds.max_x - 2
+                        && z > bounds.min_z + 2
+                        && z < bounds.max_z - 2)
+                {
+                    let is_inner_edge = x == bounds.min_x + 3
+                        || x == bounds.max_x - 3
+                        || z == bounds.min_z + 3
+                        || z == bounds.max_z - 3;
                     if is_inner_edge {
                         editor.set_block_absolute(TINTED_GLASS, x, y, z, None, None);
                     } else if y % 5 == 0 {
@@ -392,14 +452,25 @@ fn generate_palacio_alvorada(editor: &mut WorldEditor, element: &ProcessedWay, g
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
 
                 if y == ground_y + height {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
                 } else if is_edge && (x + z) % 8 == 0 {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
-                } else if !is_edge && (x > bounds.min_x + 1 && x < bounds.max_x - 1 && z > bounds.min_z + 1 && z < bounds.max_z - 1) {
-                    let is_glass = x == bounds.min_x + 2 || x == bounds.max_x - 2 || z == bounds.min_z + 2 || z == bounds.max_z - 2;
+                } else if !is_edge
+                    && (x > bounds.min_x + 1
+                        && x < bounds.max_x - 1
+                        && z > bounds.min_z + 1
+                        && z < bounds.max_z - 1)
+                {
+                    let is_glass = x == bounds.min_x + 2
+                        || x == bounds.max_x - 2
+                        || z == bounds.min_z + 2
+                        || z == bounds.max_z - 2;
                     if is_glass {
                         editor.set_block_absolute(GLASS, x, y, z, None, None);
                     } else if y == ground_y + 1 {
@@ -418,7 +489,10 @@ fn generate_itamaraty(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
 
                 if y == ground_y + 1 {
                     editor.set_block_absolute(WATER, x, y, z, None, None);
@@ -426,8 +500,16 @@ fn generate_itamaraty(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
                     editor.set_block_absolute(SMOOTH_STONE, x, y, z, None, None);
                 } else if is_edge && (x + z) % 6 == 0 {
                     editor.set_block_absolute(SMOOTH_STONE, x, y, z, None, None);
-                } else if !is_edge && (x > bounds.min_x + 3 && x < bounds.max_x - 3 && z > bounds.min_z + 3 && z < bounds.max_z - 3) {
-                    let is_glass = x == bounds.min_x + 4 || x == bounds.max_x - 4 || z == bounds.min_z + 4 || z == bounds.max_z - 4;
+                } else if !is_edge
+                    && (x > bounds.min_x + 3
+                        && x < bounds.max_x - 3
+                        && z > bounds.min_z + 3
+                        && z < bounds.max_z - 3)
+                {
+                    let is_glass = x == bounds.min_x + 4
+                        || x == bounds.max_x - 4
+                        || z == bounds.min_z + 4
+                        || z == bounds.max_z - 4;
                     if is_glass {
                         editor.set_block_absolute(BLACK_STAINED_GLASS, x, y, z, None, None);
                     }
@@ -444,7 +526,10 @@ fn generate_palacio_justica(editor: &mut WorldEditor, element: &ProcessedWay, gr
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
 
                 if y == ground_y || y == ground_y + height {
                     editor.set_block_absolute(WHITE_CONCRETE, x, y, z, None, None);
@@ -484,11 +569,14 @@ fn generate_ministerio(editor: &mut WorldEditor, element: &ProcessedWay, ground_
                 if y == ground_y || y == ground_y + height {
                     editor.set_block_absolute(WHITE_CONCRETE, px, y, pz, None, None);
                 } else if is_x_wall {
-                    editor.set_block_absolute(WHITE_CONCRETE, px, y, pz, None, None); // Empena
+                    editor.set_block_absolute(WHITE_CONCRETE, px, y, pz, None, None);
+                // Empena
                 } else if is_z_wall {
-                    editor.set_block_absolute(CYAN_STAINED_GLASS, px, y, pz, None, None); // Fachada vidro
+                    editor.set_block_absolute(CYAN_STAINED_GLASS, px, y, pz, None, None);
+                // Fachada vidro
                 } else if y % 5 == 0 {
-                    editor.set_block_absolute(SMOOTH_STONE, px, y, pz, None, None); // Lajes internas
+                    editor.set_block_absolute(SMOOTH_STONE, px, y, pz, None, None);
+                    // Lajes internas
                 }
             }
         }
@@ -506,8 +594,12 @@ fn generate_catedral(editor: &mut WorldEditor, element: &ProcessedWay, ground_y:
     for x in (cx - pool_radius)..=(cx + pool_radius) {
         for z in (cz - pool_radius)..=(cz + pool_radius) {
             let dist = (((x - cx).pow(2) + (z - cz).pow(2)) as f64).sqrt();
-            if dist <= pool_radius as f64 - 2.0 { editor.set_block_absolute(WATER, x, ground_y, z, None, None); }
-            if dist <= radius { editor.set_block_absolute(SMOOTH_QUARTZ, x, ground_y + 1, z, None, None); }
+            if dist <= pool_radius as f64 - 2.0 {
+                editor.set_block_absolute(WATER, x, ground_y, z, None, None);
+            }
+            if dist <= radius {
+                editor.set_block_absolute(SMOOTH_QUARTZ, x, ground_y + 1, z, None, None);
+            }
         }
     }
 
@@ -521,10 +613,15 @@ fn generate_catedral(editor: &mut WorldEditor, element: &ProcessedWay, ground_y:
             let px = cx + (current_radius * angle.cos()).round() as i32;
             let pz = cz + (current_radius * angle.sin()).round() as i32;
 
-            if angle_deg % 22 == 0 { // 360 / 16 pilares = 22.5 graus de passo
+            if angle_deg % 22 == 0 {
+                // 360 / 16 pilares = 22.5 graus de passo
                 editor.set_block_absolute(WHITE_CONCRETE, px, ground_y + 1 + y, pz, None, None);
             } else {
-                let glass_color = if y % 3 == 0 { BLUE_STAINED_GLASS } else { LIGHT_BLUE_STAINED_GLASS };
+                let glass_color = if y % 3 == 0 {
+                    BLUE_STAINED_GLASS
+                } else {
+                    LIGHT_BLUE_STAINED_GLASS
+                };
                 editor.set_block_absolute(glass_color, px, ground_y + 1 + y, pz, None, None);
             }
         }
@@ -572,9 +669,16 @@ fn generate_teatro_nacional(editor: &mut WorldEditor, element: &ProcessedWay, gr
                 let px = rot_x(lx as f64, lz as f64, angle, cx);
                 let pz = rot_z(lx as f64, lz as f64, angle, cz);
 
-                let is_edge = lx == -rx + shrink_x || lx == rx - shrink_x || lz == -rz + shrink_z || lz == rz - shrink_z;
+                let is_edge = lx == -rx + shrink_x
+                    || lx == rx - shrink_x
+                    || lz == -rz + shrink_z
+                    || lz == rz - shrink_z;
                 if is_edge {
-                    let block = if (px + pz + y) % 3 == 0 { QUARTZ_BRICKS } else { CHISELED_STONE_BRICKS };
+                    let block = if (px + pz + y) % 3 == 0 {
+                        QUARTZ_BRICKS
+                    } else {
+                        CHISELED_STONE_BRICKS
+                    };
                     editor.set_block_absolute(block, px, ground_y + y, pz, None, None);
                 }
             }
@@ -591,7 +695,10 @@ fn generate_sede_bb(editor: &mut WorldEditor, element: &ProcessedWay, ground_y: 
             for z in bounds.min_z..=bounds.max_z {
                 let is_cross = (x - bounds.cx).abs() < 5 || (z - bounds.cz).abs() < 5;
                 if is_cross {
-                    let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                    let is_edge = x == bounds.min_x
+                        || x == bounds.max_x
+                        || z == bounds.min_z
+                        || z == bounds.max_z;
                     if is_edge {
                         editor.set_block_absolute(BLACK_STAINED_GLASS, x, y, z, None, None);
                     } else if y % 4 == 0 {
@@ -610,10 +717,16 @@ fn generate_sede_cef(editor: &mut WorldEditor, element: &ProcessedWay, ground_y:
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
                 if is_edge {
-                    if (x + z) % 8 < 2 { editor.set_block_absolute(GRAY_CONCRETE, x, y, z, None, None); }
-                    else { editor.set_block_absolute(TINTED_GLASS, x, y, z, None, None); }
+                    if (x + z) % 8 < 2 {
+                        editor.set_block_absolute(GRAY_CONCRETE, x, y, z, None, None);
+                    } else {
+                        editor.set_block_absolute(TINTED_GLASS, x, y, z, None, None);
+                    }
                 }
             }
         }
@@ -627,10 +740,16 @@ fn generate_sede_bc(editor: &mut WorldEditor, element: &ProcessedWay, ground_y: 
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
                 if is_edge {
-                    if y > ground_y + 10 { editor.set_block_absolute(POLISHED_DEEPSLATE, x, y, z, None, None); }
-                    else if (x + z) % 4 == 0 { editor.set_block_absolute(STONE_BRICKS, x, y, z, None, None); }
+                    if y > ground_y + 10 {
+                        editor.set_block_absolute(POLISHED_DEEPSLATE, x, y, z, None, None);
+                    } else if (x + z) % 4 == 0 {
+                        editor.set_block_absolute(STONE_BRICKS, x, y, z, None, None);
+                    }
                 }
             }
         }
@@ -648,11 +767,16 @@ fn generate_conjunto_nacional(editor: &mut WorldEditor, element: &ProcessedWay, 
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
                 if is_edge {
                     if y > ground_y + 5 {
                         editor.set_block_absolute(WHITE_CONCRETE, x, y, z, None, None);
-                        if y == ground_y + height - 2 && (x % 5 == 0) { editor.set_block_absolute(RED_CONCRETE, x, y, z, None, None); }
+                        if y == ground_y + height - 2 && (x % 5 == 0) {
+                            editor.set_block_absolute(RED_CONCRETE, x, y, z, None, None);
+                        }
                     } else if (x + z) % 6 == 0 {
                         editor.set_block_absolute(POLISHED_ANDESITE, x, y, z, None, None);
                     }
@@ -669,10 +793,17 @@ fn generate_hotel_nacional(editor: &mut WorldEditor, element: &ProcessedWay, gro
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                let is_edge = x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z;
+                let is_edge = x == bounds.min_x
+                    || x == bounds.max_x
+                    || z == bounds.min_z
+                    || z == bounds.max_z;
                 if is_edge {
                     let is_window = (x + z) % 3 != 0 && y % 4 != 0;
-                    let block = if is_window { GLASS_PANE } else { YELLOW_TERRACOTTA };
+                    let block = if is_window {
+                        GLASS_PANE
+                    } else {
+                        YELLOW_TERRACOTTA
+                    };
                     editor.set_block_absolute(block, x, y, z, None, None);
                 }
             }
@@ -700,7 +831,11 @@ fn generate_igrejinha(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
             let is_edge = lz == -rz || lz == rz;
             if is_edge {
                 for y in ground_y..roof_y {
-                    let block = if (px + y) % 2 == 0 { LIGHT_BLUE_TERRACOTTA } else { WHITE_TERRACOTTA };
+                    let block = if (px + y) % 2 == 0 {
+                        LIGHT_BLUE_TERRACOTTA
+                    } else {
+                        WHITE_TERRACOTTA
+                    };
                     editor.set_block_absolute(block, px, y, pz, None, None);
                 }
             }
@@ -752,9 +887,13 @@ fn generate_estacao_aguas_claras(editor: &mut WorldEditor, element: &ProcessedWa
 
             for y in (ground_y - 15)..=ground_y {
                 let is_inside_station = lx > -rx + 1 && lx < rx - 1 && lz > -rz + 1 && lz < rz - 1;
-                if is_inside_station { editor.set_block_absolute(AIR, px, y, pz, None, None); }
+                if is_inside_station {
+                    editor.set_block_absolute(AIR, px, y, pz, None, None);
+                }
                 let is_wall = lx == -rx || lx == rx || lz == -rz || lz == rz;
-                if is_wall { editor.set_block_absolute(SMOOTH_STONE, px, y, pz, None, None); }
+                if is_wall {
+                    editor.set_block_absolute(SMOOTH_STONE, px, y, pz, None, None);
+                }
             }
             let dx = lx as f64;
             let roof_h = 5 - (dx * 0.2).abs() as i32;
@@ -772,16 +911,22 @@ fn generate_torre_tv(editor: &mut WorldEditor, element: &ProcessedWay, ground_y:
     for y in 0..=max_h {
         let current_y = ground_y + y;
         let radius = (20.0 * H_SCALE) as i32 - (y / 8);
-        if radius < 1 { break; }
+        if radius < 1 {
+            break;
+        }
 
         for x in (cx - radius)..=(cx + radius) {
             for z in (cz - radius)..=(cz + radius) {
                 let dx = (x - cx).abs();
                 let dz = (z - cz).abs();
-                let is_leg = dx + dz == radius || (dx == 0 && dz == radius) || (dz == 0 && dx == radius);
+                let is_leg =
+                    dx + dz == radius || (dx == 0 && dz == radius) || (dz == 0 && dx == radius);
 
-                if is_leg && y % 3 == 0 { editor.set_block_absolute(IRON_BLOCK, x, current_y, z, None, None); }
-                else if is_leg { editor.set_block_absolute(IRON_BARS, x, current_y, z, None, None); }
+                if is_leg && y % 3 == 0 {
+                    editor.set_block_absolute(IRON_BLOCK, x, current_y, z, None, None);
+                } else if is_leg {
+                    editor.set_block_absolute(IRON_BARS, x, current_y, z, None, None);
+                }
             }
         }
         let mirante_y = (75.0 * V_SCALE) as i32;
@@ -789,9 +934,16 @@ fn generate_torre_tv(editor: &mut WorldEditor, element: &ProcessedWay, ground_y:
             let deck_radius = (15.0 * H_SCALE) as i32;
             for x in (cx - deck_radius)..=(cx + deck_radius) {
                 for z in (cz - deck_radius)..=(cz + deck_radius) {
-                    if y == mirante_y { editor.set_block_absolute(SMOOTH_STONE, x, current_y, z, None, None); }
-                    let is_deck_edge = x == cx - deck_radius || x == cx + deck_radius || z == cz - deck_radius || z == cz + deck_radius;
-                    if is_deck_edge && y > mirante_y { editor.set_block_absolute(GLASS_PANE, x, current_y, z, None, None); }
+                    if y == mirante_y {
+                        editor.set_block_absolute(SMOOTH_STONE, x, current_y, z, None, None);
+                    }
+                    let is_deck_edge = x == cx - deck_radius
+                        || x == cx + deck_radius
+                        || z == cz - deck_radius
+                        || z == cz + deck_radius;
+                    if is_deck_edge && y > mirante_y {
+                        editor.set_block_absolute(GLASS_PANE, x, current_y, z, None, None);
+                    }
                 }
             }
         }
@@ -837,9 +989,13 @@ fn generate_rodoviaria(editor: &mut WorldEditor, element: &ProcessedWay, ground_
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {
             for z in bounds.min_z..=bounds.max_z {
-                if y == ground_y + 1 || y == ground_y + height { editor.set_block_absolute(SMOOTH_STONE, x, y, z, None, None); }
-                else if (x + z) % 15 == 0 { editor.set_block_absolute(POLISHED_ANDESITE, x, y, z, None, None); }
-                else if y == ground_y + 2 && x % 4 == 0 { editor.set_block_absolute(YELLOW_CONCRETE, x, y, z, None, None); }
+                if y == ground_y + 1 || y == ground_y + height {
+                    editor.set_block_absolute(SMOOTH_STONE, x, y, z, None, None);
+                } else if (x + z) % 15 == 0 {
+                    editor.set_block_absolute(POLISHED_ANDESITE, x, y, z, None, None);
+                } else if y == ground_y + 2 && x % 4 == 0 {
+                    editor.set_block_absolute(YELLOW_CONCRETE, x, y, z, None, None);
+                }
             }
         }
     }
@@ -857,19 +1013,28 @@ fn generate_estadio_nacional(editor: &mut WorldEditor, element: &ProcessedWay, g
         for x in (cx - radius)..=(cx + radius) {
             for z in (cz - radius)..=(cz + radius) {
                 let dist = (((x - cx).pow(2) + (z - cz).pow(2)) as f64).sqrt() as i32;
-                if dist == radius && (x + z) % 4 == 0 { editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None); }
-                else if dist < radius - 5 && dist > radius - 25 {
+                if dist == radius && (x + z) % 4 == 0 {
+                    editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
+                } else if dist < radius - 5 && dist > radius - 25 {
                     let seat_height = (radius - 5 - dist) / 2;
-                    if y == ground_y + seat_height { editor.set_block_absolute(RED_CONCRETE, x, y, z, None, None); }
+                    if y == ground_y + seat_height {
+                        editor.set_block_absolute(RED_CONCRETE, x, y, z, None, None);
+                    }
+                } else if dist <= radius - 25 && y == ground_y + 1 {
+                    editor.set_block_absolute(GRASS_BLOCK, x, y, z, None, None);
+                } else if y == ground_y + height && dist <= radius && dist >= radius - 20 {
+                    editor.set_block_absolute(WHITE_STAINED_GLASS, x, y, z, None, None);
                 }
-                else if dist <= radius - 25 && y == ground_y + 1 { editor.set_block_absolute(GRASS_BLOCK, x, y, z, None, None); }
-                else if y == ground_y + height && dist <= radius && dist >= radius - 20 { editor.set_block_absolute(WHITE_STAINED_GLASS, x, y, z, None, None); }
             }
         }
     }
 }
 
-fn generate_pavilhao_parque_cidade(editor: &mut WorldEditor, element: &ProcessedWay, ground_y: i32) {
+fn generate_pavilhao_parque_cidade(
+    editor: &mut WorldEditor,
+    element: &ProcessedWay,
+    ground_y: i32,
+) {
     let bounds = get_oriented_bounds(element);
     let height = (15.0 * V_SCALE) as i32;
 
@@ -878,10 +1043,19 @@ fn generate_pavilhao_parque_cidade(editor: &mut WorldEditor, element: &Processed
             for z in bounds.min_z..=bounds.max_z {
                 let dx = (x - bounds.cx) as f64;
                 let wave_y = ground_y + 10 + ((dx * 0.2).sin() * 3.0 * V_SCALE) as i32;
-                if y == wave_y { editor.set_block_absolute(WHITE_CONCRETE, x, y, z, None, None); }
-                else if y < wave_y && (x == bounds.min_x || x == bounds.max_x || z == bounds.min_z || z == bounds.max_z) {
-                    if (x + z) % 6 == 0 { editor.set_block_absolute(POLISHED_ANDESITE, x, y, z, None, None); }
-                    else { editor.set_block_absolute(GLASS_PANE, x, y, z, None, None); }
+                if y == wave_y {
+                    editor.set_block_absolute(WHITE_CONCRETE, x, y, z, None, None);
+                } else if y < wave_y
+                    && (x == bounds.min_x
+                        || x == bounds.max_x
+                        || z == bounds.min_z
+                        || z == bounds.max_z)
+                {
+                    if (x + z) % 6 == 0 {
+                        editor.set_block_absolute(POLISHED_ANDESITE, x, y, z, None, None);
+                    } else {
+                        editor.set_block_absolute(GLASS_PANE, x, y, z, None, None);
+                    }
                 }
             }
         }

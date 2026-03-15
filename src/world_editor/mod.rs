@@ -71,7 +71,7 @@ pub(crate) struct WorldMetadata {
 pub struct WorldEditor<'a> {
     world_dir: PathBuf,
     world: WorldToModify, // O CORE CACHE (Apenas a regi�o ativa reside aqui)
-    
+
     // ?? O Roteador Espacial
     active_region_x: i32,
     active_region_z: i32,
@@ -81,7 +81,7 @@ pub struct WorldEditor<'a> {
     llbbox: LLBBox,
     ground: Option<Arc<Ground>>,
     format: WorldFormat,
-    
+
     #[cfg(feature = "bedrock")]
     bedrock_level_name: Option<String>,
     #[cfg(feature = "bedrock")]
@@ -144,25 +144,28 @@ impl<'a> WorldEditor<'a> {
     // ?? BESM-6 CONTROLE DO MOTOR DE VARREDURA (SCANLINE LIFECYCLE)
     // ========================================================================
 
-    /// Move o foco do motor para uma nova Regi�o. 
+    /// Move o foco do motor para uma nova Regi�o.
     /// Isso � chamado pelo `data_processing.rs` antes de voxelizar as geometrias.
     pub fn set_active_region(&mut self, rx: i32, rz: i32) {
         self.active_region_x = rx;
         self.active_region_z = rz;
     }
 
-    /// Injeta os blocos "�rf�os" que vazaram das regi�es vizinhas anteriores 
+    /// Injeta os blocos "�rf�os" que vazaram das regi�es vizinhas anteriores
     /// para dentro do Core Cache atual, para que sejam selados no momento correto.
     pub fn load_halo_to_core(&mut self) {
         let region_key = (self.active_region_x, self.active_region_z);
-        
+
         if let Some(blocks) = self.halo_cache.remove(&region_key) {
             let count = blocks.len();
             for ((x, y, z), block) in blocks {
                 self.world.set_block(x, y, z, block);
             }
             if count > 0 {
-                println!("[HALO] Despejados {} blocos vazados na regi�o ({}, {})", count, self.active_region_x, self.active_region_z);
+                println!(
+                    "[HALO] Despejados {} blocos vazados na regi�o ({}, {})",
+                    count, self.active_region_x, self.active_region_z
+                );
             }
         }
     }
@@ -172,10 +175,12 @@ impl<'a> WorldEditor<'a> {
     pub fn flush_active_region(&mut self) {
         // Compacta as se��es para poupar banda de mem�ria antes da grava��o
         self.world.compact_sections();
-        
+
         // ?? No Java Edition, uma regi�o equivale a um arquivo Anvil exato.
         match self.format {
-            WorldFormat::JavaAnvil => self.save_java_region(self.active_region_x, self.active_region_z),
+            WorldFormat::JavaAnvil => {
+                self.save_java_region(self.active_region_x, self.active_region_z)
+            }
             WorldFormat::BedrockMcWorld => {
                 // Para Bedrock, o fluxo out-of-core � mais complexo devido ao LevelDB.
                 // Por ora, acumularemos as muta��es no driver apropriado que faremos no bedrock.rs
@@ -183,7 +188,7 @@ impl<'a> WorldEditor<'a> {
         }
 
         // ?? EXPURGO ABSOLUTO O(1): Mata a RAM do Core
-        self.world = WorldToModify::default(); 
+        self.world = WorldToModify::default();
     }
 
     /// Retorna o tamanho atual do Halo Cache para estat�sticas do Terminal HUD
@@ -216,7 +221,7 @@ impl<'a> WorldEditor<'a> {
                 z - self.xzbbox.min_z(),
             )) + y_offset
         } else {
-            y_offset 
+            y_offset
         }
     }
 
@@ -228,7 +233,7 @@ impl<'a> WorldEditor<'a> {
                 z - self.xzbbox.min_z(),
             ))
         } else {
-            0 
+            0
         }
     }
 
@@ -272,7 +277,8 @@ impl<'a> WorldEditor<'a> {
 
         // Se o bloco pertencer � regi�o ativamente processada, ele vai pro Core.
         if rx == self.active_region_x && rz == self.active_region_z {
-            let should_insert = if let Some(existing_block) = self.world.get_block(x, absolute_y, z) {
+            let should_insert = if let Some(existing_block) = self.world.get_block(x, absolute_y, z)
+            {
                 if let Some(whitelist) = override_whitelist {
                     whitelist.iter().any(|b| b.id() == existing_block.id())
                 } else if let Some(blacklist) = override_blacklist {
@@ -287,7 +293,7 @@ impl<'a> WorldEditor<'a> {
             if should_insert {
                 self.world.set_block(x, absolute_y, z, block);
             }
-        } 
+        }
         // Se o bloco pertencer a uma regi�o vizinha (vazamento), ele vai pro Halo Cache.
         else {
             // Nota: No Halo, ignoramos whitelists complexos por performance,
@@ -330,7 +336,14 @@ impl<'a> WorldEditor<'a> {
         override_blacklist: Option<&[Block]>,
     ) {
         let absolute_y = self.get_absolute_y(x, y, z);
-        self.set_block_absolute(block, x, absolute_y, z, override_whitelist, override_blacklist);
+        self.set_block_absolute(
+            block,
+            x,
+            absolute_y,
+            z,
+            override_whitelist,
+            override_blacklist,
+        );
     }
 
     #[inline]
@@ -351,7 +364,8 @@ impl<'a> WorldEditor<'a> {
         let rz = z >> 9;
 
         if rx == self.active_region_x && rz == self.active_region_z {
-            let should_insert = if let Some(existing_block) = self.world.get_block(x, absolute_y, z) {
+            let should_insert = if let Some(existing_block) = self.world.get_block(x, absolute_y, z)
+            {
                 if let Some(whitelist) = override_whitelist {
                     whitelist.iter().any(|b| b.id() == existing_block.id())
                 } else if let Some(blacklist) = override_blacklist {
@@ -364,7 +378,8 @@ impl<'a> WorldEditor<'a> {
             };
 
             if should_insert {
-                self.world.set_block_with_properties(x, absolute_y, z, block_with_props);
+                self.world
+                    .set_block_with_properties(x, absolute_y, z, block_with_props);
             }
         } else {
             // Blocos com propriedades vazando para o Halo (Armazenamos o bloco base por ora)
@@ -444,8 +459,8 @@ impl<'a> WorldEditor<'a> {
                 return whitelist.is_none() && blacklist.is_none();
             }
             return false;
-        } 
-        
+        }
+
         // Se a regi�o vazou, checa no Halo
         if let Some(bucket) = self.halo_cache.get(&(rx, rz)) {
             if let Some(existing_block) = bucket.get(&(x, absolute_y, z)) {
@@ -470,7 +485,9 @@ impl<'a> WorldEditor<'a> {
         if rx == self.active_region_x && rz == self.active_region_z {
             self.world.get_block(x, absolute_y, z).is_some()
         } else {
-            self.halo_cache.get(&(rx, rz)).map_or(false, |b| b.contains_key(&(x, absolute_y, z)))
+            self.halo_cache
+                .get(&(rx, rz))
+                .map_or(false, |b| b.contains_key(&(x, absolute_y, z)))
         }
     }
 
@@ -492,7 +509,8 @@ impl<'a> WorldEditor<'a> {
         let rz = z >> 9;
 
         if rx == self.active_region_x && rz == self.active_region_z {
-            self.world.fill_column(x, z, y_min, y_max, block, skip_existing);
+            self.world
+                .fill_column(x, z, y_min, y_max, block, skip_existing);
         } else {
             // Emula o fill block by block no Halo
             for y in y_min..=y_max {
@@ -612,7 +630,17 @@ impl<'a> WorldEditor<'a> {
     // L�gica Inalterada de Entidades e Chests (Apenas bypass para simplificar RAM)
 
     #[allow(clippy::too_many_arguments, dead_code)]
-    pub fn set_sign(&mut self, line1: String, line2: String, line3: String, line4: String, x: i32, y: i32, z: i32, _rotation: i8) {
+    pub fn set_sign(
+        &mut self,
+        line1: String,
+        line2: String,
+        line3: String,
+        line4: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        _rotation: i8,
+    ) {
         let absolute_y = self.get_absolute_y(x, y, z);
         let chunk_x = x >> 4;
         let chunk_z = z >> 4;
@@ -620,7 +648,9 @@ impl<'a> WorldEditor<'a> {
         let region_z = chunk_z >> 5;
 
         // Se o sinal n�o for da regi�o atual, n�s o evitamos no fluxo Scanline.
-        if region_x != self.active_region_x || region_z != self.active_region_z { return; }
+        if region_x != self.active_region_x || region_z != self.active_region_z {
+            return;
+        }
 
         let mut block_entities = HashMap::new();
         let messages = vec![
@@ -635,7 +665,10 @@ impl<'a> WorldEditor<'a> {
         text_data.insert("has_glowing_text".to_string(), Value::Byte(0));
 
         block_entities.insert("front_text".to_string(), Value::Compound(text_data));
-        block_entities.insert("id".to_string(), Value::String("minecraft:sign".to_string()));
+        block_entities.insert(
+            "id".to_string(),
+            Value::String("minecraft:sign".to_string()),
+        );
         block_entities.insert("is_waxed".to_string(), Value::Byte(0));
         block_entities.insert("keepPacked".to_string(), Value::Byte(0));
         block_entities.insert("x".to_string(), Value::Int(x));
@@ -650,41 +683,75 @@ impl<'a> WorldEditor<'a> {
                 entities.push(Value::Compound(block_entities));
             }
         } else {
-            chunk.other.insert("block_entities".to_string(), Value::List(vec![Value::Compound(block_entities)]));
+            chunk.other.insert(
+                "block_entities".to_string(),
+                Value::List(vec![Value::Compound(block_entities)]),
+            );
         }
 
         self.set_block(SIGN, x, y, z, None, None);
     }
 
     #[allow(dead_code)]
-    pub fn add_entity(&mut self, id: &str, x: i32, y: i32, z: i32, extra_data: Option<HashMap<String, Value>>) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) { return; }
-        
+    pub fn add_entity(
+        &mut self,
+        id: &str,
+        x: i32,
+        y: i32,
+        z: i32,
+        extra_data: Option<HashMap<String, Value>>,
+    ) {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return;
+        }
+
         let chunk_x: i32 = x >> 4;
         let chunk_z: i32 = z >> 4;
         let region_x: i32 = chunk_x >> 5;
         let region_z: i32 = chunk_z >> 5;
 
         // Limita a inser��o de entidades para a regi�o ativa do scanline.
-        if region_x != self.active_region_x || region_z != self.active_region_z { return; }
+        if region_x != self.active_region_x || region_z != self.active_region_z {
+            return;
+        }
 
         let absolute_y = self.get_absolute_y(x, y, z);
         let mut entity = HashMap::new();
         entity.insert("id".to_string(), Value::String(id.to_string()));
-        entity.insert("Pos".to_string(), Value::List(vec![
-            Value::Double(x as f64 + 0.5), Value::Double(absolute_y as f64), Value::Double(z as f64 + 0.5),
-        ]));
-        entity.insert("Motion".to_string(), Value::List(vec![Value::Double(0.0), Value::Double(0.0), Value::Double(0.0)]));
-        entity.insert("Rotation".to_string(), Value::List(vec![Value::Float(0.0), Value::Float(0.0)]));
+        entity.insert(
+            "Pos".to_string(),
+            Value::List(vec![
+                Value::Double(x as f64 + 0.5),
+                Value::Double(absolute_y as f64),
+                Value::Double(z as f64 + 0.5),
+            ]),
+        );
+        entity.insert(
+            "Motion".to_string(),
+            Value::List(vec![
+                Value::Double(0.0),
+                Value::Double(0.0),
+                Value::Double(0.0),
+            ]),
+        );
+        entity.insert(
+            "Rotation".to_string(),
+            Value::List(vec![Value::Float(0.0), Value::Float(0.0)]),
+        );
         entity.insert("OnGround".to_string(), Value::Byte(1));
         entity.insert("FallDistance".to_string(), Value::Float(0.0));
         entity.insert("Fire".to_string(), Value::Short(-20));
         entity.insert("Air".to_string(), Value::Short(300));
         entity.insert("PortalCooldown".to_string(), Value::Int(0));
-        entity.insert("UUID".to_string(), Value::IntArray(build_deterministic_uuid(id, x, absolute_y, z)));
+        entity.insert(
+            "UUID".to_string(),
+            Value::IntArray(build_deterministic_uuid(id, x, absolute_y, z)),
+        );
 
         if let Some(extra) = extra_data {
-            for (key, value) in extra { entity.insert(key, value); }
+            for (key, value) in extra {
+                entity.insert(key, value);
+            }
         }
 
         let region = self.world.get_or_create_region(region_x, region_z);
@@ -692,7 +759,9 @@ impl<'a> WorldEditor<'a> {
 
         match chunk.other.entry("entities".to_string()) {
             Entry::Occupied(mut entry) => {
-                if let Value::List(list) = entry.get_mut() { list.push(Value::Compound(entity)); }
+                if let Value::List(list) = entry.get_mut() {
+                    list.push(Value::Compound(entity));
+                }
             }
             Entry::Vacant(entry) => {
                 entry.insert(Value::List(vec![Value::Compound(entity)]));
@@ -701,14 +770,28 @@ impl<'a> WorldEditor<'a> {
     }
 
     #[allow(dead_code)]
-    pub fn set_chest_with_items(&mut self, x: i32, y: i32, z: i32, items: Vec<HashMap<String, Value>>) {
+    pub fn set_chest_with_items(
+        &mut self,
+        x: i32,
+        y: i32,
+        z: i32,
+        items: Vec<HashMap<String, Value>>,
+    ) {
         let absolute_y = self.get_absolute_y(x, y, z);
         self.set_chest_with_items_absolute(x, absolute_y, z, items);
     }
 
     #[allow(dead_code)]
-    pub fn set_chest_with_items_absolute(&mut self, x: i32, absolute_y: i32, z: i32, items: Vec<HashMap<String, Value>>) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) { return; }
+    pub fn set_chest_with_items_absolute(
+        &mut self,
+        x: i32,
+        absolute_y: i32,
+        z: i32,
+        items: Vec<HashMap<String, Value>>,
+    ) {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return;
+        }
 
         let chunk_x: i32 = x >> 4;
         let chunk_z: i32 = z >> 4;
@@ -716,14 +799,22 @@ impl<'a> WorldEditor<'a> {
         let region_z: i32 = chunk_z >> 5;
 
         // Evita chests vazando.
-        if region_x != self.active_region_x || region_z != self.active_region_z { return; }
+        if region_x != self.active_region_x || region_z != self.active_region_z {
+            return;
+        }
 
         let mut chest_data = HashMap::new();
-        chest_data.insert("id".to_string(), Value::String("minecraft:chest".to_string()));
+        chest_data.insert(
+            "id".to_string(),
+            Value::String("minecraft:chest".to_string()),
+        );
         chest_data.insert("x".to_string(), Value::Int(x));
         chest_data.insert("y".to_string(), Value::Int(absolute_y));
         chest_data.insert("z".to_string(), Value::Int(z));
-        chest_data.insert("Items".to_string(), Value::List(items.into_iter().map(Value::Compound).collect()));
+        chest_data.insert(
+            "Items".to_string(),
+            Value::List(items.into_iter().map(Value::Compound).collect()),
+        );
         chest_data.insert("keepPacked".to_string(), Value::Byte(0));
 
         let region = self.world.get_or_create_region(region_x, region_z);
@@ -731,7 +822,9 @@ impl<'a> WorldEditor<'a> {
 
         match chunk.other.entry("block_entities".to_string()) {
             Entry::Occupied(mut entry) => {
-                if let Value::List(list) = entry.get_mut() { list.push(Value::Compound(chest_data)); }
+                if let Value::List(list) = entry.get_mut() {
+                    list.push(Value::Compound(chest_data));
+                }
             }
             Entry::Vacant(entry) => {
                 entry.insert(Value::List(vec![Value::Compound(chest_data)]));
@@ -742,14 +835,39 @@ impl<'a> WorldEditor<'a> {
     }
 
     #[allow(dead_code)]
-    pub fn set_block_entity_with_items(&mut self, block_with_props: BlockWithProperties, x: i32, y: i32, z: i32, block_entity_id: &str, items: Vec<HashMap<String, Value>>) {
+    pub fn set_block_entity_with_items(
+        &mut self,
+        block_with_props: BlockWithProperties,
+        x: i32,
+        y: i32,
+        z: i32,
+        block_entity_id: &str,
+        items: Vec<HashMap<String, Value>>,
+    ) {
         let absolute_y = self.get_absolute_y(x, y, z);
-        self.set_block_entity_with_items_absolute(block_with_props, x, absolute_y, z, block_entity_id, items);
+        self.set_block_entity_with_items_absolute(
+            block_with_props,
+            x,
+            absolute_y,
+            z,
+            block_entity_id,
+            items,
+        );
     }
 
     #[allow(dead_code)]
-    pub fn set_block_entity_with_items_absolute(&mut self, block_with_props: BlockWithProperties, x: i32, absolute_y: i32, z: i32, block_entity_id: &str, items: Vec<HashMap<String, Value>>) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) { return; }
+    pub fn set_block_entity_with_items_absolute(
+        &mut self,
+        block_with_props: BlockWithProperties,
+        x: i32,
+        absolute_y: i32,
+        z: i32,
+        block_entity_id: &str,
+        items: Vec<HashMap<String, Value>>,
+    ) {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return;
+        }
 
         let chunk_x: i32 = x >> 4;
         let chunk_z: i32 = z >> 4;
@@ -757,14 +875,19 @@ impl<'a> WorldEditor<'a> {
         let region_z: i32 = chunk_z >> 5;
 
         // Evita blocos entidade vazando pro Halo
-        if region_x != self.active_region_x || region_z != self.active_region_z { return; }
+        if region_x != self.active_region_x || region_z != self.active_region_z {
+            return;
+        }
 
         let mut block_entity = HashMap::new();
         block_entity.insert("id".to_string(), Value::String(block_entity_id.to_string()));
         block_entity.insert("x".to_string(), Value::Int(x));
         block_entity.insert("y".to_string(), Value::Int(absolute_y));
         block_entity.insert("z".to_string(), Value::Int(z));
-        block_entity.insert("Items".to_string(), Value::List(items.into_iter().map(Value::Compound).collect()));
+        block_entity.insert(
+            "Items".to_string(),
+            Value::List(items.into_iter().map(Value::Compound).collect()),
+        );
         block_entity.insert("keepPacked".to_string(), Value::Byte(0));
 
         let region = self.world.get_or_create_region(region_x, region_z);
@@ -772,7 +895,9 @@ impl<'a> WorldEditor<'a> {
 
         match chunk.other.entry("block_entities".to_string()) {
             Entry::Occupied(mut entry) => {
-                if let Value::List(list) = entry.get_mut() { list.push(Value::Compound(block_entity)); }
+                if let Value::List(list) = entry.get_mut() {
+                    list.push(Value::Compound(block_entity));
+                }
             }
             Entry::Vacant(entry) => {
                 entry.insert(Value::List(vec![Value::Compound(block_entity)]));

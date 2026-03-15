@@ -6,8 +6,10 @@
 //! Integração total com o ComplexPolygon para suporte a furos e ilhas nativos O(1).
 
 use crate::coordinate_system::cartesian::XZBBox;
-use crate::floodfill::{flood_fill_area, scanline_fill_complex, extract_complex_polygon_from_element};
-use crate::osm_parser::{ProcessedElement, ProcessedMemberRole, ProcessedWay};
+use crate::floodfill::{
+    extract_complex_polygon_from_element, flood_fill_area, scanline_fill_complex,
+};
+use crate::osm_parser::{ProcessedElement, ProcessedWay};
 use fnv::FnvHashMap;
 use std::time::Duration;
 
@@ -255,7 +257,8 @@ impl FloodFillCache {
             match element {
                 ProcessedElement::Way(way) => {
                     if way.tags.contains_key("building") || way.tags.contains_key("building:part") {
-                        let polygon_coords: Vec<(i32, i32)> = way.nodes.iter().map(|n| (n.x, n.z)).collect();
+                        let polygon_coords: Vec<(i32, i32)> =
+                            way.nodes.iter().map(|n| (n.x, n.z)).collect();
                         let filled = flood_fill_area(&polygon_coords, None);
                         for &(x, z) in &filled {
                             footprints.set(x, z);

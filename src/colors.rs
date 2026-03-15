@@ -1,8 +1,8 @@
 use lru::LruCache;
 use once_cell::sync::Lazy;
+use std::borrow::Cow;
 use std::num::NonZeroUsize;
-use std::sync::Mutex;
-use std::borrow::Cow; // BESM-6: Zero-alloc efficiency
+use std::sync::Mutex; // BESM-6: Zero-alloc efficiency
 
 pub type RGBTuple = (u8, u8, u8);
 
@@ -20,15 +20,15 @@ pub struct ColorContext<'a> {
     pub is_highway: bool,
     pub is_pipeline: bool,
     pub is_landmark: bool,
-    
+
     // Identidade Arquitet�nica Local
-    pub building_area: Option<f64>,  // Ajuda a diferenciar mans�es de casebres
-    pub district_seed: u32,          // Define a paleta predominante do bairro
-    pub distance_to_center: f64,     // Gradiente de conserva��o (0.0 a 1.0)
+    pub building_area: Option<f64>, // Ajuda a diferenciar mans�es de casebres
+    pub district_seed: u32,         // Define a paleta predominante do bairro
+    pub distance_to_center: f64,    // Gradiente de conserva��o (0.0 a 1.0)
 }
 
 /// BESM-6 Tweak: Hashing Espacial (Spatial Seed) Aprimorado.
-/// Usa dispers�o de bits estilo Murmur3 para evitar padr�es repetitivos 
+/// Usa dispers�o de bits estilo Murmur3 para evitar padr�es repetitivos
 /// em quarteir�es perfeitamente alinhados (Superquadras).
 #[inline(always)]
 pub fn spatial_seed(x: i32, z: i32, id: u64) -> u32 {
@@ -60,8 +60,12 @@ fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
     let delta = max - min;
 
     let l = (max + min) / 2.0;
-    let s = if delta == 0.0 { 0.0 } else { delta / (1.0 - (2.0 * l - 1.0).abs()) };
-    
+    let s = if delta == 0.0 {
+        0.0
+    } else {
+        delta / (1.0 - (2.0 * l - 1.0).abs())
+    };
+
     let h = if delta == 0.0 {
         0.0
     } else if max == r_f {
@@ -103,18 +107,18 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> RGBTuple {
 #[inline(always)]
 pub fn apply_weathering(rgb: RGBTuple, seed: u32, is_west_facing: bool, distance: f64) -> RGBTuple {
     let (mut h, mut s, mut l) = rgb_to_hsl(rgb.0, rgb.1, rgb.2);
-    
-    let is_faded_by_sun = seed % 2 == 0 || is_west_facing; 
-    
+
+    let is_faded_by_sun = seed % 2 == 0 || is_west_facing;
+
     // BESM-6 Tweak: Micro-variation injetado diretamente na base para quebrar uniformidade perfeitamente lisa
-    let micro_noise = (seed % 5) as f32 / 255.0; 
-    let base_variation = ((seed % 12) as f32 / 100.0) + micro_noise; 
-    
-    let conservation_modifier = 1.0 + (distance * 1.5).min(2.0) as f32; 
+    let micro_noise = (seed % 5) as f32 / 255.0;
+    let base_variation = ((seed % 12) as f32 / 100.0) + micro_noise;
+
+    let conservation_modifier = 1.0 + (distance * 1.5).min(2.0) as f32;
     let variation = base_variation * conservation_modifier;
 
     let sun_multiplier = if is_west_facing { 1.5 } else { 1.0 };
-    
+
     // Poeira de terra vermelha (Hue = ~15 graus)
     let red_dust_intensity = (((seed / 7) % 6) as f32 * conservation_modifier) / 100.0;
 
@@ -139,28 +143,28 @@ pub fn apply_weathering(rgb: RGBTuple, seed: u32, is_west_facing: bool, distance
 /// Pega o contexto do elemento e cospe uma cor realista e desgastada.
 pub fn resolve_wall_color(ctx: &ColorContext) -> RGBTuple {
     let seed = spatial_seed(ctx.center_x, ctx.center_z, ctx.element_id);
-    let is_west_facing = ctx.center_x % 2 == 0; 
+    let is_west_facing = ctx.center_x % 2 == 0;
 
     // 0. Prote��o Mestre: Landmarks (Garante M�rmore/Branco Imaculado sem sujeira para Pal�cios)
     if ctx.is_landmark {
-        return (255, 255, 255); 
+        return (255, 255, 255);
     }
 
     // 1. Tratamento para Vias e Infraestrutura (WFS / Highways)
     if ctx.is_highway {
         let base = match seed % 4 {
-            0 => (80, 80, 85),  // Asfalto novo
+            0 => (80, 80, 85),    // Asfalto novo
             1 => (110, 110, 110), // Asfalto desgastado
-            _ => (90, 90, 95),  // Asfalto padr�o
+            _ => (90, 90, 95),    // Asfalto padr�o
         };
         return apply_weathering(base, seed, false, ctx.distance_to_center);
     }
-    
+
     if ctx.is_pipeline {
         let base = match seed % 3 {
-            0 => (160, 82, 45), // Ferrugem escura
+            0 => (160, 82, 45),   // Ferrugem escura
             1 => (120, 120, 125), // Concreto armado sujo
-            _ => (180, 100, 50), // Cobre oxidado
+            _ => (180, 100, 50),  // Cobre oxidado
         };
         return apply_weathering(base, seed, false, ctx.distance_to_center);
     }
@@ -183,11 +187,11 @@ pub fn resolve_wall_color(ctx: &ColorContext) -> RGBTuple {
     let btype = ctx.building_type.unwrap_or("yes");
     let district_bias = ctx.district_seed % 3;
 
-    let base_color = if btype.eq_ignore_ascii_case("residential") 
-        || btype.eq_ignore_ascii_case("house") 
-        || btype.eq_ignore_ascii_case("apartments") 
-        || btype.eq_ignore_ascii_case("detached") 
-        || btype.eq_ignore_ascii_case("terrace") 
+    let base_color = if btype.eq_ignore_ascii_case("residential")
+        || btype.eq_ignore_ascii_case("house")
+        || btype.eq_ignore_ascii_case("apartments")
+        || btype.eq_ignore_ascii_case("detached")
+        || btype.eq_ignore_ascii_case("terrace")
     {
         if let Some(area) = ctx.building_area {
             if area > 800.0 {
@@ -209,13 +213,20 @@ pub fn resolve_wall_color(ctx: &ColorContext) -> RGBTuple {
         } else {
             apply_district_bias(seed, district_bias)
         }
-    } else if btype.eq_ignore_ascii_case("industrial") || btype.eq_ignore_ascii_case("warehouse") || btype.eq_ignore_ascii_case("manufacture") {
+    } else if btype.eq_ignore_ascii_case("industrial")
+        || btype.eq_ignore_ascii_case("warehouse")
+        || btype.eq_ignore_ascii_case("manufacture")
+    {
         match seed % 3 {
             0 => (140, 140, 135), // Concreto encardido
             1 => (160, 160, 165), // Zinco/Metal sujo
             _ => (185, 185, 180), // Cimento base
         }
-    } else if btype.eq_ignore_ascii_case("civic") || btype.eq_ignore_ascii_case("government") || btype.eq_ignore_ascii_case("public") || btype.eq_ignore_ascii_case("hospital") {
+    } else if btype.eq_ignore_ascii_case("civic")
+        || btype.eq_ignore_ascii_case("government")
+        || btype.eq_ignore_ascii_case("public")
+        || btype.eq_ignore_ascii_case("hospital")
+    {
         match seed % 5 {
             0 => (185, 185, 180), // Concreto Monumental Bruto
             _ => (240, 240, 235), // Branco Institucional
@@ -237,26 +248,26 @@ pub fn resolve_wall_color(ctx: &ColorContext) -> RGBTuple {
 /// Helpers para Identidade Regional (Bias de Cores)
 fn apply_district_bias(seed: u32, bias: u32) -> RGBTuple {
     match bias {
-        0 => { 
+        0 => {
             match seed % 10 {
-                0..=6 => (235, 220, 190),  // Bege
-                7..=8 => (240, 240, 235),  // Branco
-                _ => (150, 70, 50),        // Tijolo
+                0..=6 => (235, 220, 190), // Bege
+                7..=8 => (240, 240, 235), // Branco
+                _ => (150, 70, 50),       // Tijolo
             }
-        },
-        1 => { 
+        }
+        1 => {
             match seed % 10 {
-                0..=5 => (240, 240, 235),  // Branco
-                6..=8 => (185, 185, 180),  // Concreto Monumental
-                _ => (235, 220, 190),      // Bege
+                0..=5 => (240, 240, 235), // Branco
+                6..=8 => (185, 185, 180), // Concreto Monumental
+                _ => (235, 220, 190),     // Bege
             }
-        },
-        _ => { 
+        }
+        _ => {
             match seed % 10 {
-                0..=3 => (240, 230, 150),  // Amarelo Pastel
-                4..=6 => (150, 70, 50),    // Tijolo
-                7..=8 => (200, 180, 160),  // Reboco
-                _ => (235, 220, 190),      // Bege
+                0..=3 => (240, 230, 150), // Amarelo Pastel
+                4..=6 => (150, 70, 50),   // Tijolo
+                7..=8 => (200, 180, 160), // Reboco
+                _ => (235, 220, 190),     // Bege
             }
         }
     }
@@ -264,7 +275,7 @@ fn apply_district_bias(seed: u32, bias: u32) -> RGBTuple {
 
 /// O RESOLVEDOR DE TELHADOS
 pub fn resolve_roof_color(ctx: &ColorContext) -> RGBTuple {
-    let seed = spatial_seed(ctx.center_x, ctx.center_z, ctx.element_id) ^ 0x9E3779B9; 
+    let seed = spatial_seed(ctx.center_x, ctx.center_z, ctx.element_id) ^ 0x9E3779B9;
 
     if let Some(mat) = ctx.roof_material {
         let mut has_tile = false;
@@ -272,7 +283,11 @@ pub fn resolve_roof_color(ctx: &ColorContext) -> RGBTuple {
         let mut has_concrete = false;
 
         for token in mat.split(|c: char| !c.is_alphanumeric()) {
-            if token.eq_ignore_ascii_case("tile") || token.eq_ignore_ascii_case("telha") || token.eq_ignore_ascii_case("clay") || token.eq_ignore_ascii_case("ceramica") {
+            if token.eq_ignore_ascii_case("tile")
+                || token.eq_ignore_ascii_case("telha")
+                || token.eq_ignore_ascii_case("clay")
+                || token.eq_ignore_ascii_case("ceramica")
+            {
                 has_tile = true;
             }
             if token.eq_ignore_ascii_case("metal") || token.eq_ignore_ascii_case("zinco") {
@@ -283,9 +298,15 @@ pub fn resolve_roof_color(ctx: &ColorContext) -> RGBTuple {
             }
         }
 
-        if has_tile { return apply_weathering((180, 80, 45), seed, false, ctx.distance_to_center); }
-        if has_metal { return apply_weathering((160, 160, 165), seed, false, ctx.distance_to_center); }
-        if has_concrete { return apply_weathering((140, 140, 135), seed, false, ctx.distance_to_center); }
+        if has_tile {
+            return apply_weathering((180, 80, 45), seed, false, ctx.distance_to_center);
+        }
+        if has_metal {
+            return apply_weathering((160, 160, 165), seed, false, ctx.distance_to_center);
+        }
+        if has_concrete {
+            return apply_weathering((140, 140, 135), seed, false, ctx.distance_to_center);
+        }
     }
 
     if let Some(text) = ctx.raw_color_tag {
@@ -295,32 +316,54 @@ pub fn resolve_roof_color(ctx: &ColorContext) -> RGBTuple {
     }
 
     let btype = ctx.building_type.unwrap_or("yes");
-    let base_color = if btype.eq_ignore_ascii_case("residential") || btype.eq_ignore_ascii_case("house") || btype.eq_ignore_ascii_case("detached") {
+    let base_color = if btype.eq_ignore_ascii_case("residential")
+        || btype.eq_ignore_ascii_case("house")
+        || btype.eq_ignore_ascii_case("detached")
+    {
         let is_small = ctx.building_area.unwrap_or(100.0) < 150.0;
         if is_small {
-            if seed % 10 < 8 { (180, 80, 45) } else { (160, 160, 165) }
+            if seed % 10 < 8 {
+                (180, 80, 45)
+            } else {
+                (160, 160, 165)
+            }
         } else {
-            if seed % 2 == 0 { (140, 140, 135) } else { (180, 80, 45) }
+            if seed % 2 == 0 {
+                (140, 140, 135)
+            } else {
+                (180, 80, 45)
+            }
         }
     } else if btype.eq_ignore_ascii_case("industrial") || btype.eq_ignore_ascii_case("warehouse") {
         (160, 160, 165) // Zinco
-    } else if btype.eq_ignore_ascii_case("civic") || btype.eq_ignore_ascii_case("government") || btype.eq_ignore_ascii_case("commercial") || btype.eq_ignore_ascii_case("apartments") {
-        if seed % 2 == 0 { (140, 140, 135) } else { (185, 185, 180) } // Laje Plana
+    } else if btype.eq_ignore_ascii_case("civic")
+        || btype.eq_ignore_ascii_case("government")
+        || btype.eq_ignore_ascii_case("commercial")
+        || btype.eq_ignore_ascii_case("apartments")
+    {
+        if seed % 2 == 0 {
+            (140, 140, 135)
+        } else {
+            (185, 185, 180)
+        } // Laje Plana
     } else {
-        if seed % 2 == 0 { (180, 80, 45) } else { (140, 140, 135) }
+        if seed % 2 == 0 {
+            (180, 80, 45)
+        } else {
+            (140, 140, 135)
+        }
     };
 
     apply_weathering(base_color, seed, false, ctx.distance_to_center)
 }
 
 /// LRU Cache Seguro Limitado a 256 Entradas.
-static COLOR_CACHE: Lazy<Mutex<LruCache<String, RGBTuple>>> = Lazy::new(|| {
-    Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap()))
-});
+static COLOR_CACHE: Lazy<Mutex<LruCache<String, RGBTuple>>> =
+    Lazy::new(|| Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap())));
 
 /// Pipeline mestre de cores originais. Extrai, limpa, entende semanticamente usando tokeniza��o.
 pub fn color_text_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
-    // TWEAK BESM-6: Substitui hifens por espa�os ANTES do parsing para n�o quebrar 
+    // TWEAK BESM-6: Substitui hifens por espa�os ANTES do parsing para n�o quebrar
     // tags compostas do OSM (ex: "dark-red" vira "dark red") - Cr�tica 9.2
     let text_norm = text.replace('-', " ");
     let clean_text = text_norm.trim().to_ascii_lowercase();
@@ -332,11 +375,11 @@ pub fn color_text_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
     }
 
     let mut hex_buffer = String::new();
-    
+
     // TWEAK BESM-6: Usando Cow (Clone-on-Write) ou refer�ncias diretas (Cr�tica 9.1).
     // Evita a aloca��o pesada de mem�ria ao parsear milhares de cores.
     let mut parse_text: Cow<str> = Cow::Borrowed(&clean_text);
-    
+
     if !parse_text.starts_with('#') && parse_text.chars().all(|c| c.is_ascii_hexdigit()) {
         if parse_text.len() == 3 || parse_text.len() == 6 || parse_text.len() == 8 {
             hex_buffer.push('#');
@@ -347,15 +390,27 @@ pub fn color_text_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
 
     let mut modifier_l = 0.0;
     let mut modifier_s = 0.0;
-    
+
     let mut base_rgb = None;
-    
+
     for token in parse_text.split(|c: char| !c.is_alphanumeric()) {
         match token {
-            "light" | "pale" | "claro" => { modifier_l += 0.15; modifier_s -= 0.05; },
-            "dark" | "escuro" => { modifier_l -= 0.15; modifier_s += 0.05; },
-            "dirty" | "sujo" => { modifier_l -= 0.10; modifier_s -= 0.15; },
-            "bright" | "vivid" => { modifier_l += 0.05; modifier_s += 0.20; },
+            "light" | "pale" | "claro" => {
+                modifier_l += 0.15;
+                modifier_s -= 0.05;
+            }
+            "dark" | "escuro" => {
+                modifier_l -= 0.15;
+                modifier_s += 0.05;
+            }
+            "dirty" | "sujo" => {
+                modifier_l -= 0.10;
+                modifier_s -= 0.15;
+            }
+            "bright" | "vivid" => {
+                modifier_l += 0.05;
+                modifier_s += 0.20;
+            }
             _ => {
                 if base_rgb.is_none() {
                     base_rgb = exact_color_name_to_rgb_tuple(token)
@@ -433,7 +488,8 @@ fn semantic_material_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
         "concrete" | "concreto" | "cement" | "cimento" | "limestone" => Some((185, 185, 180)),
         "stone" | "pedra" | "granite" => Some((150, 150, 150)),
         "glass" | "vidro" | "mirror" | "espelhado" => Some((140, 180, 220)),
-        "slate" | "lousa" | "zinc" | "zinco" | "amianto" | "fibrocimento" | "metal" | "iron" | "steel" | "a�o" => Some((160, 160, 165)),
+        "slate" | "lousa" | "zinc" | "zinco" | "amianto" | "fibrocimento" | "metal" | "iron"
+        | "steel" | "a�o" => Some((160, 160, 165)),
         "wood" | "madeira" | "timber" => Some((135, 85, 55)),
         "asphalt" | "asfalto" | "tarmac" | "piche" | "pavimento" => Some((90, 90, 95)),
         "marble" | "marmore" => Some((240, 240, 240)),
@@ -469,7 +525,7 @@ fn exact_color_name_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
         "teal" => (0, 128, 128),
         "fuchsia" => (255, 0, 255),
         "maroon" => (128, 0, 0),
-        
+
         // ?? Adi��es Cr�ticas do Padr�o CSS (Arquitetura)
         "tan" => (210, 180, 140),
         "khaki" => (240, 230, 140),
@@ -487,12 +543,12 @@ fn exact_color_name_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
         "lightslategray" | "lightslategrey" => (119, 136, 153),
         "gainsboro" => (220, 220, 220),
         "whitesmoke" => (245, 245, 245),
-        
+
         _ => return None,
     })
 }
 
-/// BESM-6: Dist�ncia Euclidiana Quadrada. 
+/// BESM-6: Dist�ncia Euclidiana Quadrada.
 #[inline(always)]
 pub fn rgb_distance(from: &RGBTuple, to: &RGBTuple) -> u32 {
     let dr = from.0 as i32 - to.0 as i32;

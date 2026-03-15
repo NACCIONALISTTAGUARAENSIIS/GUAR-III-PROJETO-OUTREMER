@@ -4,14 +4,14 @@
 //! Opera sob o rigor matemático extremo de 1.15:1 para a escala vertical (Z),
 //! convertendo milimetragens de tubulações e cotas de subsolo em Voxels exatos.
 
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use serde_json::Value;
 
 pub struct IndoorUtilityProvider {
     pub file_path: PathBuf,
@@ -37,7 +37,12 @@ impl IndoorUtilityProvider {
 
     /// Processa uma única coordenada GeoJSON `[lon, lat]`
     #[inline(always)]
-    fn parse_coord(coord: &Value, bbox: &LLBBox, transformer: &CoordTransformer, is_completely_outside: &mut bool) -> Option<XZPoint> {
+    fn parse_coord(
+        coord: &Value,
+        bbox: &LLBBox,
+        transformer: &CoordTransformer,
+        is_completely_outside: &mut bool,
+    ) -> Option<XZPoint> {
         if let Some(arr) = coord.as_array() {
             if arr.len() >= 2 {
                 let lon = arr[0].as_f64()?;
@@ -65,15 +70,24 @@ impl DataProvider for IndoorUtilityProvider {
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] 🏢 Iniciando escaneamento de Plantas Baixas e Saneamento Subterrâneo: {}", self.file_path.display());
+        println!(
+            "[INFO] 🏢 Iniciando escaneamento de Plantas Baixas e Saneamento Subterrâneo: {}",
+            self.file_path.display()
+        );
 
-        let json_data = fs::read_to_string(&self.file_path)
-            .map_err(|e| format!("Falha ao ler o arquivo Indoor {}: {}", self.file_path.display(), e))?;
+        let json_data = fs::read_to_string(&self.file_path).map_err(|e| {
+            format!(
+                "Falha ao ler o arquivo Indoor {}: {}",
+                self.file_path.display(),
+                e
+            )
+        })?;
 
         let geojson: Value = serde_json::from_str(&json_data)
             .map_err(|e| format!("JSON malformado em {}: {}", self.file_path.display(), e))?;
 
-        let feature_array = geojson.get("features")
+        let feature_array = geojson
+            .get("features")
             .and_then(|f| f.as_array())
             .ok_or("Formato inválido: o arquivo não contém um array 'features'")?;
 
@@ -112,7 +126,9 @@ impl DataProvider for IndoorUtilityProvider {
                         _ => continue,
                     };
 
-                    if val_str.is_empty() { continue; }
+                    if val_str.is_empty() {
+                        continue;
+                    }
                     let col = key.to_lowercase();
 
                     match col.as_str() {
@@ -134,9 +150,16 @@ impl DataProvider for IndoorUtilityProvider {
 
                             // Mapeamento Dinâmico de Semântica do Submundo
                             let val_lower = val_str.to_lowercase();
-                            if val_lower.contains("sewer") || val_lower.contains("esgoto") || val_lower.contains("water") || val_lower.contains("agua") {
+                            if val_lower.contains("sewer")
+                                || val_lower.contains("esgoto")
+                                || val_lower.contains("water")
+                                || val_lower.contains("agua")
+                            {
                                 semantic_group = SemanticGroup::Sanitation;
-                            } else if val_lower.contains("power") || val_lower.contains("energia") || val_lower.contains("eletrico") {
+                            } else if val_lower.contains("power")
+                                || val_lower.contains("energia")
+                                || val_lower.contains("eletrico")
+                            {
                                 semantic_group = SemanticGroup::Power;
                             } else if val_lower.contains("telecom") || val_lower.contains("fibra") {
                                 semantic_group = SemanticGroup::Telecom;
@@ -162,22 +185,32 @@ impl DataProvider for IndoorUtilityProvider {
 
             let geometry = match geom_type {
                 "Point" => {
-                    if let Some(pt) = Self::parse_coord(coords, bbox, &transformer, &mut is_completely_outside) {
+                    if let Some(pt) =
+                        Self::parse_coord(coords, bbox, &transformer, &mut is_completely_outside)
+                    {
                         GeometryType::Point(pt)
-                    } else { continue; }
+                    } else {
+                        continue;
+                    }
                 }
                 "LineString" => {
                     // Essencial para o traçado de dutos e redes de esgoto
                     if let Some(arr) = coords.as_array() {
                         let mut line = Vec::with_capacity(arr.len());
                         for c in arr {
-                            if let Some(pt) = Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside) {
+                            if let Some(pt) =
+                                Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside)
+                            {
                                 line.push(pt);
                             }
                         }
-                        if line.len() < 2 { continue; }
+                        if line.len() < 2 {
+                            continue;
+                        }
                         GeometryType::LineString(line)
-                    } else { continue; }
+                    } else {
+                        continue;
+                    }
                 }
                 "Polygon" => {
                     // Essencial para salas, estações de tratamento (ETE) e lajes
@@ -185,7 +218,12 @@ impl DataProvider for IndoorUtilityProvider {
                         if let Some(exterior_ring) = rings.first().and_then(|r| r.as_array()) {
                             let mut outer = Vec::with_capacity(exterior_ring.len());
                             for c in exterior_ring {
-                                if let Some(pt) = Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside) {
+                                if let Some(pt) = Self::parse_coord(
+                                    c,
+                                    bbox,
+                                    &transformer,
+                                    &mut is_completely_outside,
+                                ) {
                                     outer.push(pt);
                                 }
                             }
@@ -194,10 +232,16 @@ impl DataProvider for IndoorUtilityProvider {
                                 let first = outer[0];
                                 outer.push(first);
                             }
-                            if outer.len() < 4 { continue; }
+                            if outer.len() < 4 {
+                                continue;
+                            }
                             GeometryType::Polygon(outer)
-                        } else { continue; }
-                    } else { continue; }
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
                 _ => continue, // Complexidades não-euclidianas são ignoradas no submundo
             };
@@ -221,7 +265,10 @@ impl DataProvider for IndoorUtilityProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ✅ CAESB Indoor Topology: {} dutos, galerias e salas extraídas perfeitamente.", features.len());
+        println!(
+            "[INFO] ✅ CAESB Indoor Topology: {} dutos, galerias e salas extraídas perfeitamente.",
+            features.len()
+        );
 
         Ok(features)
     }

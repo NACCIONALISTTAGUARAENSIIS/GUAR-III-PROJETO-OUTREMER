@@ -6,16 +6,7 @@
 //! Ele delega as consultas de altimetria em tempo constante O(1) diretamente
 //! para os provedores de DEM e DSM, que operam isoladamente na janela do Scanline.
 
-#[cfg(feature = "gui")]
-use crate::telemetry::{send_log, LogLevel};
-use crate::args::Args;
-use crate::{
-    coordinate_system::{cartesian::XZPoint, geographic::LLBBox},
-    progress::emit_gui_progress_update,
-};
-use crate::providers::dem_provider::DemProvider;
-use crate::providers::dsm_provider::DsmProvider;
-use colored::Colorize;
+use crate::coordinate_system::cartesian::XZPoint;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -69,7 +60,10 @@ impl Ground {
         // Se o provedor DEM não encontrou dados para esta coordenada exata
         // (por falta de pontos do LiDAR ou buraco no raster), assumimos o ground level global.
         // O algoritmo de Blur e Preenchimento O(1) do dem_provider deve cobrir >99% dos casos.
-        *self.bare_earth_cache.get(&(coord.x, coord.z)).unwrap_or(&self.ground_level)
+        *self
+            .bare_earth_cache
+            .get(&(coord.x, coord.z))
+            .unwrap_or(&self.ground_level)
     }
 
     /// Retorna a altura absoluta da Superfície (Telhados, copas de árvores, pontes).

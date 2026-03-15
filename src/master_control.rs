@@ -15,11 +15,11 @@ use crossterm::{
         LeaveAlternateScreen,
     },
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, RwLock};
 use std::thread;
 use std::time::Duration;
@@ -75,32 +75,50 @@ impl MacroRegion {
             MacroRegion {
                 name: "Distrito Federal (Completo)",
                 command: "-gerar df",
-                min_x: -60, max_x: 60, min_z: -60, max_z: 60,
+                min_x: -60,
+                max_x: 60,
+                min_z: -60,
+                max_z: 60,
             },
             MacroRegion {
                 name: "Plano Piloto",
                 command: "-gerar plano_piloto",
-                min_x: -10, max_x: 10, min_z: -8, max_z: 8,
+                min_x: -10,
+                max_x: 10,
+                min_z: -8,
+                max_z: 8,
             },
             MacroRegion {
                 name: "Guar�",
                 command: "-gerar guara",
-                min_x: -15, max_x: -5, min_z: 5, max_z: 12,
+                min_x: -15,
+                max_x: -5,
+                min_z: 5,
+                max_z: 12,
             },
             MacroRegion {
                 name: "Taguatinga",
                 command: "-gerar taguatinga",
-                min_x: -25, max_x: -15, min_z: 8, max_z: 18,
+                min_x: -25,
+                max_x: -15,
+                min_z: 8,
+                max_z: 18,
             },
             MacroRegion {
                 name: "�guas Claras",
                 command: "-gerar aguas_claras",
-                min_x: -20, max_x: -12, min_z: 10, max_z: 16,
+                min_x: -20,
+                max_x: -12,
+                min_z: 10,
+                max_z: 16,
             },
             MacroRegion {
                 name: "Lago Sul",
                 command: "-gerar lago_sul",
-                min_x: 2, max_x: 15, min_z: 0, max_z: 15,
+                min_x: 2,
+                max_x: 15,
+                min_z: 0,
+                max_z: 15,
             },
         ]
     }
@@ -126,7 +144,7 @@ impl SharedDashboardState {
             status_msg: "SISTEMA OPERANTE. AGUARDANDO DIRETRIZ.".to_string(),
         }
     }
-    
+
     pub fn push_log(&mut self, msg: String) {
         self.log_buffer.push(msg);
         if self.log_buffer.len() > 100 {
@@ -137,7 +155,7 @@ impl SharedDashboardState {
 
 pub struct MasterControl {
     state: Arc<RwLock<SharedDashboardState>>,
-    
+
     // A C�mera do HUD (Centro de Vis�o), manipulada localmente pela Thread da UI
     camera_x: i32,
     camera_z: i32,
@@ -160,7 +178,9 @@ impl MasterControl {
     /// L� a tabela de aloca��o bin�ria para reconstituir o mapa visual e a contagem
     /// de bytes instantaneamente, ignorando o sistema de arquivos da m�quina virtual.
     fn load_manifest_index(&mut self) {
-        if !Path::new(MANIFEST_PATH).exists() { return; }
+        if !Path::new(MANIFEST_PATH).exists() {
+            return;
+        }
 
         if let Ok(mut file) = File::open(MANIFEST_PATH) {
             let mut buffer = String::new();
@@ -185,10 +205,15 @@ impl MasterControl {
         }
     }
 
-    /// Atualiza o Manifesto no disco ap�s cada selagem. 
+    /// Atualiza o Manifesto no disco ap�s cada selagem.
     /// Leve, epis�dico e disparado silenciosamente.
     fn update_manifest_index(state: &SharedDashboardState) {
-        if let Ok(mut file) = OpenOptions::new().write(true).create(true).truncate(true).open(MANIFEST_PATH) {
+        if let Ok(mut file) = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(MANIFEST_PATH)
+        {
             writeln!(file, "TOTAL_BYTES:{}", state.accumulated_bytes_written).unwrap();
             for (&(x, z), &status) in &state.regions_map {
                 if status == RegionStatus::Sealed {
@@ -203,30 +228,52 @@ impl MasterControl {
     fn render_dashboard(&mut self) {
         let state = self.state.read().unwrap();
         let mut stdout = io::stdout();
-        
+
         queue!(stdout, MoveTo(0, 0), Clear(ClearType::All)).unwrap();
 
         let consumed_gb = state.accumulated_bytes_written as f64 / (1024.0 * 1024.0 * 1024.0);
         let max_gb = MAX_PROJECT_QUOTA_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
         let usage_percent = (consumed_gb / max_gb) * 100.0;
-        
+
         let bar_color = if usage_percent > 90.0 { "red" } else { "cyan" };
 
         // Cabe�alho
-        println!("{}", "=================================================================================".cyan().bold());
-        println!("{} - {}", "[BESM-6]".yellow().bold(), "MASTER CONTROL DASHBOARD (BRAS�LIA DF)".bright_white().bold());
-        
+        println!(
+            "{}",
+            "================================================================================="
+                .cyan()
+                .bold()
+        );
+        println!(
+            "{} - {}",
+            "[BESM-6]".yellow().bold(),
+            "MASTER CONTROL DASHBOARD (BRAS�LIA DF)"
+                .bright_white()
+                .bold()
+        );
+
         // Indicador de Cota Absoluta Baseado na Compress�o Real Zlib
-        let quota_str = format!("PROJECT QUOTA: {:.2} GB / {:.2} GB [{:.1}%]", consumed_gb, max_gb, usage_percent);
+        let quota_str = format!(
+            "PROJECT QUOTA: {:.2} GB / {:.2} GB [{:.1}%]",
+            consumed_gb, max_gb, usage_percent
+        );
         if usage_percent > 90.0 {
             println!("{}", quota_str.red().bold());
         } else {
             println!("{}", quota_str.color(bar_color).bold());
         }
-        
+
         println!("STATUS: {}", state.status_msg.magenta().bold());
-        println!("{}", "=================================================================================".cyan().bold());
-        println!("{} Use Setas/WASD para mover a c�mera. Ctrl+C para Abortar.", "CONTROLES:".white().bold());
+        println!(
+            "{}",
+            "================================================================================="
+                .cyan()
+                .bold()
+        );
+        println!(
+            "{} Use Setas/WASD para mover a c�mera. Ctrl+C para Abortar.",
+            "CONTROLES:".white().bold()
+        );
         println!();
 
         // Limites Locais da C�mera (Viewport Culling)
@@ -238,14 +285,22 @@ impl MasterControl {
         // Renderiza��o do Grid com Culling Perfeito (Impede o Wrap da Tela)
         print!("    ");
         for x in v_min_x..=v_max_x {
-            if x % 2 == 0 { print!("{:>3} ", x); } else { print!("    "); }
+            if x % 2 == 0 {
+                print!("{:>3} ", x);
+            } else {
+                print!("    ");
+            }
         }
         println!();
 
         for z in v_min_z..=v_max_z {
-            print!("{:>3} ", z); 
+            print!("{:>3} ", z);
             for x in v_min_x..=v_max_x {
-                let status = state.regions_map.get(&(x, z)).copied().unwrap_or(RegionStatus::Empty);
+                let status = state
+                    .regions_map
+                    .get(&(x, z))
+                    .copied()
+                    .unwrap_or(RegionStatus::Empty);
                 match status {
                     RegionStatus::Sealed => print!("{} ", "[��]".green()),
                     RegionStatus::Processing => print!("{} ", "[��]".yellow()),
@@ -257,28 +312,47 @@ impl MasterControl {
             println!();
         }
 
-        println!("\n{}: {} Selado | {} Varredura Atual | {} Halo Vizinho | {} Falha IO", 
-            "LEGENDA".white().bold(), "[��]".green(), "[��]".yellow(), "[��]".blue(), "[XX]".red().bold()
+        println!(
+            "\n{}: {} Selado | {} Varredura Atual | {} Halo Vizinho | {} Falha IO",
+            "LEGENDA".white().bold(),
+            "[��]".green(),
+            "[��]".yellow(),
+            "[��]".blue(),
+            "[XX]".red().bold()
         );
-        println!("{}", "=================================================================================".cyan().bold());
-        
+        println!(
+            "{}",
+            "================================================================================="
+                .cyan()
+                .bold()
+        );
+
         // Renderiza��o Isolada de Logs
         println!("{}", "SYSTEM LOGS:".green().bold());
         let log_start = state.log_buffer.len().saturating_sub(6);
         for msg in &state.log_buffer[log_start..] {
             println!("> {}", msg);
         }
-        println!("{}", "=================================================================================".cyan().bold());
-        
+        println!(
+            "{}",
+            "================================================================================="
+                .cyan()
+                .bold()
+        );
+
         if !state.is_generating {
             println!("{}", "DIRETRIZES T�TICAS DISPON�VEIS:".green().bold());
             for preset in MacroRegion::get_presets() {
                 println!("  {:<25} -> {}", preset.command.yellow(), preset.name);
             }
         }
-        
-        print!("\n{} {}_", "root@besm6:~#".green().bold(), self.current_typing);
-        
+
+        print!(
+            "\n{} {}_",
+            "root@besm6:~#".green().bold(),
+            self.current_typing
+        );
+
         stdout.flush().unwrap();
     }
 
@@ -292,27 +366,41 @@ impl MasterControl {
 
         // Canal para o usu�rio digitar coisas sem travar o loop de renderiza��o do motor
         let (input_tx, input_rx) = mpsc::channel::<UserInput>();
-        
+
         // Thread dedicada apenas a ler o teclado em Raw Mode (Garante Input T�til Perfeito)
-        thread::spawn(move || {
-            loop {
-                if event::poll(Duration::from_millis(16)).unwrap() {
-                    if let Event::Key(key_event) = event::read().unwrap() {
-                        if key_event.modifiers.contains(KeyModifiers::CONTROL) && key_event.code == KeyCode::Char('c') {
-                            input_tx.send(UserInput::Quit).unwrap();
-                            break;
+        thread::spawn(move || loop {
+            if event::poll(Duration::from_millis(16)).unwrap() {
+                if let Event::Key(key_event) = event::read().unwrap() {
+                    if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        && key_event.code == KeyCode::Char('c')
+                    {
+                        input_tx.send(UserInput::Quit).unwrap();
+                        break;
+                    }
+
+                    match key_event.code {
+                        KeyCode::Up | KeyCode::Char('w') => {
+                            input_tx.send(UserInput::MoveCamera(0, -1)).unwrap()
                         }
-                        
-                        match key_event.code {
-                            KeyCode::Up | KeyCode::Char('w') => input_tx.send(UserInput::MoveCamera(0, -1)).unwrap(),
-                            KeyCode::Down | KeyCode::Char('s') => input_tx.send(UserInput::MoveCamera(0, 1)).unwrap(),
-                            KeyCode::Left | KeyCode::Char('a') => input_tx.send(UserInput::MoveCamera(-1, 0)).unwrap(),
-                            KeyCode::Right | KeyCode::Char('d') => input_tx.send(UserInput::MoveCamera(1, 0)).unwrap(),
-                            KeyCode::Enter => input_tx.send(UserInput::Command("\n".to_string())).unwrap(),
-                            KeyCode::Backspace => input_tx.send(UserInput::Command("BACKSPACE".to_string())).unwrap(),
-                            KeyCode::Char(c) => input_tx.send(UserInput::Command(c.to_string())).unwrap(),
-                            _ => {}
+                        KeyCode::Down | KeyCode::Char('s') => {
+                            input_tx.send(UserInput::MoveCamera(0, 1)).unwrap()
                         }
+                        KeyCode::Left | KeyCode::Char('a') => {
+                            input_tx.send(UserInput::MoveCamera(-1, 0)).unwrap()
+                        }
+                        KeyCode::Right | KeyCode::Char('d') => {
+                            input_tx.send(UserInput::MoveCamera(1, 0)).unwrap()
+                        }
+                        KeyCode::Enter => {
+                            input_tx.send(UserInput::Command("\n".to_string())).unwrap()
+                        }
+                        KeyCode::Backspace => input_tx
+                            .send(UserInput::Command("BACKSPACE".to_string()))
+                            .unwrap(),
+                        KeyCode::Char(c) => {
+                            input_tx.send(UserInput::Command(c.to_string())).unwrap()
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -325,7 +413,10 @@ impl MasterControl {
             while let Ok(user_input) = input_rx.try_recv() {
                 match user_input {
                     UserInput::Quit => {
-                        self.state.write().unwrap().push_log("Encerrando conex�o terminal...".red().to_string());
+                        self.state
+                            .write()
+                            .unwrap()
+                            .push_log("Encerrando conex�o terminal...".red().to_string());
                         running = false;
                     }
                     UserInput::MoveCamera(dx, dz) => {
@@ -378,7 +469,11 @@ impl MasterControl {
         if let Some(region) = target_region {
             self.dispatch_generation(region);
         } else if !command.is_empty() {
-            self.state.write().unwrap().push_log(format!("{} DIRETRIZ DESCONHECIDA: {}", "[ERRO]".red(), command));
+            self.state.write().unwrap().push_log(format!(
+                "{} DIRETRIZ DESCONHECIDA: {}",
+                "[ERRO]".red(),
+                command
+            ));
         }
     }
 
@@ -388,7 +483,8 @@ impl MasterControl {
         {
             let mut w_state = self.state.write().unwrap();
             w_state.is_generating = true;
-            w_state.status_msg = format!("INICIANDO IGNI��O DO SETOR: {}", region.name.to_uppercase());
+            w_state.status_msg =
+                format!("INICIANDO IGNI��O DO SETOR: {}", region.name.to_uppercase());
         }
 
         let shared_state = Arc::clone(&self.state);
@@ -403,14 +499,20 @@ impl MasterControl {
 
         // ?? A THREAD DO MOTOR (Roda solta nas costas, sem bloquear o renderizador)
         thread::spawn(move || {
-            shared_state.write().unwrap().push_log(format!("Ativando Scanline Out-of-Core para {}", region_name));
+            shared_state.write().unwrap().push_log(format!(
+                "Ativando Scanline Out-of-Core para {}",
+                region_name
+            ));
 
             for z in min_z..=max_z {
                 for x in min_x..=max_x {
                     // Prote��o L�gica da Cota de Armazenamento
                     let current_bytes = shared_state.read().unwrap().accumulated_bytes_written;
                     if current_bytes >= MAX_PROJECT_QUOTA_BYTES {
-                        shared_state.write().unwrap().push_log(format!("{} LIMITE L�GICO DE 180 GB ATINGIDO. BLOQUEIO INJETADO.", "[HALT]".red().bold()));
+                        shared_state.write().unwrap().push_log(format!(
+                            "{} LIMITE L�GICO DE 180 GB ATINGIDO. BLOQUEIO INJETADO.",
+                            "[HALT]".red().bold()
+                        ));
                         abort_flag_worker.store(true, Ordering::SeqCst);
                         return;
                     }
@@ -423,31 +525,45 @@ impl MasterControl {
                     {
                         let mut state = shared_state.write().unwrap();
                         state.regions_map.insert((x, z), RegionStatus::Processing);
-                        
+
                         // Halo Cache real se espalha para os vizinhos adjacentes na esteira
-                        if x + 1 <= max_x { state.regions_map.insert((x + 1, z), RegionStatus::Cached); }
-                        if z + 1 <= max_z { state.regions_map.insert((x, z + 1), RegionStatus::Cached); }
-                        if x + 1 <= max_x && z + 1 <= max_z { state.regions_map.insert((x + 1, z + 1), RegionStatus::Cached); }
-                        
-                        state.status_msg = format!("VARREDURA EM ANDAMENTO: {} (r.{}.{})", region_name, x, z);
+                        if x + 1 <= max_x {
+                            state.regions_map.insert((x + 1, z), RegionStatus::Cached);
+                        }
+                        if z + 1 <= max_z {
+                            state.regions_map.insert((x, z + 1), RegionStatus::Cached);
+                        }
+                        if x + 1 <= max_x && z + 1 <= max_z {
+                            state
+                                .regions_map
+                                .insert((x + 1, z + 1), RegionStatus::Cached);
+                        }
+
+                        state.status_msg =
+                            format!("VARREDURA EM ANDAMENTO: {} (r.{}.{})", region_name, x, z);
                     }
 
                     // ============================================
                     // INTEGRA��O: O CALCULO REAL OCORRER� AQUI
                     // ============================================
-                    thread::sleep(std::time::Duration::from_millis(50)); 
-                    
+                    thread::sleep(std::time::Duration::from_millis(50));
+
                     // 2. Extra��o F�sica P�s-Compress�o Zlib (C�lculo Emp�rico de Corrup��o)
                     // Simula��o da chamada: let region_path = format!("world/region/r.{}.{}.mca", x, z);
                     // let real_file_size = std::fs::metadata(&region_path).map(|m| m.len()).unwrap_or(0);
-                    let real_file_size_bytes: u64 = 14_750_000; 
+                    let real_file_size_bytes: u64 = 14_750_000;
 
                     // 3. Sinaliza: Selagem Completa, Atualiza��o At�mica de Bytes e Indexa��o Segura
                     {
                         let mut state = shared_state.write().unwrap();
                         if real_file_size_bytes == 0 {
                             state.regions_map.insert((x, z), RegionStatus::Corrupted);
-                            state.push_log(format!("{} FALHA DE GRAVA��O ZLIB NO QUADRANTE r.{}.{}", "[CORRUP��O]".red().bold(), x, z));
+                            state.push_log(format!(
+                                "{} FALHA DE GRAVA��O ZLIB NO QUADRANTE r.{}.{}",
+                                "[CORRUP��O]".red().bold(),
+                                x,
+                                z
+                            ));
                         } else {
                             state.regions_map.insert((x, z), RegionStatus::Sealed);
                             state.accumulated_bytes_written += real_file_size_bytes;
@@ -459,7 +575,10 @@ impl MasterControl {
 
             // Gera��o Finalizada
             let mut state = shared_state.write().unwrap();
-            state.push_log(format!("{} MAPA MATERIALIZADO COM SUCESSO NO DISCO.", region_name.to_uppercase().green()));
+            state.push_log(format!(
+                "{} MAPA MATERIALIZADO COM SUCESSO NO DISCO.",
+                region_name.to_uppercase().green()
+            ));
             state.is_generating = false;
             state.status_msg = "SISTEMA OPERANTE. AGUARDANDO DIRETRIZ.".to_string();
         });

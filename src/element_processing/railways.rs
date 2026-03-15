@@ -1,7 +1,7 @@
 use crate::block_definitions::*;
+use crate::coordinate_system::cartesian::XZPoint;
 use crate::osm_parser::ProcessedWay;
 use crate::world_editor::WorldEditor;
-use crate::coordinate_system::cartesian::XZPoint;
 
 // ============================================================================
 // ?? BESM-6 TWEAKS: ENGENHARIA METROVIARIA E FERROVI�RIA PARAM�TRICA (NATM)
@@ -32,7 +32,7 @@ fn compute_clothoid_transition(nodes: &[XZPoint], segments_per_curve: usize) -> 
         let v1_x = p1.x as f64 - p0.x as f64;
         let v1_z = p1.z as f64 - p0.z as f64;
         let len1 = (v1_x * v1_x + v1_z * v1_z).sqrt();
-        
+
         let v2_x = p2.x as f64 - p1.x as f64;
         let v2_z = p2.z as f64 - p1.z as f64;
         let len2 = (v2_x * v2_x + v2_z * v2_z).sqrt();
@@ -88,7 +88,7 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
             "razed",
             "turntable",
         ]
-            .contains(&railway_type.as_str())
+        .contains(&railway_type.as_str())
         {
             return;
         }
@@ -98,21 +98,49 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
         // Se for uma Esta��o Monumental (Guar�, �guas Claras), cancela a via gen�rica.
         // =================================================================
         let base_ground_y = editor.get_ground_level(element.nodes[0].x, element.nodes[0].z);
-        if crate::element_processing::landmarks::generate_unique_landmark(editor, element, base_ground_y) {
+        if crate::element_processing::landmarks::generate_unique_landmark(
+            editor,
+            element,
+            base_ground_y,
+        ) {
             return;
         }
         // =================================================================
 
         // --- DETEC��O DE OPERA��O (METR�-DF VS CARGA VS P�TIOS) ---
-        let is_metro = element.tags.get("operator").map(|s: &String| s.contains("Metr�") || s.contains("METRO")).unwrap_or(false)
-            || element.tags.get("name").map(|s: &String| s.contains("Metr�") || s.contains("Metro")).unwrap_or(false)
-            || element.tags.get("usage").map(|s| s == "subway" || s == "urban").unwrap_or(false)
-            || element.tags.get("service").map(|s| s == "metro").unwrap_or(false);
+        let is_metro = element
+            .tags
+            .get("operator")
+            .map(|s: &String| s.contains("Metr�") || s.contains("METRO"))
+            .unwrap_or(false)
+            || element
+                .tags
+                .get("name")
+                .map(|s: &String| s.contains("Metr�") || s.contains("Metro"))
+                .unwrap_or(false)
+            || element
+                .tags
+                .get("usage")
+                .map(|s| s == "subway" || s == "urban")
+                .unwrap_or(false)
+            || element
+                .tags
+                .get("service")
+                .map(|s| s == "metro")
+                .unwrap_or(false);
 
-        let is_yard = element.tags.get("service").map(|s| s == "yard" || s == "siding" || s == "spur").unwrap_or(false);
+        let is_yard = element
+            .tags
+            .get("service")
+            .map(|s| s == "yard" || s == "siding" || s == "spur")
+            .unwrap_or(false);
 
         // --- DETEC��O DE T�NEIS E SUBWAY (RIGOR SUBTERR�NEO) ---
-        let layer_str = element.tags.get("layer").map(|s: &String| s.as_str()).unwrap_or("0");
+        let layer_str = element
+            .tags
+            .get("layer")
+            .map(|s: &String| s.as_str())
+            .unwrap_or("0");
         let layer: i32 = layer_str.parse().unwrap_or(0);
 
         let is_tunnel = element.tags.get("tunnel").map(|s: &String| s.as_str()) == Some("yes")
@@ -121,24 +149,42 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
             || layer < 0;
 
         // Offset de profundidade baseado na camada (-1 = 15 blocos abaixo da terra. NATM Metro-DF Asa Sul)
-        let depth_offset = if layer < 0 { layer * 15 } else if is_tunnel { -15 } else { 0 };
+        let depth_offset = if layer < 0 {
+            layer * 15
+        } else if is_tunnel {
+            -15
+        } else {
+            0
+        };
 
-        let tracks_str = element.tags.get("tracks").map(|s: &String| s.as_str()).unwrap_or(if is_metro && !is_yard { "2" } else { "1" });
+        let tracks_str = element
+            .tags
+            .get("tracks")
+            .map(|s: &String| s.as_str())
+            .unwrap_or(if is_metro && !is_yard { "2" } else { "1" });
         let is_double_track = tracks_str == "2" || tracks_str == "3"; // Trata >=2 como via dupla para o escopo do jogo
 
         // ?? BESM-6: Extrai pontos brutos e os suaviza via Curva Clotoide
-        let raw_points: Vec<XZPoint> = element.nodes.iter().map(|n| XZPoint::new(n.x, n.z)).collect();
+        let raw_points: Vec<XZPoint> = element
+            .nodes
+            .iter()
+            .map(|n| XZPoint::new(n.x, n.z))
+            .collect();
         let smoothed_points = compute_clothoid_transition(&raw_points, 6);
-        
-        if smoothed_points.is_empty() { return; }
+
+        if smoothed_points.is_empty() {
+            return;
+        }
 
         let total_points = (smoothed_points.len() as f64 - 1.0).max(1.0);
         let start_node = smoothed_points.first().unwrap();
         let end_node = smoothed_points.last().unwrap();
-        
+
         // Eleva��o ancorada no DEM Provider Global
-        let base_start_y = editor.get_ground_level(start_node.0, start_node.1) as f64 + depth_offset as f64;
-        let base_end_y = editor.get_ground_level(end_node.0, end_node.1) as f64 + depth_offset as f64;
+        let base_start_y =
+            editor.get_ground_level(start_node.0, start_node.1) as f64 + depth_offset as f64;
+        let base_end_y =
+            editor.get_ground_level(end_node.0, end_node.1) as f64 + depth_offset as f64;
 
         for j in 0..smoothed_points.len() {
             let (bx, bz) = smoothed_points[j];
@@ -156,8 +202,16 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
             };
 
             // C�lculo do Vetor Normal (Perpendicular � via) para largura param�trica
-            let prev = if j > 0 { Some(smoothed_points[j - 1]) } else { None };
-            let next = if j < smoothed_points.len() - 1 { Some(smoothed_points[j + 1]) } else { None };
+            let prev = if j > 0 {
+                Some(smoothed_points[j - 1])
+            } else {
+                None
+            };
+            let next = if j < smoothed_points.len() - 1 {
+                Some(smoothed_points[j + 1])
+            } else {
+                None
+            };
 
             let (dx, dz) = match (prev, next) {
                 (Some((px, pz)), Some((nx, nz))) => (nx - px, nz - pz),
@@ -171,16 +225,24 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
 
             // Normal bruta (90 graus)
             if dx.abs() > dz.abs() {
-                norm_x = 0; norm_z = 1;
+                norm_x = 0;
+                norm_z = 1;
             } else {
-                norm_x = 1; norm_z = 0;
+                norm_x = 1;
+                norm_z = 0;
             }
 
             let is_curve = prev.is_some() && next.is_some() && (dx.abs() > 0 && dz.abs() > 0);
 
-            // C�lculo do Perfil Transversal Param�trico 
+            // C�lculo do Perfil Transversal Param�trico
             // 1.6m de bitola real + gabarito de seguran�a do Metr�-DF
-            let radius = if is_double_track { 6 } else if is_yard { 3 } else { 4 };
+            let radius = if is_double_track {
+                6
+            } else if is_yard {
+                3
+            } else {
+                4
+            };
             let tunnel_radius = radius + 2; // O anel de concreto armado da galeria NATM
 
             // --- INFRAESTRUTURA DA VIA (Leito e Galeria) ---
@@ -204,17 +266,45 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                         if is_wall {
                             // Escudo do T�nel (Anel el�ptico de concreto)
                             for ty in -1i32..=7i32 {
-                                editor.set_block_absolute(SMOOTH_STONE, build_x, final_y + ty, build_z, None, None);
+                                editor.set_block_absolute(
+                                    SMOOTH_STONE,
+                                    build_x,
+                                    final_y + ty,
+                                    build_z,
+                                    None,
+                                    None,
+                                );
                             }
                         } else {
                             // Laje do piso (Slab track base)
-                            editor.set_block_absolute(SMOOTH_STONE, build_x, final_y - 1, build_z, None, None);
+                            editor.set_block_absolute(
+                                SMOOTH_STONE,
+                                build_x,
+                                final_y - 1,
+                                build_z,
+                                None,
+                                None,
+                            );
                             // Teto da galeria
-                            editor.set_block_absolute(SMOOTH_STONE, build_x, final_y + 8, build_z, None, None);
+                            editor.set_block_absolute(
+                                SMOOTH_STONE,
+                                build_x,
+                                final_y + 8,
+                                build_z,
+                                None,
+                                None,
+                            );
 
                             // Oco do T�nel (Extirpa terra/pedra e coloca Ar)
                             for ty in 0i32..=7i32 {
-                                editor.set_block_absolute(AIR, build_x, final_y + ty, build_z, None, None);
+                                editor.set_block_absolute(
+                                    AIR,
+                                    build_x,
+                                    final_y + ty,
+                                    build_z,
+                                    None,
+                                    None,
+                                );
                             }
                         }
                     }
@@ -222,34 +312,70 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                     // --- LEITO DE VIA E PASSARELAS DE EMERG�NCIA ---
                     if dist_sq <= radius * radius {
                         let is_edge = dist_sq >= (radius - 1) * (radius - 1);
-                        let banking_y = if is_curve && is_edge { final_y + 1 } else { final_y };
+                        let banking_y = if is_curve && is_edge {
+                            final_y + 1
+                        } else {
+                            final_y
+                        };
                         let dist_from_center_normal = (wx * norm_x + wz * norm_z).abs();
 
                         if is_metro {
                             // Slab Track (Concreto liso) para Metr� em t�nel, Brita pesada na superf�cie
                             let base_track_block = if is_tunnel { SMOOTH_STONE } else { GRAVEL };
-                            editor.set_block_absolute(base_track_block, build_x, final_y, build_z, None, None);
+                            editor.set_block_absolute(
+                                base_track_block,
+                                build_x,
+                                final_y,
+                                build_z,
+                                None,
+                                None,
+                            );
 
                             // Passarela T�cnica Central Iluminada do Metr�-DF
                             if is_double_track && dist_from_center_normal <= 1 {
-                                editor.set_block_absolute(POLISHED_ANDESITE, build_x, final_y, build_z, None, None);
+                                editor.set_block_absolute(
+                                    POLISHED_ANDESITE,
+                                    build_x,
+                                    final_y,
+                                    build_z,
+                                    None,
+                                    None,
+                                );
                                 if j % 15 == 0 {
                                     // Ilumina��o central em t�neis
-                                    editor.set_block_absolute(GLOWSTONE, build_x, final_y, build_z, None, None);
+                                    editor.set_block_absolute(
+                                        GLOWSTONE, build_x, final_y, build_z, None, None,
+                                    );
                                 }
                             }
 
                             // Passarelas de Fuga (Laterais elevadas)
                             if is_edge && !is_yard {
-                                editor.set_block_absolute(POLISHED_ANDESITE, build_x, banking_y, build_z, None, None);
+                                editor.set_block_absolute(
+                                    POLISHED_ANDESITE,
+                                    build_x,
+                                    banking_y,
+                                    build_z,
+                                    None,
+                                    None,
+                                );
                             }
                         } else {
                             // Ferrovia Comum (RFFSA / FCA)
                             let is_stone = (build_x + build_z) % 2 == 0;
                             if is_stone && is_edge {
-                                editor.set_block_absolute(COBBLESTONE, build_x, banking_y, build_z, None, None);
+                                editor.set_block_absolute(
+                                    COBBLESTONE,
+                                    build_x,
+                                    banking_y,
+                                    build_z,
+                                    None,
+                                    None,
+                                );
                             } else {
-                                editor.set_block_absolute(GRAVEL, build_x, banking_y, build_z, None, None);
+                                editor.set_block_absolute(
+                                    GRAVEL, build_x, banking_y, build_z, None, None,
+                                );
                             }
                         }
                     }
@@ -275,8 +401,22 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
 
                 if is_metro && !is_yard {
                     // Terceiro Trilho Energizado (Alojado no lado externo de cada via)
-                    editor.set_block_absolute(SMOOTH_STONE_SLAB, rail_1_x + norm_x, final_y + 1, rail_1_z + norm_z, None, None);
-                    editor.set_block_absolute(SMOOTH_STONE_SLAB, rail_2_x - norm_x, final_y + 1, rail_2_z - norm_z, None, None);
+                    editor.set_block_absolute(
+                        SMOOTH_STONE_SLAB,
+                        rail_1_x + norm_x,
+                        final_y + 1,
+                        rail_1_z + norm_z,
+                        None,
+                        None,
+                    );
+                    editor.set_block_absolute(
+                        SMOOTH_STONE_SLAB,
+                        rail_2_x - norm_x,
+                        final_y + 1,
+                        rail_2_z - norm_z,
+                        None,
+                        None,
+                    );
                 }
             } else {
                 editor.set_block_absolute(rail_block, bx, final_y + 1, bz, None, None);
@@ -284,13 +424,24 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                 if is_metro && !is_yard {
                     let third_rail_x = bx + (2 * norm_x);
                     let third_rail_z = bz + (2 * norm_z);
-                    editor.set_block_absolute(SMOOTH_STONE_SLAB, third_rail_x, final_y + 1, third_rail_z, None, None);
+                    editor.set_block_absolute(
+                        SMOOTH_STONE_SLAB,
+                        third_rail_x,
+                        final_y + 1,
+                        third_rail_z,
+                        None,
+                        None,
+                    );
                 }
             }
 
             // Dormentes transversais de amarra��o (Frequ�ncia real)
             if j % 2 == 0 {
-                let dormente_block = if is_metro { STONE_BRICKS } else { DARK_OAK_SLAB };
+                let dormente_block = if is_metro {
+                    STONE_BRICKS
+                } else {
+                    DARK_OAK_SLAB
+                };
                 editor.set_block_absolute(dormente_block, bx, final_y, bz, None, None);
             }
         }
@@ -360,10 +511,16 @@ pub fn generate_roller_coaster(editor: &mut WorldEditor, element: &ProcessedWay)
             let elevation_height = 4;
             let pillar_interval = 6;
 
-            let raw_points: Vec<XZPoint> = element.nodes.iter().map(|n| XZPoint::new(n.x, n.z)).collect();
+            let raw_points: Vec<XZPoint> = element
+                .nodes
+                .iter()
+                .map(|n| XZPoint::new(n.x, n.z))
+                .collect();
             let smoothed_points = compute_clothoid_transition(&raw_points, 4);
 
-            if smoothed_points.is_empty() { return; }
+            if smoothed_points.is_empty() {
+                return;
+            }
 
             let start_node = smoothed_points[0];
             let start_y = editor.get_ground_level(start_node.0, start_node.1);
@@ -376,14 +533,18 @@ pub fn generate_roller_coaster(editor: &mut WorldEditor, element: &ProcessedWay)
 
                 editor.set_block_absolute(IRON_BLOCK, bx, final_y, bz, None, None);
 
-                let prev = if j > 0 { Some(smoothed_points[j - 1]) } else { None };
-                let next = if j < smoothed_points.len() - 1 { Some(smoothed_points[j + 1]) } else { None };
+                let prev = if j > 0 {
+                    Some(smoothed_points[j - 1])
+                } else {
+                    None
+                };
+                let next = if j < smoothed_points.len() - 1 {
+                    Some(smoothed_points[j + 1])
+                } else {
+                    None
+                };
 
-                let rail_block = determine_rail_direction(
-                    (bx, bz),
-                    prev,
-                    next,
-                );
+                let rail_block = determine_rail_direction((bx, bz), prev, next);
 
                 editor.set_block_absolute(rail_block, bx, final_y + 1, bz, None, None);
 

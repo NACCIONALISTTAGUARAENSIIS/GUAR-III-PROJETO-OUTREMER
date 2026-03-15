@@ -109,9 +109,15 @@ pub fn generate_amenities(
                     editor.set_block(IRON_BLOCK, pt.x, ground_y + 2, pt.z, None, None); // Tela
 
                     // TWEAK RP: Adiciona botões nas laterais vazias para interação no jogo
-                    let dirs = [(1,0), (-1,0), (0,1), (0,-1)];
+                    let dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)];
                     for (dx, dz) in dirs {
-                        if editor.check_for_block_absolute(pt.x + dx, ground_y + 2, pt.z + dz, Some(&[AIR]), None) {
+                        if editor.check_for_block_absolute(
+                            pt.x + dx,
+                            ground_y + 2,
+                            pt.z + dz,
+                            Some(&[AIR]),
+                            None,
+                        ) {
                             // Apenas garante que a área esteja limpa, o botão é um item opcional ou mod-dependent.
                             break;
                         }
@@ -164,12 +170,40 @@ pub fn generate_amenities(
                     let mut rng = element_rng(element.id());
                     if rng.random_bool(0.5) {
                         editor.set_block(SMOOTH_STONE_SLAB, pt.x, ground_y + 1, pt.z, None, None);
-                        editor.set_block(SMOOTH_STONE_SLAB, pt.x + 1, ground_y + 1, pt.z, None, None);
-                        editor.set_block(SMOOTH_STONE_SLAB, pt.x - 1, ground_y + 1, pt.z, None, None);
+                        editor.set_block(
+                            SMOOTH_STONE_SLAB,
+                            pt.x + 1,
+                            ground_y + 1,
+                            pt.z,
+                            None,
+                            None,
+                        );
+                        editor.set_block(
+                            SMOOTH_STONE_SLAB,
+                            pt.x - 1,
+                            ground_y + 1,
+                            pt.z,
+                            None,
+                            None,
+                        );
                     } else {
                         editor.set_block(SMOOTH_STONE_SLAB, pt.x, ground_y + 1, pt.z, None, None);
-                        editor.set_block(SMOOTH_STONE_SLAB, pt.x, ground_y + 1, pt.z + 1, None, None);
-                        editor.set_block(SMOOTH_STONE_SLAB, pt.x, ground_y + 1, pt.z - 1, None, None);
+                        editor.set_block(
+                            SMOOTH_STONE_SLAB,
+                            pt.x,
+                            ground_y + 1,
+                            pt.z + 1,
+                            None,
+                            None,
+                        );
+                        editor.set_block(
+                            SMOOTH_STONE_SLAB,
+                            pt.x,
+                            ground_y + 1,
+                            pt.z - 1,
+                            None,
+                            None,
+                        );
                     }
                 }
             }
@@ -227,7 +261,14 @@ pub fn generate_amenities(
                             bresenham_line(prev.x, 0, prev.z, pt.x, 0, pt.z);
                         for (bx, _, bz) in bresenham_points {
                             let ground_y = editor.get_ground_level(bx, bz);
-                            editor.set_block(block_type, bx, ground_y, bz, Some(&[BLACK_CONCRETE]), None);
+                            editor.set_block(
+                                block_type,
+                                bx,
+                                ground_y,
+                                bz,
+                                Some(&[BLACK_CONCRETE]),
+                                None,
+                            );
 
                             if amenity_type == "fountain" {
                                 for dx in [-1, 0, 1].iter() {
@@ -322,7 +363,14 @@ pub fn generate_amenities(
                             if local_x == 0 && local_z == 0 && zone_x % 4 == 0 && zone_z % 2 == 0 {
                                 editor.set_block(POLISHED_ANDESITE, x, ground_y + 1, z, None, None);
                                 for dy in 2i32..=7i32 {
-                                    editor.set_block(ANDESITE_WALL, x, ground_y + dy, z, None, None);
+                                    editor.set_block(
+                                        ANDESITE_WALL,
+                                        x,
+                                        ground_y + dy,
+                                        z,
+                                        None,
+                                        None,
+                                    );
                                 }
                                 editor.set_block(SEA_LANTERN, x, ground_y + 8, z, None, None);
                                 editor.set_block(DAYLIGHT_DETECTOR, x, ground_y + 9, z, None, None);

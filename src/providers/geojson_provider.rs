@@ -1,11 +1,11 @@
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: Motor ECEF Oficial
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use serde_json::Value;
 
 /// Provedor de Dados Governamentais via GeoJSON.
 /// Lê arquivos locais .geojson, aplica o Rosetta Stone para traduzir atributos do GDF para OSM,
@@ -18,7 +18,12 @@ pub struct GeoJsonProvider {
 }
 
 impl GeoJsonProvider {
-    pub fn new(file_path: PathBuf, scale_h: f64, priority: u8, semantic_override: Option<SemanticGroup>) -> Self {
+    pub fn new(
+        file_path: PathBuf,
+        scale_h: f64,
+        priority: u8,
+        semantic_override: Option<SemanticGroup>,
+    ) -> Self {
         Self {
             file_path,
             scale_h,
@@ -60,11 +65,15 @@ impl GeoJsonProvider {
                     }
                     "USO" | "USO_SOLO" | "DESTINACAO" | "LANDUSE" | "TIPO" => {
                         let uso = val_str.to_lowercase();
-                        let mapped_uso = if uso.contains("comercial") || uso.contains("commercial") {
+                        let mapped_uso = if uso.contains("comercial") || uso.contains("commercial")
+                        {
                             "commercial"
                         } else if uso.contains("residencial") || uso.contains("residential") {
                             "residential"
-                        } else if uso.contains("institucional") || uso.contains("equipamento") || uso.contains("civic") {
+                        } else if uso.contains("institucional")
+                            || uso.contains("equipamento")
+                            || uso.contains("civic")
+                        {
                             "civic"
                         } else if uso.contains("industrial") {
                             "industrial"
@@ -77,7 +86,8 @@ impl GeoJsonProvider {
                         tags.insert("name".to_string(), val_str.clone());
                     }
                     "TIPO_VIA" | "CLASSE_VIA" | "HIGHWAY" => {
-                        tags.insert("highway".to_string(), "residential".to_string()); // Fallback
+                        tags.insert("highway".to_string(), "residential".to_string());
+                        // Fallback
                     }
                     "NATURAL" | "VEGETACAO" | "ARVORE" => {
                         tags.insert("natural".to_string(), val_str.to_lowercase());
@@ -91,7 +101,10 @@ impl GeoJsonProvider {
         }
 
         // Fallback: Se não identificou nada, assume prédio (útil para footprints brutos da Codeplan)
-        if !tags.contains_key("building") && !tags.contains_key("highway") && !tags.contains_key("natural") {
+        if !tags.contains_key("building")
+            && !tags.contains_key("highway")
+            && !tags.contains_key("natural")
+        {
             tags.insert("building".to_string(), "yes".to_string());
         }
 
@@ -101,7 +114,12 @@ impl GeoJsonProvider {
 
     /// Processa uma única coordenada GeoJSON `[lon, lat]`
     #[inline(always)]
-    fn parse_coord(coord: &Value, bbox: &LLBBox, transformer: &CoordTransformer, is_completely_outside: &mut bool) -> Option<XZPoint> {
+    fn parse_coord(
+        coord: &Value,
+        bbox: &LLBBox,
+        transformer: &CoordTransformer,
+        is_completely_outside: &mut bool,
+    ) -> Option<XZPoint> {
         if let Some(arr) = coord.as_array() {
             if arr.len() >= 2 {
                 let lon = arr[0].as_f64()?;
@@ -120,21 +138,32 @@ impl GeoJsonProvider {
 }
 
 impl DataProvider for GeoJsonProvider {
-    fn priority(&self) -> u8 { self.priority }
+    fn priority(&self) -> u8 {
+        self.priority
+    }
     fn name(&self) -> &str {
         "GDF GeoJSON (Geoportal / OpenData)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] 🌐 Carregando e parseando GeoJSON na RAM: {}", self.file_path.display());
+        println!(
+            "[INFO] 🌐 Carregando e parseando GeoJSON na RAM: {}",
+            self.file_path.display()
+        );
 
-        let json_data = fs::read_to_string(&self.file_path)
-            .map_err(|e| format!("Falha ao ler o arquivo GeoJSON {}: {}", self.file_path.display(), e))?;
+        let json_data = fs::read_to_string(&self.file_path).map_err(|e| {
+            format!(
+                "Falha ao ler o arquivo GeoJSON {}: {}",
+                self.file_path.display(),
+                e
+            )
+        })?;
 
         let geojson: Value = serde_json::from_str(&json_data)
             .map_err(|e| format!("JSON malformado em {}: {}", self.file_path.display(), e))?;
 
-        let feature_array = geojson.get("features")
+        let feature_array = geojson
+            .get("features")
             .and_then(|f| f.as_array())
             .ok_or("GeoJSON inválido: objeto principal não contém array 'features'")?;
 
@@ -164,31 +193,46 @@ impl DataProvider for GeoJsonProvider {
             let tags = Self::translate_attributes(properties);
 
             let semantic_group = self.semantic_override.unwrap_or_else(|| {
-                if tags.contains_key("building") { SemanticGroup::Building }
-                else if tags.contains_key("highway") { SemanticGroup::Highway }
-                else if tags.contains_key("natural") { SemanticGroup::Natural }
-                else { SemanticGroup::Other }
+                if tags.contains_key("building") {
+                    SemanticGroup::Building
+                } else if tags.contains_key("highway") {
+                    SemanticGroup::Highway
+                } else if tags.contains_key("natural") {
+                    SemanticGroup::Natural
+                } else {
+                    SemanticGroup::Other
+                }
             });
 
             let mut is_completely_outside = true;
 
             let geometry = match geom_type {
                 "Point" => {
-                    if let Some(pt) = Self::parse_coord(coords, bbox, &transformer, &mut is_completely_outside) {
+                    if let Some(pt) =
+                        Self::parse_coord(coords, bbox, &transformer, &mut is_completely_outside)
+                    {
                         GeometryType::Point(pt)
-                    } else { continue; }
+                    } else {
+                        continue;
+                    }
                 }
                 "LineString" => {
                     if let Some(arr) = coords.as_array() {
                         let mut line = Vec::with_capacity(arr.len());
                         for c in arr {
-                            if let Some(pt) = Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside) {
+                            if let Some(pt) =
+                                Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside)
+                            {
                                 line.push(pt);
                             }
                         }
-                        if line.len() < 2 { continue; }
+                        if line.len() < 2 {
+                            continue;
+                        }
                         GeometryType::LineString(line)
-                    } else { continue; }
+                    } else {
+                        continue;
+                    }
                 }
                 "Polygon" => {
                     // GeoJSON Polygon is an array of LinearRings. The first is the exterior ring.
@@ -196,7 +240,12 @@ impl DataProvider for GeoJsonProvider {
                         if let Some(exterior_ring) = rings.first().and_then(|r| r.as_array()) {
                             let mut outer = Vec::with_capacity(exterior_ring.len());
                             for c in exterior_ring {
-                                if let Some(pt) = Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside) {
+                                if let Some(pt) = Self::parse_coord(
+                                    c,
+                                    bbox,
+                                    &transformer,
+                                    &mut is_completely_outside,
+                                ) {
                                     outer.push(pt);
                                 }
                             }
@@ -207,19 +256,32 @@ impl DataProvider for GeoJsonProvider {
                                 outer.push(first);
                             }
 
-                            if outer.len() < 4 { continue; }
+                            if outer.len() < 4 {
+                                continue;
+                            }
                             GeometryType::Polygon(outer)
-                        } else { continue; }
-                    } else { continue; }
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
                 "MultiPolygon" => {
                     // Pega o primeiro polígono, primeiro anel externo para não complexificar a engine voxel
                     if let Some(multipoly) = coords.as_array() {
                         if let Some(first_poly) = multipoly.first().and_then(|p| p.as_array()) {
-                            if let Some(exterior_ring) = first_poly.first().and_then(|r| r.as_array()) {
+                            if let Some(exterior_ring) =
+                                first_poly.first().and_then(|r| r.as_array())
+                            {
                                 let mut outer = Vec::with_capacity(exterior_ring.len());
                                 for c in exterior_ring {
-                                    if let Some(pt) = Self::parse_coord(c, bbox, &transformer, &mut is_completely_outside) {
+                                    if let Some(pt) = Self::parse_coord(
+                                        c,
+                                        bbox,
+                                        &transformer,
+                                        &mut is_completely_outside,
+                                    ) {
                                         outer.push(pt);
                                     }
                                 }
@@ -229,11 +291,19 @@ impl DataProvider for GeoJsonProvider {
                                     outer.push(first);
                                 }
 
-                                if outer.len() < 4 { continue; }
+                                if outer.len() < 4 {
+                                    continue;
+                                }
                                 GeometryType::Polygon(outer)
-                            } else { continue; }
-                        } else { continue; }
-                    } else { continue; }
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
                 }
                 _ => continue, // FeatureCollection ou GeometryCollection aninhadas são ignoradas
             };
@@ -257,7 +327,10 @@ impl DataProvider for GeoJsonProvider {
         }
 
         features.shrink_to_fit();
-        println!("[INFO] ✅ GeoJSON processado com sucesso: {} geometrias extraídas.", features.len());
+        println!(
+            "[INFO] ✅ GeoJSON processado com sucesso: {} geometrias extraídas.",
+            features.len()
+        );
         Ok(features)
     }
 }
