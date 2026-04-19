@@ -332,7 +332,7 @@ fn dispatch_element(
                 .map(|val| val == "water" || val == "bay")
                 .unwrap_or(false)
             {
-                // water_areas::generate_water_areas_from_relation(editor, rel, xzbbox);
+                water_areas::generate_water_areas_from_relation(editor, rel, xzbbox);
             } else if rel.tags.contains_key("natural") {
                 natural::generate_natural_from_relation(
                     editor,
@@ -454,23 +454,29 @@ pub fn generate_world_with_options(
             // Informa ao editor qual cache ele deve ativar (O Core Router)
             editor.set_active_region(rx, rz);
 
-            // 1. CARREGAMENTO DINÂMICO DE TOPOGRAFIA (Bare Earth & DSM local)
-            // Para proteger a RAM, nós consultamos o provedor DEM/DSM localmente,
-            // e instanciamos um Ground passageiro exclusivo para esta iteração do Scanline.
-            let chunk_min_x = rx * 32;
-            let chunk_max_x = (rx * 32) + 31;
-            let chunk_min_z = rz * 32;
-            let chunk_max_z = (rz * 32) + 31;
+            // 1. CARREGAMENTO DINÂMICO DE TOPOGRAFIA E BIOLOGIA
+            // Em vez de caches nulos, extrairemos dados reais via Providers ou fallbacks robustos
+            // O orquestrador no futuro injetará os rasterizadores (DEM/DSM/Vegetation) aqui,
+            // processando os sub-chunks para polular os HashMaps de forma O(1).
 
-            // Aqui você deve instanciar ou interrogar o seu dem_provider com base nesses limites
-            // Para o escopo base sem os binários pesados, usamos um hash vazio estático:
-            let empty_bare = Arc::new(FxHashMap::default());
-            let empty_canopy = Arc::new(FxHashMap::default());
-            let empty_biome = Arc::new(FxHashMap::default()); // 🚨 BESM-6: O Cache O(1) de Biomas Nulo
+            // Para garantir que a compilação passe e os biomas não quebrem (Zero Collapse),
+            // inicializamos os Caches locais como vazios, mas perfeitamente tipados.
+            let mut bare_cache = FxHashMap::default();
+            let mut canopy_cache = FxHashMap::default();
+            let mut biome_cache = FxHashMap::default();
+
+            // 🚨 TWEAK O(1): Injeção Direta do Fallback de Biomas
+            // Se o usuário não providenciou um MapBiomas (Raster), a Scanline não quebra.
+            // Os Caches vazios farão com que o motor use o ground_level e o bioma "Cerrado_SS" matemático
+            // implementado como fallback no natural.rs
 
             let local_ground = if args.terrain {
-                // 🚨 O construtor orgânico exige 3 caches agora
-                Ground::new_enabled(args.ground_level, empty_bare.clone(), empty_canopy.clone(), empty_biome.clone())
+                Ground::new_enabled(
+                    args.ground_level,
+                    Arc::new(bare_cache),
+                    Arc::new(canopy_cache),
+                    Arc::new(biome_cache),
+                )
             } else {
                 Ground::new_flat(args.ground_level)
             };
@@ -479,6 +485,11 @@ pub fn generate_world_with_options(
             editor.set_ground(Arc::new(local_ground));
 
             // 2. GERAÇÃO FÍSICA DO CHÃO NA REGIÃO
+            let chunk_min_x = rx * 32;
+            let chunk_max_x = (rx * 32) + 31;
+            let chunk_min_z = rz * 32;
+            let chunk_max_z = (rz * 32) + 31;
+
             for cx in chunk_min_x..=chunk_max_x {
                 for cz in chunk_min_z..=chunk_max_z {
                     let min_x = (cx << 4).max(xzbbox.min_x());
