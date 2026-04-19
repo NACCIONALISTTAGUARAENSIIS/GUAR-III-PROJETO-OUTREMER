@@ -40,7 +40,7 @@ pub enum LayerPriority {
     Osm,
 }
 
-/// Command-line arguments parser for the Bras�lia Digital Twin Engine
+/// Command-line arguments parser for the Brasília Digital Twin Engine
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 pub struct Args {
@@ -77,7 +77,7 @@ pub struct Args {
     pub offline: bool,
 
     // ==========================================================
-    // ESCALA H�BRIDA OFICIAL (G�meo Digital DF)
+    // ESCALA HÍBRIDA OFICIAL (Gêmeo Digital DF)
     // ==========================================================
     /// Horizontal scale (X, Z) to use, in blocks per meter. Default is 1.33 for proper street proportions.
     #[arg(long, default_value_t = 1.33)]
@@ -92,7 +92,7 @@ pub struct Args {
     pub scale: Option<f64>,
 
     // ==========================================================
-    // INTEGRA��O DE DADOS GOVERNAMENTAIS (GDF / CODEPLAN)
+    // INTEGRAÇÃO DE DADOS GOVERNAMENTAIS (GDF / CODEPLAN)
     // ==========================================================
     /// Path to local Shapefiles (.shp) from Geoportal DF (buildings, landuse, etc.)
     #[arg(long)]
@@ -110,7 +110,7 @@ pub struct Args {
     #[arg(long)]
     pub wfs_endpoint: Option<String>,
 
-    /// EPSG code for local data reprojection (Government Tier). Defaults to 31983 (SIRGAS 2000 / UTM zone 23S for Bras�lia).
+    /// EPSG code for local data reprojection (Government Tier). Defaults to 31983 (SIRGAS 2000 / UTM zone 23S for Brasília).
     #[arg(long, default_value_t = 31983)]
     pub epsg: u32,
 
@@ -147,7 +147,7 @@ pub struct Args {
     pub enable_underground_wfs: bool,
 
     // ==========================================================
-    // INTEGRA��O DE ALTA PERFORMANCE & G�MEO DIGITAL (BESM-6)
+    // INTEGRAÇÃO DE ALTA PERFORMANCE & GÊMEO DIGITAL (BESM-6)
     // ==========================================================
     /// PostgreSQL/PostGIS connection URL for direct spatial queries (e.g., postgres://user:pass@localhost:5432/gis)
     #[arg(long)]
@@ -169,12 +169,16 @@ pub struct Args {
     #[arg(long)]
     pub local_citygml: Option<PathBuf>,
 
+    /// Path to local BIM/IFC file (.ifc) with LOD4/LOD5 detail (Niemeyer Standard)
+    #[arg(long)]
+    pub local_ifc: Option<PathBuf>,
+
     /// Path to local Photogrammetry Meshes (.obj, .gltf) directory for accurate monument representation
     #[arg(long)]
     pub local_mesh: Option<PathBuf>,
 
     // ==========================================================
-    // CONFIGURA��ES BASE
+    // CONFIGURAÇÕES BASE
     // ==========================================================
     /// Ground level to use in the Minecraft world
     #[arg(long, default_value_t = -62)]
@@ -258,7 +262,7 @@ fn get_physical_cores() -> usize {
 
 /// Validates CLI arguments after parsing.
 pub fn validate_args(args: &mut Args) -> Result<(), String> {
-    // ?? BESM-6: Retrocompatibilidade de Escala resolvida fisicamente
+    // 🚨 BESM-6: Retrocompatibilidade de Escala resolvida fisicamente
     if let Some(legacy_scale) = args.scale {
         args.scale_h = legacy_scale;
         args.scale_v = legacy_scale;
@@ -292,7 +296,7 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
         }
     }
 
-    // ?? BESM-6 Tweak: Validao Antidegenerao da BBox
+    // 🚨 BESM-6 Tweak: Validação Antidegeneração da BBox
     if args.bbox.max().lat() <= args.bbox.min().lat()
         || args.bbox.max().lng() <= args.bbox.min().lng()
     {
@@ -302,7 +306,7 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
         );
     }
 
-    // ?? BESM-6 Tweak: Geodesic Area Calculation (Haversine Absoluto)
+    // 🚨 BESM-6 Tweak: Geodesic Area Calculation (Haversine Absoluto)
     let min_lat = args.bbox.min().lat();
     let min_lng = args.bbox.min().lng();
     let max_lat = args.bbox.max().lat();
@@ -314,18 +318,18 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
 
     if area_km2 > args.max_area_km2 {
         return Err(format!(
-            "Bounding box area ({:.2} km�) exceeds the maximum allowed limit ({:.2} km�). Decrease the bbox or bypass with --max-area-km2.",
+            "Bounding box area ({:.2} km²) exceeds the maximum allowed limit ({:.2} km²). Decrease the bbox or bypass with --max-area-km2.",
             area_km2, args.max_area_km2
         ));
     }
 
-    // ?? BESM-6 Tweak: Prote��o Log�stica (Pre-flight IO Check).
+    // 🚨 BESM-6 Tweak: Proteção Logística (Pre-flight IO Check).
     // Estimativa braba: ~100MB por km2 na escala 1.33.
     // Se a estimativa ultrapassar os 180GB estipulados para a Oracle, trava.
     let estimated_weight_gb = (area_km2 * 100.0) / 1024.0;
     if estimated_weight_gb > 180.0 {
         return Err(format!(
-            "Storage Limit Exceeded: The requested area ({:.2} km�) is estimated to consume {:.2} GB. The Oracle server is hard-capped at 180 GB.",
+            "Storage Limit Exceeded: The requested area ({:.2} km²) is estimated to consume {:.2} GB. The Oracle server is hard-capped at 180 GB.",
             area_km2, estimated_weight_gb
         ));
     }
@@ -341,10 +345,10 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
         }
     }
 
-    // ?? BESM-6 Tweak: Safe thread limit (N�cleos F�sicos Estritos)
+    // 🚨 BESM-6 Tweak: Safe thread limit (Núcleos Físicos Estritos)
     let max_safe_threads = get_physical_cores();
 
-    // Se o usu�rio passou 0, atribu�mos o safe limit f�sico automaticamente.
+    // Se o usuário passou 0, atribuímos o safe limit físico automaticamente.
     if args.threads == 0 {
         args.threads = max_safe_threads;
     } else if args.threads > max_safe_threads {
@@ -361,10 +365,11 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
             || args.local_gpkg.is_some()
             || args.local_pbf.is_some()
             || args.local_citygml.is_some()
+            || args.local_ifc.is_some()
             || args.postgis_url.is_some();
 
         if !has_local_vector_source {
-            return Err("Offline mode requires a local vector source (--file, --local-shp, --local-gpkg, --local-pbf, --local-citygml, or --postgis-url). Cannot fetch from API.".to_string());
+            return Err("Offline mode requires a local vector source (--file, --local-shp, --local-gpkg, --local-pbf, --local-citygml, --local-ifc, or --postgis-url). Cannot fetch from API.".to_string());
         }
         if args.terrain && args.local_lidar.is_none() && args.local_dem.is_none() {
             return Err(
@@ -449,6 +454,26 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
             return Err(format!(
                 "CityGML source must be a .gml or .xml file. Found: {}",
                 citygml_path.display()
+            ));
+        }
+    }
+
+    // Validate IFC integration path
+    if let Some(ref ifc_path) = args.local_ifc {
+        if !ifc_path.exists() || !ifc_path.is_file() {
+            return Err(format!(
+                "IFC file does not exist or is not a file: {}",
+                ifc_path.display()
+            ));
+        }
+        let ext = ifc_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        if ext.to_lowercase() != "ifc" {
+            return Err(format!(
+                "IFC source must be an .ifc file. Found: {}",
+                ifc_path.display()
             ));
         }
     }
@@ -786,4 +811,5 @@ mod tests {
         let mut args = Args::parse_from(cmd.iter());
         assert!(validate_args(&mut args).is_err());
     }
+
 }

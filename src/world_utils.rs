@@ -68,31 +68,31 @@ pub fn sanitize_for_filename(name: &str) -> String {
 pub fn build_bedrock_output(bbox: &LLBBox, output_dir: PathBuf) -> (PathBuf, String) {
     let area_name = get_area_name_for_bedrock(bbox);
     let safe_name = sanitize_for_filename(&area_name);
-    let filename = format!("Arnis {safe_name}.mcworld");
-    let lvl_name = format!("Arnis World: {safe_name}");
+    let filename = format!("Pincelism {safe_name}.mcworld");
+    let lvl_name = format!("Pincelism World: {safe_name}");
     (output_dir.join(&filename), lvl_name)
 }
 
 /// Creates a new Java Edition world in the given base directory.
 ///
-/// Generates a unique "Arnis World N" name, creates the directory structure
+/// Generates a unique "Pincelism World N" name, creates the directory structure
 /// (with a `region/` subdirectory), writes the region template, level.dat
 /// (with updated name, timestamp, and spawn position), and icon.png.
 ///
 /// Returns the full path to the newly created world directory.
 pub fn create_new_world(base_path: &Path) -> Result<String, String> {
     // Generate a unique world name with proper counter
-    // Check for both "Arnis World X" and "Arnis World X: Location" patterns
+    // Check for both "Pincelism World X" and "Pincelism World X: Location" patterns
     let mut counter: i32 = 1;
     let unique_name: String = loop {
-        let candidate_name: String = format!("Arnis World {counter}");
+        let candidate_name: String = format!("Pincelism World {counter}");
         let candidate_path: PathBuf = base_path.join(&candidate_name);
 
         // Check for exact match (no location suffix)
         let exact_match_exists = candidate_path.exists();
 
-        // Check for worlds with location suffix (Arnis World X: Location)
-        let location_pattern = format!("Arnis World {counter}: ");
+        // Check for worlds with location suffix (Pincelism World X: Location)
+        let location_pattern = format!("Pincelism World {counter}: ");
         let location_match_exists = fs::read_dir(base_path)
             .map(|entries| {
                 entries

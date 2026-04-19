@@ -9,6 +9,12 @@ use crate::world_editor::WorldEditor;
 // 🚨 Importações Específicas do Cerrado (Corrigindo o Erro E0425)
 use crate::element_processing::tree::SHORT_GRASS;
 
+// 🚨 BESM-6: Trazendo os dados reais do MapBiomas/SICAR para a consciência
+use crate::providers::vegetation_provider::{
+    BIOME_NONE, BIOME_MATA_GALERIA, BIOME_CERRADAO, BIOME_CERRADO_SS,
+    BIOME_CAMPO_SUJO, BIOME_VEREDA, BIOME_CAMPO_RUPESTRE, MASK_APP_SICAR
+};
+
 use rand::{prelude::IndexedRandom, Rng};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -21,11 +27,26 @@ fn organic_density_noise(x: i32, z: i32, scale: f64) -> f64 {
     ((xf.sin() * zf.cos()) + (xf * 0.5 + zf * 0.3).sin() * 0.5).abs() / 1.5
 }
 
-// 🚨 BESM-6: Topografia Biométrica (Gradiente 2D & Busca de Lençol Freático)
+// 🚨 BESM-6: Topografia Biométrica (Gradiente 2D & Busca de Lençol Freático & Grade Real)
 // O Cerrado possui declives e veios d'água que determinam a flora.
 #[inline]
 fn determine_cerrado_biome(x: i32, z: i32, ground_y: i32, editor: &WorldEditor) -> &'static str {
-    // 1. Busca de água (Octogonal expandida para Veredas reais)
+    // 0. A Verdade Absoluta: Consulta o MapBiomas/SICAR no motor de terreno
+    // NOTA: Assumindo que seu editor.get_ground() expõe o método get_biome().
+    // Se o seu ground usa outro nome para ler a matriz, ajuste a chamada abaixo.
+    if let Some(ground) = editor.get_ground() {
+        let real_biome = ground.get_biome(x, z);
+        if real_biome != BIOME_NONE {
+            if real_biome == BIOME_MATA_GALERIA { return "mata_galeria"; }
+            if real_biome == BIOME_CERRADAO { return "cerradao"; }
+            if real_biome == BIOME_CERRADO_SS { return "cerrado_ss"; }
+            if real_biome == BIOME_CAMPO_SUJO { return "campo_sujo"; }
+            if real_biome == BIOME_VEREDA { return "vereda"; }
+            if real_biome == BIOME_CAMPO_RUPESTRE { return "campo_rupestre"; }
+        }
+    }
+
+    // 1. Fallback Matemático: Busca de água (Octogonal expandida para Veredas simuladas)
     // Usamos um raio maior para detectar corredores fluviais (Mata de Galeria)
     let water_radius = 8;
     let has_water =
@@ -253,6 +274,15 @@ pub fn generate_natural(
                             if rng.random_range(0..100) < 30 {
                                 editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
                             }
+                        } else if biome_class == "campo_sujo" {
+                            // 🚨 Reage à grade real (Mato baixo misturado com terra exposta)
+                            if rng.random_range(0..100) < 15 {
+                                editor.set_block_absolute(COARSE_DIRT, x, ground_y, z, Some(&[GRASS_BLOCK]), None);
+                            } else if rng.random_range(0..100) < 35 {
+                                editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
+                            } else if rng.random_range(0..100) < 65 {
+                                editor.set_block_if_absent_absolute(SHORT_GRASS, x, ground_y + 1, z);
+                            }
                         } else {
                             if rng.random_range(0..100) < 8 {
                                 editor.set_block_absolute(
@@ -284,7 +314,7 @@ pub fn generate_natural(
                     }
                     "wood" | "tree_row" => {
                         // Matas de Galeria vs Cerrado Ralo
-                        if biome_class == "mata_galeria" {
+                        if biome_class == "mata_galeria" || biome_class == "vereda" {
                             if bio_noise > 0.2 && rng.random_range(0..100) < (base_tree_chance * 3)
                             {
                                 let tree_type = if rng.random_bool(0.3) {
@@ -292,6 +322,17 @@ pub fn generate_natural(
                                 } else {
                                     TreeType::Copaiba
                                 };
+                                Tree::create_of_type(
+                                    editor,
+                                    (x, ground_y + 1, z),
+                                    tree_type,
+                                    Some(building_footprints),
+                                );
+                            }
+                        } else if biome_class == "cerradao" {
+                            // 🚨 Reage à grade real (Mata de dossel mais denso e escuro)
+                            if bio_noise > 0.3 && rng.random_range(0..100) < (base_tree_chance * 4) {
+                                let tree_type = if rng.random_bool(0.5) { TreeType::DarkOak } else { TreeType::Sucupira };
                                 Tree::create_of_type(
                                     editor,
                                     (x, ground_y + 1, z),

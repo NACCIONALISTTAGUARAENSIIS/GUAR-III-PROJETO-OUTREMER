@@ -4,6 +4,8 @@ use crate::bresenham::bresenham_line;
 use crate::floodfill_cache::FloodFillCache;
 use crate::osm_parser::{ProcessedElement, ProcessedNode};
 use crate::world_editor::WorldEditor;
+// 🚨 BESM-6: Integração com Indoor Utility Provider (CAESB Infrastructure)
+use crate::providers::{Feature, GeometryType, SemanticGroup};
 
 const V_SCALE: f64 = 1.15;
 
@@ -133,7 +135,7 @@ fn generate_antenna(editor: &mut WorldEditor, element: &ProcessedElement, args: 
             Some(h) => (h.parse::<f64>().unwrap_or(30.0) * V_SCALE) as i32,
             None => 40,
         }
-        .min(80);
+            .min(80);
 
         editor.set_block_absolute(IRON_BLOCK, x, ground_y + 1, z, None, None);
         for y in 2..height {
@@ -490,10 +492,9 @@ fn generate_chimney(editor: &mut WorldEditor, element: &ProcessedElement, args: 
         };
 
         for y in 0..height {
-            // 🚨 Correção do E0689 de Ambiguidade de Valor Absoluto (i32.abs)
             for dx in -2i32..=2i32 {
                 for dz in -2i32..=2i32 {
-                    if (dx as i32).abs() <= 1 && (dz as i32).abs() <= 1 {
+                    if dx.abs() <= 1 && dz.abs() <= 1 {
                         continue;
                     }
                     editor.set_block_absolute(BRICK, x + dx, ground_y + y, z + dz, None, None);
@@ -634,6 +635,272 @@ pub fn generate_man_made_nodes(editor: &mut WorldEditor, node: &ProcessedNode, a
             "street_cabinet" => generate_street_cabinet(editor, &element, args),
             "utility_pole" => generate_utility_pole(editor, &element, args),
             _ => {}
+        }
+    }
+}
+
+// ============================================================================
+// 🚨 BESM-6: CAESB Infrastructure Generator (Indoor Utility Provider Integration)
+// ============================================================================
+
+/// Gera infraestrutura subterrânea a partir de Features do IndoorUtilityProvider.
+/// Processa dutos, galerias, tubulações e redes de esgoto/água da CAESB.
+pub fn generate_from_provider_feature(editor: &mut WorldEditor, feature: &Feature, args: &Args) {
+    match feature.semantic_group {
+        SemanticGroup::Sanitation | SemanticGroup::Utility | SemanticGroup::Sewage => {
+            generate_underground_pipeline(editor, feature, args);
+        }
+        SemanticGroup::Power | SemanticGroup::Telecom => {
+            generate_underground_cable(editor, feature, args);
+        }
+        SemanticGroup::Indoor => {
+            generate_indoor_structure(editor, feature, args);
+        }
+        _ => {} // Outros grupos semânticos são ignorados neste módulo
+    }
+}
+
+/// Gera tubulações subterrâneas (água, esgoto, drenagem) da CAESB.
+fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, args: &Args) {
+    // Extrai diâmetro da tubulação (se disponível)
+    let diameter = feature
+        .get_tag("diameter")
+        .and_then(|d| d.parse::<f64>().ok())
+        .unwrap_or(0.5); // Padrão: 50cm
+
+    // Converte diâmetro em metros para blocos (com escala 1.15 vertical)
+    let pipe_radius = ((diameter * 1.15) / 2.0).ceil().max(1.0) as i32;
+
+    // Determina profundidade (level negativo ou padrão -3 blocos)
+    let depth_offset = feature
+        .get_tag("level")
+        .and_then(|l| l.parse::<i32>().ok())
+        .map(|level| if level < 0 { level * 4 } else { -3 })
+        .unwrap_or(-3);
+
+    // Determina material baseado no tipo de utilidade
+    let pipe_material = if let Some(utility) = feature.get_tag("utility") {
+        let util_lower = utility.to_lowercase();
+        if util_lower.contains("sewer") || util_lower.contains("esgoto") {
+            STONE_BRICKS // Esgoto: tijolo de pedra
+        } else if util_lower.contains("water") || util_lower.contains("agua") {
+            CYAN_TERRACOTTA // Água: terracota ciano
+        } else {
+            POLISHED_ANDESITE // Genérico: andesito polido
+        }
+    } else {
+        POLISHED_ANDESITE
+    };
+
+    match &feature.geometry {
+        GeometryType::LineString(points) => {
+            // Gera tubulação ao longo da linha
+            for i in 0..points.len().saturating_sub(1) {
+                let start = &points[i];
+                let end = &points[i + 1];
+
+                let line_points = bresenham_line(start.x, 0, start.z, end.x, 0, end.z);
+
+                for (px, _, pz) in line_points {
+                    let base_y = if args.terrain {
+                        editor.get_ground_level(px, pz)
+                    } else {
+                        args.ground_level
+                    };
+
+                    let pipe_y = base_y + depth_offset;
+
+                    // Gera seção circular da tubulação
+                    for dy in -pipe_radius..=pipe_radius {
+                        for dx in -pipe_radius..=pipe_radius {
+                            if dx * dx + dy * dy <= pipe_radius * pipe_radius {
+                                editor.set_block_absolute(
+                                    pipe_material,
+                                    px + dx,
+                                    pipe_y + dy,
+                                    pz,
+                                    None,
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        GeometryType::Point(pt) => {
+            // Caixas de inspeção, válvulas, poços de visita
+            let base_y = if args.terrain {
+                editor.get_ground_level(pt.x, pt.z)
+            } else {
+                args.ground_level
+            };
+
+            let chamber_y = base_y + depth_offset;
+
+            // Cria uma câmara cúbica 3x3x3
+            for dx in -1i32..=1i32 {
+                for dy in -1i32..=1i32 {
+                    for dz in -1i32..=1i32 {
+                        let is_wall = dx.abs() == 1 || dy.abs() == 1 || dz.abs() == 1;
+                        let block = if is_wall {
+                            pipe_material
+                        } else {
+                            AIR // Interior vazio
+                        };
+                        editor.set_block_absolute(
+                            block,
+                            pt.x + dx,
+                            chamber_y + dy,
+                            pt.z + dz,
+                            None,
+                            None,
+                        );
+                    }
+                }
+            }
+
+            // Poço de acesso vertical até a superfície
+            for y in chamber_y..base_y {
+                editor.set_block_absolute(LADDER, pt.x, y, pt.z, None, None);
+            }
+            // Tampa de inspeção na superfície - 🚨 BESM-6: Utilizando IRON_TRAPDOOR
+            editor.set_block_absolute(IRON_TRAPDOOR, pt.x, base_y, pt.z, None, None);
+        }
+        GeometryType::Polygon(points) => {
+            // Estações de tratamento, reservatórios subterrâneos, galerias
+            if points.len() < 4 {
+                return;
+            }
+
+            let base_y = if args.terrain {
+                let cx = points.iter().map(|p| p.x).sum::<i32>() / points.len() as i32;
+                let cz = points.iter().map(|p| p.z).sum::<i32>() / points.len() as i32;
+                editor.get_ground_level(cx, cz)
+            } else {
+                args.ground_level
+            };
+
+            let chamber_y = base_y + depth_offset;
+            let chamber_height = 4; // Altura padrão de 4 blocos para galerias
+
+            // Gera outline da galeria
+            for i in 0..points.len().saturating_sub(1) {
+                let start = &points[i];
+                let end = &points[i + 1];
+
+                let wall_points = bresenham_line(start.x, 0, start.z, end.x, 0, end.z);
+
+                for (px, _, pz) in wall_points {
+                    // Paredes laterais
+                    for dy in 0..chamber_height {
+                        editor.set_block_absolute(
+                            pipe_material,
+                            px,
+                            chamber_y + dy,
+                            pz,
+                            None,
+                            None,
+                        );
+                    }
+                    // Piso
+                    editor.set_block_absolute(pipe_material, px, chamber_y - 1, pz, None, None);
+                    // Teto
+                    editor.set_block_absolute(
+                        pipe_material,
+                        px,
+                        chamber_y + chamber_height,
+                        pz,
+                        None,
+                        None,
+                    );
+                }
+            }
+        }
+        _ => {} // MultiPolygon não é esperado aqui
+    }
+}
+
+/// Gera cabos subterrâneos (energia elétrica, fibra óptica).
+fn generate_underground_cable(editor: &mut WorldEditor, feature: &Feature, args: &Args) {
+    let depth_offset = -2; // Cabos são mais rasos que tubulações
+
+    let cable_material = match feature.semantic_group {
+        SemanticGroup::Power => ORANGE_TERRACOTTA, // Energia: laranja
+        SemanticGroup::Telecom => BLUE_TERRACOTTA, // Telecom: azul
+        _ => GRAY_TERRACOTTA,
+    };
+
+    if let GeometryType::LineString(points) = &feature.geometry {
+        for i in 0..points.len().saturating_sub(1) {
+            let start = &points[i];
+            let end = &points[i + 1];
+
+            let line_points = bresenham_line(start.x, 0, start.z, end.x, 0, end.z);
+
+            for (px, _, pz) in line_points {
+                let base_y = if args.terrain {
+                    editor.get_ground_level(px, pz)
+                } else {
+                    args.ground_level
+                };
+
+                let cable_y = base_y + depth_offset;
+
+                // Cabo fino (1 bloco)
+                editor.set_block_absolute(cable_material, px, cable_y, pz, None, None);
+            }
+        }
+    }
+}
+
+/// Gera estruturas internas (salas, corredores, níveis indoor).
+fn generate_indoor_structure(editor: &mut WorldEditor, feature: &Feature, args: &Args) {
+    // Indoor structures são polígonos representando plantas baixas
+    if let GeometryType::Polygon(points) = &feature.geometry {
+        if points.len() < 4 {
+            return;
+        }
+
+        let level = feature
+            .get_tag("level")
+            .and_then(|l| l.parse::<i32>().ok())
+            .unwrap_or(0);
+
+        let room_height = feature
+            .get_tag("height")
+            .and_then(|h| h.parse::<i32>().ok())
+            .unwrap_or(3); // Altura padrão de 3 blocos
+
+        let base_y = if args.terrain {
+            let cx = points.iter().map(|p| p.x).sum::<i32>() / points.len() as i32;
+            let cz = points.iter().map(|p| p.z).sum::<i32>() / points.len() as i32;
+            editor.get_ground_level(cx, cz)
+        } else {
+            args.ground_level
+        };
+
+        let floor_y = base_y + (level * 4); // 4 blocos por andar
+
+        // Gera paredes da sala
+        for i in 0..points.len().saturating_sub(1) {
+            let start = &points[i];
+            let end = &points[i + 1];
+
+            let wall_points = bresenham_line(start.x, 0, start.z, end.x, 0, end.z);
+
+            for (px, _, pz) in wall_points {
+                // Piso
+                editor.set_block_absolute(SMOOTH_STONE, px, floor_y, pz, None, None);
+
+                // Paredes
+                for dy in 1..room_height {
+                    editor.set_block_absolute(WHITE_CONCRETE, px, floor_y + dy, pz, None, None);
+                }
+
+                // Teto
+                editor.set_block_absolute(SMOOTH_STONE, px, floor_y + room_height, pz, None, None);
+            }
         }
     }
 }

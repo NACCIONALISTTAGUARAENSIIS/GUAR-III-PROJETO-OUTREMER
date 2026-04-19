@@ -12,14 +12,14 @@ use rand::Rng;
 const V_SCALE: f64 = 1.15;
 const H_SCALE: f64 = 1.33;
 
-/// ?? BESM-6: Motor de Ru�do Org�nico (Pseudo-Perlin Noise O(1))
-/// Usado para criar maci�os florestais e canteiros fluidos de Burle Marx,
-/// substituindo a distribui��o aleat�ria e irrealista.
+/// 🚨 BESM-6: Motor de Ruído Orgânico (Pseudo-Perlin Noise O(1))
+/// Usado para criar maciços florestais e canteiros fluidos de Burle Marx,
+/// substituindo a distribuição aleatória e irrealista.
 #[inline(always)]
 fn organic_noise(x: i32, z: i32, scale: f64) -> f64 {
     let xf = x as f64 * scale;
     let zf = z as f64 * scale;
-    // Padr�o de interfer�ncia de ondas para criar "ilhas" e "clareiras"
+    // Padrão de interferência de ondas para criar "ilhas" e "clareiras"
     ((xf.sin() * zf.cos()) + (xf * 0.5 + zf * 0.3).sin() * 0.5).abs() / 1.5
 }
 
@@ -42,25 +42,25 @@ pub fn generate_leisure(
             .map(|s: &String| s.as_str())
             .unwrap_or("");
 
-        // ?? BESM-6: Detec��o de Patrim�nio Cultural e Lazer do Distrito Federal
+        // 🚨 BESM-6: Detecção de Patrimônio Cultural e Lazer do Distrito Federal
         let is_parque_da_cidade =
             name.contains("parque da cidade") || name.contains("sarah kubitschek");
-        let is_ana_lidia = name.contains("ana l�dia") || name.contains("ana lidia");
-        // Burle Marx projetou os jardins do Itamaraty, Jaburu, TCU, Superquadras antigas e Pra�a dos Cristais
+        let is_ana_lidia = name.contains("ana lódia") || name.contains("ana lidia");
+        // Burle Marx projetou os jardins do Itamaraty, Jaburu, TCU, Superquadras antigas e Praça dos Cristais
         let is_burle_marx = name.contains("burle marx")
             || name.contains("cristais")
             || name.contains("itamaraty")
-            || name.contains("justi�a")
+            || name.contains("justiça")
             || name.contains("jaburu")
             || name.contains("tribunal de contas");
         let is_cristais = name.contains("cristais");
-        let is_unb = name.contains("unb") || name.contains("universidade de bras�lia");
-        let is_guara = name.contains("guar�") || name.contains("guara");
+        let is_unb = name.contains("unb") || name.contains("universidade de brasília");
+        let is_guara = name.contains("guará") || name.contains("guara");
 
         let mut previous_node: Option<(i32, i32)> = None;
         let mut corner_addup: (i32, i32, i32) = (0, 0, 0);
 
-        // Defini��o de materiais r�gida (Bras�lia Architectural Specs)
+        // Definição de materiais rígida (Brasília Architectural Specs)
         let block_type: Block = match leisure_type.as_str() {
             "park" | "nature_reserve" | "garden" | "disc_golf_course" | "golf_course" => {
                 GRASS_BLOCK
@@ -72,8 +72,8 @@ pub fn generate_leisure(
                     .get("surface")
                     .map(|s: &String| s.as_str())
                     .unwrap_or("");
-                // ?? TWEAK DF: O GDF pinta as ciclovias (Guar�, Eix�o, W3) de vermelho.
-                // As pistas de cooper do Parque da Cidade tamb�m s�o avermelhadas (emborrachadas).
+                // 🚨 TWEAK DF: O GDF pinta as ciclovias (Guará, Eixão, W3) de vermelho.
+                // As pistas de cooper do Parque da Cidade também são avermelhadas (emborrachadas).
                 if surface == "asphalt"
                     || surface == "paved"
                     || surface == "tartan"
@@ -115,7 +115,7 @@ pub fn generate_leisure(
             _ => GRASS_BLOCK,
         };
 
-        // Renderiza��o de Bordas e Conten��o
+        // Renderização de Bordas e Contenção
         for node in &element.nodes {
             if let Some(prev) = previous_node {
                 let bresenham_points: Vec<(i32, i32, i32)> =
@@ -129,14 +129,14 @@ pub fn generate_leisure(
                     };
 
                     let edge_block = if leisure_type == "track" {
-                        WHITE_CONCRETE // Faixa lateral de seguran�a das ciclovias
+                        WHITE_CONCRETE // Faixa lateral de segurança das ciclovias
                     } else if block_type == WATER {
-                        STONE_BRICKS // Borda de piscina/espelho d'�gua
+                        STONE_BRICKS // Borda de piscina/espelho d'água
                     } else {
                         block_type
                     };
 
-                    // Prote��o de Malha: N�o sobrep�e asfalto monumental ou cal�adas de pedra
+                    // Proteção de Malha: Não sobrepõe asfalto monumental ou calçadas de pedra
                     if !editor.check_for_block_absolute(
                         bx,
                         ground_y,
@@ -167,14 +167,14 @@ pub fn generate_leisure(
             previous_node = Some((node.x, node.z));
         }
 
-        // Preenchimento de �rea (Flood-fill)
+        // Preenchimento de Área (Flood-fill)
         if corner_addup != (0, 0, 0) {
             let filled_area: Vec<(i32, i32)> =
                 flood_fill_cache.get_or_compute(element, args.timeout.as_ref());
 
             let _rng = element_rng(element.id);
 
-            // Centro de massa da �rea de lazer (�til para ancorar monumentos �nicos)
+            // Centro de massa da área de lazer (útil para ancorar monumentos únicos)
             let (cx, cz) = if !filled_area.is_empty() {
                 let (sum_x, sum_z) = filled_area.iter().fold((0i64, 0i64), |acc, &(x, z)| {
                     (acc.0 + x as i64, acc.1 + z as i64)
@@ -190,13 +190,13 @@ pub fn generate_leisure(
                 0
             };
 
-            // ?? MONUMENTO: O FOGUETINHO E CASTELINHO (Parque Ana L�dia - 1969)
+            // 🚨 MONUMENTO: O FOGUETINHO E CASTELINHO (Parque Ana Lídia - 1969)
             if is_ana_lidia && !filled_area.is_empty() {
-                // Foguetinho (Ancorado no centro do pol�gono)
+                // Foguetinho (Ancorado no centro do polígono)
                 let rocket_h = (10.0 * V_SCALE).round() as i32;
                 let rocket_w = (2.0 * H_SCALE).round() as i32;
 
-                // Base Vermelha (Os 4 p�s estabilizadores do Astro City Slide)
+                // Base Vermelha (Os 4 pés estabilizadores do Astro City Slide)
                 for lx in (cx - rocket_w)..=(cx + rocket_w) {
                     for lz in (cz - rocket_w)..=(cz + rocket_w) {
                         if (lx - cx).abs() == rocket_w && (lz - cz).abs() == rocket_w {
@@ -269,7 +269,7 @@ pub fn generate_leisure(
                     0
                 };
 
-                // Bloqueio de colis�o com asfalto monumental, rodovias e passeios reais
+                // Bloqueio de colisão com asfalto monumental, rodovias e passeios reais
                 if editor.check_for_block_absolute(
                     x,
                     ground_y,
@@ -296,17 +296,17 @@ pub fn generate_leisure(
                     None,
                 );
 
-                // L�gica de profundidade para Piscinas e Lagos (Impede a �gua de quebrar se o ch�o afundar)
+                // Lógica de profundidade para Piscinas e Lagos (Impede a água de quebrar se o chão afundar)
                 if block_type == WATER {
                     editor.set_block_absolute(DIRT, x, ground_y - 1, z, None, None);
                     editor.set_block_absolute(WATER, x, ground_y, z, None, None);
                     continue;
                 }
 
-                // ?? CICLOVIAS E PISTAS (Escala 1.33 e Rigor Governamental)
+                // 🚨 CICLOVIAS E PISTAS (Escala 1.33 e Rigor Governamental)
                 if leisure_type == "track" {
                     let stripe_mod = (4.0 * H_SCALE).round() as i32;
-                    // Faixa amarela cont�nua no meio (m�o dupla) para ciclovias do Guar� e Plano
+                    // Faixa amarela contínua no meio (mão dupla) para ciclovias do Guará e Plano
                     let is_center_line = if is_guara {
                         (x - cx).abs() % 4 == 0
                     } else {
@@ -316,17 +316,17 @@ pub fn generate_leisure(
                     if is_center_line {
                         editor.set_block_absolute(YELLOW_CONCRETE, x, ground_y, z, None, None);
                     } else if (x % stripe_mod == 0) && (z % 5 != 0) {
-                        // Tracejado branco gen�rico
+                        // Tracejado branco genérico
                         editor.set_block_absolute(WHITE_CONCRETE, x, ground_y, z, None, None);
                     }
                 }
 
-                // ??? PEC (Ponto de Encontro Comunit�rio) - Padr�o Literal da NOVACAP
+                // 🚨 PEC (Ponto de Encontro Comunitário) - Padrão Literal da NOVACAP
                 if leisure_type == "fitness_station" && !building_footprints.contains(x, z) {
                     let local_x = x.abs() % 14;
                     let local_z = z.abs() % 14;
 
-                    // Aparelhos Met�licos de Gin�stica GDF (Verde e Amarelo representados por Ferro/Pedra)
+                    // Aparelhos Metálicos de Ginástica GDF (Verde e Amarelo representados por Ferro/Pedra)
                     if local_x == 2 && local_z == 2 {
                         // Simulador de Caminhada
                         editor.set_block_absolute(IRON_BARS, x, ground_y + 1, z, None, None);
@@ -340,15 +340,15 @@ pub fn generate_leisure(
                             None,
                         );
                     } else if local_x == 8 && local_z == 2 {
-                        // Rota��o Dupla Vertical (Volante)
+                        // Rotação Dupla Vertical (Volante)
                         editor.set_block_absolute(IRON_BARS, x, ground_y + 1, z, None, None);
                         editor.set_block_absolute(GRINDSTONE, x, ground_y + 2, z, None, None);
                     } else if local_x == 2 && local_z == 8 {
-                        // Press�o de Pernas
+                        // Pressão de Pernas
                         editor.set_block_absolute(STONE_STAIRS, x, ground_y + 1, z, None, None);
                         editor.set_block_absolute(IRON_BARS, x + 1, ground_y + 1, z, None, None);
                     } else if local_x > 10 && local_z > 10 {
-                        // Pergolado de Sombreamento e Bancos (Cl�ssico dos PECs de Bras�lia)
+                        // Pergolado de Sombreamento e Bancos (Clássico dos PECs de Brasília)
                         if (local_x == 11 || local_x == 13) && (local_z == 11 || local_z == 13) {
                             editor.set_block_absolute(OAK_FENCE, x, ground_y + 1, z, None, None);
                             editor.set_block_absolute(OAK_FENCE, x, ground_y + 2, z, None, None);
@@ -364,16 +364,16 @@ pub fn generate_leisure(
                     }
                 }
 
-                // ?? PAISAGISMO ORG�NICO (Burle Marx, UnB, Parque da Cidade)
+                // 🚨 PAISAGISMO ORGÂNICO (Burle Marx, UnB, Parque da Cidade)
                 if matches!(leisure_type.as_str(), "park" | "garden" | "nature_reserve") {
                     let bm_noise = organic_noise(x, z, 0.05); // Densidade macro (Canteiros/Bosques)
-                    let micro_noise = organic_noise(x, z, 0.2); // Densidade fina (Flores/�rvores isoladas)
+                    let micro_noise = organic_noise(x, z, 0.2); // Densidade fina (Flores/Árvores isoladas)
 
                     let mut tile_rng = coord_rng(x, z, element.id);
                     let random_roll = tile_rng.random_range(0..1000);
 
                     if is_cristais {
-                        // Pra�a dos Cristais: Cact�ceas, areia e lagos angulares
+                        // Praça dos Cristais: Cactáceas, areia e lagos angulares
                         if bm_noise > 0.6 && !building_footprints.contains(x, z) {
                             editor.set_block_absolute(SAND, x, ground_y, z, None, None);
                             if micro_noise > 0.8 {
@@ -384,11 +384,11 @@ pub fn generate_leisure(
                             editor.set_block_absolute(WATER, x, ground_y, z, None, None);
                             if random_roll < 50 {
                                 editor.set_block_absolute(LILY_PAD, x, ground_y + 1, z, None, None);
-                                // Vit�rias-r�gias
+                                // Vitórias-régias
                             }
                         }
                     } else if is_burle_marx && bm_noise > 0.5 {
-                        // Maci�os de Burle Marx (Ilhas curvas de cor intensa)
+                        // Maciços de Burle Marx (Ilhas curvas de cor intensa)
                         if micro_noise > 0.4 && !building_footprints.contains(x, z) {
                             let flower = if (x ^ z) % 4 == 0 {
                                 PINK_TULIP
@@ -409,7 +409,7 @@ pub fn generate_leisure(
                             );
                         }
                     } else if is_unb {
-                        // Campus da UnB: Gramados abertos (Minhoc�o), terra vermelha, Ip�s esparsos
+                        // Campus da UnB: Gramados abertos (Minhocão), terra vermelha, Ipês esparsos
                         if bm_noise > 0.7
                             && micro_noise > 0.8
                             && !building_footprints.contains(x, z)
@@ -434,8 +434,8 @@ pub fn generate_leisure(
                             Tree::create(editor, (x, ground_y + 1, z), Some(building_footprints));
                         }
                     } else {
-                        // Parques Gen�ricos e �reas Verdes de Superquadra
-                        // Substitui o "random_roll < 3" antigo por uma l�gica de bosque (Noise)
+                        // Parques Genéricos e Áreas Verdes de Superquadra
+                        // Substitui o "random_roll < 3" antigo por uma lógica de bosque (Noise)
                         if bm_noise > 0.75 {
                             // Zona densa (Bosque)
                             if micro_noise > 0.6 && !building_footprints.contains(x, z) {
@@ -463,7 +463,7 @@ pub fn generate_leisure(
                                 );
                             }
                         } else if bm_noise < 0.3 && micro_noise > 0.9 {
-                            // �rvores solit�rias no gramado
+                            // Árvores solitárias no gramado
                             if !building_footprints.contains(x, z) {
                                 Tree::create(
                                     editor,
@@ -475,16 +475,17 @@ pub fn generate_leisure(
                     }
                 }
 
-                // ?? PARQUINHOS DE SUPERQUADRA E SAT�LITES
+                // 🚨 PARQUINHOS DE SUPERQUADRA E SATÉLITES
                 if matches!(leisure_type.as_str(), "playground" | "recreation_ground")
                     && !is_ana_lidia
                 {
                     let mut tile_rng = coord_rng(x, z, element.id);
                     let play_roll = tile_rng.random_range(0..5000);
 
+                    // 🚨 CORREÇÃO DOS INTERVALOS (Exclusivos para Inclusivos)
                     match play_roll {
-                        0..5 => {
-                            // Gangorra cl�ssica de madeira
+                        0..=5 => {
+                            // Gangorra clássica de madeira
                             for dx in -1i32..=1i32 {
                                 editor.set_block_absolute(
                                     DARK_OAK_SLAB,
@@ -497,8 +498,8 @@ pub fn generate_leisure(
                             }
                             editor.set_block_absolute(OAK_FENCE, x, ground_y, z, None, None);
                         }
-                        6..10 => {
-                            // Trepa-trepa (Gaiola de Ferro cl�ssica)
+                        6..=10 => {
+                            // Trepa-trepa (Gaiola de Ferro clássica)
                             for dy in 1i32..=3i32 {
                                 editor.set_block_absolute(
                                     IRON_BARS,
@@ -526,8 +527,8 @@ pub fn generate_leisure(
                                 );
                             }
                         }
-                        11..12 => {
-                            // Banco de concreto cl�ssico do DF ao redor do parquinho
+                        11..=12 => {
+                            // Banco de concreto clássico do DF ao redor do parquinho
                             editor.set_block_absolute(
                                 SMOOTH_STONE_SLAB,
                                 x,
@@ -570,7 +571,7 @@ pub fn generate_leisure_from_relation(
                     let way_with_rel_tags = ProcessedWay {
                         id: member.way.id,
                         nodes: member.way.nodes.clone(),
-                        tags: rel.tags.clone(), // Repassa as tags da rela��o (nome do parque, etc)
+                        tags: rel.tags.clone(), // Repassa as tags da relação (nome do parque, etc)
                     };
                     generate_leisure(
                         editor,

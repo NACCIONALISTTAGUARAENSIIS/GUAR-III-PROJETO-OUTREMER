@@ -23,6 +23,8 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 
 pub const MIN_Y: i32 = -64;
+// 🚨 BESM-6: Distorção Afim Governamental para Compensação Geométrica
+pub const H_SCALE: f64 = 1.33;
 
 /// Generation options that can be passed separately from CLI Args
 #[derive(Clone)]
@@ -31,6 +33,8 @@ pub struct GenerationOptions {
     pub format: WorldFormat,
     pub level_name: Option<String>,
     pub spawn_point: Option<(i32, i32)>,
+    // 🚨 BESM-6: Features governamentais diretas (CAESB, CityGML, IFC)
+    pub provider_features: Vec<crate::providers::Feature>,
     // 🚨 BESM-6: Canal de telemetria opcional para GUI/MasterControl
     pub telemetry_tx: Option<mpsc::Sender<BesmSignal>>,
 }
@@ -56,7 +60,14 @@ pub fn generate_underground_infrastructure(
         .get("width")
         .map(|s: &String| s.as_str())
         .unwrap_or("1");
-    let radius = (width_str.parse::<i32>().unwrap_or(1) / 2).max(1);
+
+    // 🚨 BESM-6: Correção Matemática de Rigor (Distorção do Raio)
+    let base_radius = (width_str.parse::<f64>().unwrap_or(1.0) / 2.0).max(1.0);
+
+    // O eixo X/Z no Minecraft foi escalado por 1.33, logo o diâmetro horizontal da tubulação
+    // deve ser espandido afim de manter a topologia circular do tubo no plano fatiado.
+    let rx = (base_radius * H_SCALE).round() as i32;
+    let ry = base_radius.round() as i32; // O eixo Y (profundidade) não sofre distorção horizontal
 
     let layer_val = element
         .tags
@@ -98,11 +109,27 @@ pub fn generate_underground_infrastructure(
                     continue;
                 }
 
-                for wx in -radius..=radius {
-                    for wy in -radius..=radius {
-                        let dist_sq = wx * wx + wy * wy;
-                        if dist_sq <= radius * radius {
-                            let is_shell = dist_sq >= (radius - 1) * (radius - 1);
+                // 🚨 CILINDRO ELÍPTICO: Preenchimento da Tubulação (Equação da Elipse)
+                for wx in -rx..=rx {
+                    for wy in -ry..=ry {
+                        // Equação da Elipse: (x^2 / a^2) + (y^2 / b^2) <= 1
+                        // Adicionamos 0.5 para suavizar a quantização dos blocos
+                        let a = rx as f64 + 0.5;
+                        let b = ry as f64 + 0.5;
+
+                        let val = (wx as f64 * wx as f64) / (a * a) + (wy as f64 * wy as f64) / (b * b);
+
+                        if val <= 1.0 {
+                            // Shell Thickness Check (Aproximação heurística de parede)
+                            let inner_a = (rx - 1).max(0) as f64 + 0.5;
+                            let inner_b = (ry - 1).max(0) as f64 + 0.5;
+                            let inner_val = if inner_a > 0.5 && inner_b > 0.5 {
+                                (wx as f64 * wx as f64) / (inner_a * inner_a) + (wy as f64 * wy as f64) / (inner_b * inner_b)
+                            } else {
+                                2.0 // Força ser parede se o tubo for muito pequeno
+                            };
+
+                            let is_shell = inner_val > 1.0;
 
                             let set_x = bx + wx;
                             let set_y = pipe_center_y + wy;
@@ -118,8 +145,8 @@ pub fn generate_underground_infrastructure(
                                     None,
                                 );
                             } else {
-                                let core_block = if fluid_block.is_some() && wy == -radius + 1 {
-                                    fluid_block.unwrap()
+                                let core_block = if fluid_block.is_some() && wy <= -ry + (ry / 2).max(1) {
+                                    fluid_block.unwrap() // Preenche água só na metade de baixo
                                 } else {
                                     AIR
                                 };
@@ -300,10 +327,10 @@ fn dispatch_element(
                 );
             } else if rel.tags.contains_key("water")
                 || rel
-                    .tags
-                    .get("natural")
-                    .map(|val| val == "water" || val == "bay")
-                    .unwrap_or(false)
+                .tags
+                .get("natural")
+                .map(|val| val == "water" || val == "bay")
+                .unwrap_or(false)
             {
                 // water_areas::generate_water_areas_from_relation(editor, rel, xzbbox);
             } else if rel.tags.contains_key("natural") {
@@ -382,9 +409,9 @@ pub fn generate_world_with_options(
                     rel.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
                 if is_building_type
                     && rel
-                        .members
-                        .iter()
-                        .any(|m| m.role == ProcessedMemberRole::Part)
+                    .members
+                    .iter()
+                    .any(|m| m.role == ProcessedMemberRole::Part)
                 {
                     for member in &rel.members {
                         if member.role == ProcessedMemberRole::Outer {
@@ -439,9 +466,11 @@ pub fn generate_world_with_options(
             // Para o escopo base sem os binários pesados, usamos um hash vazio estático:
             let empty_bare = Arc::new(FxHashMap::default());
             let empty_canopy = Arc::new(FxHashMap::default());
+            let empty_biome = Arc::new(FxHashMap::default()); // 🚨 BESM-6: O Cache O(1) de Biomas Nulo
 
             let local_ground = if args.terrain {
-                Ground::new_enabled(args.ground_level, empty_bare.clone(), empty_canopy.clone())
+                // 🚨 O construtor orgânico exige 3 caches agora
+                Ground::new_enabled(args.ground_level, empty_bare.clone(), empty_canopy.clone(), empty_biome.clone())
             } else {
                 Ground::new_flat(args.ground_level)
             };
@@ -527,6 +556,39 @@ pub fn generate_world_with_options(
                 for element in region_elements {
                     dispatch_element(
                         element,
+                        &mut editor,
+                        args,
+                        &highway_connectivity,
+                        &mut flood_fill_cache,
+                        &building_footprints,
+                        &suppressed_building_outlines,
+                        &xzbbox,
+                    );
+                }
+            }
+
+            // 🚨 BESM-6: PROCESSAMENTO DE FEATURES GOVERNAMENTAIS (CAESB, CityGML, IFC)
+            // Infraestrutura que requer preservação de metadados (diâmetro, profundidade, material)
+            for feature in &options.provider_features {
+                // Verifica se a feature intersecta esta região
+                let (feat_min_x, feat_max_x, feat_min_z, feat_max_z) = feature.aabb;
+                let region_min_x = rx << 9;
+                let region_max_x = (rx << 9) + 511;
+                let region_min_z = rz << 9;
+                let region_max_z = (rz << 9) + 511;
+
+                let intersects = !(feat_max_x < region_min_x
+                    || feat_min_x > region_max_x
+                    || feat_max_z < region_min_z
+                    || feat_min_z > region_max_z);
+
+                if intersects {
+                    // 🚨 TWEAK: Roteador Semântico de Features de Alta Precisão
+                    let processed_element = feature.clone().into_processed_element();
+
+                    // Delega para os construtores baseados nas tags traduzidas do Shapefile/WFS
+                    dispatch_element(
+                        processed_element,
                         &mut editor,
                         args,
                         &highway_connectivity,

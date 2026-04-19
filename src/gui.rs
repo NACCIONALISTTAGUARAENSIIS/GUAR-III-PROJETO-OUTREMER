@@ -256,8 +256,8 @@ fn add_localized_world_name(world_path: PathBuf, bbox: &LLBBox) -> PathBuf {
         return world_path;
     };
 
-    // Only modify if it's an Arnis world and doesn't already have an area name
-    if !current_name.starts_with("Arnis World ") || current_name.contains(": ") {
+    // Only modify if it's a Pincelism world and doesn't already have an area name
+    if !current_name.starts_with("Pincelism World ") || current_name.contains(": ") {
         return world_path;
     }
 

@@ -9,16 +9,24 @@ use proj::Proj;
 use rustc_hash::FxHashMap; // BESM-6: Hash O(1) de extrema performance
 use tobj;
 
+// 🚨 BESM-6: Utilizado para gerar um offset de ID único por malha
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
+
 /// Provedor de Malhas 3D de Fotogrametria (Wavefront .obj).
-/// Projetado para ler escaneamentos de drones (Monumentos, Est�tuas, Pontes complexas).
-/// Aplica Voxelizaçao colunar (1x1m) baseada na densidade dos v�rtices para recriar
-/// estruturas com tetos curvos e v�os livres no Minecraft.
+/// Projetado para ler escaneamentos de drones (Monumentos, Estátuas, Pontes complexas).
+/// 🚨 BESM-6: Aplica Voxelização Tridimensional real (X, Y, Z) para preservar topologia
+/// e vãos livres, injetando as cores reais dos materiais originais no mundo.
 pub struct MeshProvider {
     pub file_path: PathBuf,
     pub scale_h: f64,
     pub scale_v: f64,
     pub priority: u8,
-    pub decimation_factor: f64, // Pula v�rtices para aliviar mem�ria se necess�rio
+    // 🚨 BESM-6: Flexibilidade Geodésica Rigorosa
+    pub crs_source: Option<String>,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub offset_z: f64,
 }
 
 impl MeshProvider {
@@ -27,15 +35,30 @@ impl MeshProvider {
         scale_h: f64,
         scale_v: f64,
         priority: u8,
-        decimation_factor: f64,
+        crs_source: Option<String>,
+        offset_x: f64,
+        offset_y: f64,
+        offset_z: f64,
     ) -> Self {
         Self {
             file_path,
             scale_h,
             scale_v,
             priority,
-            decimation_factor: decimation_factor.clamp(0.01, 1.0),
+            crs_source,
+            offset_x,
+            offset_y,
+            offset_z,
         }
+    }
+
+    /// 🚨 BESM-6: Resolve o Ponto Cego de Colisão de IDs.
+    /// Cada malha recebe um base_id bilionário único, derivado do nome do arquivo.
+    fn generate_base_id(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.file_path.hash(&mut hasher);
+        // Garante que o ID fique no escopo de 7 a 9 bilhões para não colidir com OSM
+        7_000_000_000 + (hasher.finish() % 2_000_000_000)
     }
 }
 
@@ -43,17 +66,18 @@ impl DataProvider for MeshProvider {
     fn priority(&self) -> u8 {
         self.priority
     }
+
     fn name(&self) -> &str {
-        "Photogrammetry Mesh Voxelizer (.obj)"
+        "Photogrammetry Mesh Voxelizer 3D (.obj)"
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         println!(
-            "[INFO] ?? Iniciando Voxeliza��o de Fotogrametria 3D: {}",
+            "[INFO] 🗿 Iniciando Voxelização de Fotogrametria 3D: {}",
             self.file_path.display()
         );
 
-        // 1. Carregar a malha 3D via TOBJ (Zero-copy whenever possible)
+        // 1. Carregar a malha 3D e materiais via TOBJ
         let load_options = tobj::LoadOptions {
             single_index: true,
             triangulate: true,
@@ -61,110 +85,114 @@ impl DataProvider for MeshProvider {
             ignore_lines: true,
         };
 
-        let (models, _) = tobj::load_obj(&self.file_path, &load_options)
+        let (models, materials_result) = tobj::load_obj(&self.file_path, &load_options)
             .map_err(|e| format!("Falha ao decodificar a malha OBJ: {}", e))?;
 
-        // Inicializa o Pipeline Geod�sico (Assumimos que o drone exportou a nuvem em UTM 23S)
-        let proj = Proj::new_known_crs("EPSG:31983", "EPSG:4326", None)
-            .ok()
-            .ok_or("Falha ao inicializar biblioteca PROJ para CRS 31983 -> 4326")?;
+        // 🚨 Suporte a Texturas/Cores (Mapeia o arquivo .mtl associado)
+        let materials = materials_result.unwrap_or_default();
+
+        // 🚨 Pipeline Geodésico Opcional Dinâmico
+        // Se a malha já vem em coordenadas reais (UTM), projetamos para WGS84.
+        // Se crs_source for None, assumimos Plano Tangente Local (Centro = 0,0,0).
+        let proj = if let Some(crs) = &self.crs_source {
+            Some(Proj::new_known_crs(crs, "EPSG:4326", None)
+                .ok()
+                .ok_or(format!("Falha ao inicializar PROJ para CRS {} -> 4326", crs))?)
+        } else {
+            None
+        };
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
 
-        // ?? BESM-6 Tweak: Matriz Voxel Colunar
-        // Em vez de criar um pol�gono 2D gigante (que perderia o v�o livre de uma ponte),
-        // N�s agregamos os v�rtices em uma grade Minecraft de 1x1 bloco.
-        // A chave � a coordenada (X, Z) do Minecraft. O valor � (min_y, max_y) da eleva��o.
-        let mut voxel_grid: FxHashMap<(i32, i32), (f64, f64)> = FxHashMap::default();
-
-        let step_skip = (1.0 / self.decimation_factor).round() as usize;
-        let mut processed_vertices = 0;
+        // 🚨 Voxelização Tridimensional Real O(1)
+        // Agregamos vértices numa grade 3D. A tabela hash fará a decimação espacial natural.
+        // Chave: (X, Y, Z) exatos no Minecraft. Valor: Cor RGB em HEX extraída da textura.
+        let mut voxel_grid: FxHashMap<(i32, i32, i32), String> = FxHashMap::default();
 
         for model in models {
             let mesh = &model.mesh;
             let positions = &mesh.positions; // [x1, y1, z1, x2, y2, z2, ...]
 
-            // O Wavefront OBJ usa coordenadas locais.
-            // Padr�o Fotogram�trico: X = Easting (UTM), Z = Northing (UTM), Y = Eleva��o.
-            for i in (0..positions.len()).step_by(3 * step_skip) {
-                if i + 2 >= positions.len() {
-                    break;
-                }
-
-                let utm_x = positions[i] as f64;
-                let elev_y = positions[i + 1] as f64;
-                let utm_z = positions[i + 2] as f64;
-
-                // Reprojeta UTM para Lat/Lon
-                if let Ok((lon, lat)) = proj.convert((utm_x, utm_z)) {
-                    if let Ok(llpoint) = LLPoint::new(lat, lon) {
-                        // Early-Z Culling BBox
-                        if !bbox.contains(&llpoint) {
-                            continue;
-                        }
-
-                        // Projeta para a malha cartesiana X/Z do Minecraft
-                        let xz_point = transformer.transform_point(llpoint);
-                        let mc_x = xz_point.x;
-                        let mc_z = xz_point.z;
-
-                        // Agrega na coluna Voxel
-                        let entry = voxel_grid.entry((mc_x, mc_z)).or_insert((elev_y, elev_y));
-                        if elev_y < entry.0 {
-                            entry.0 = elev_y;
-                        }
-                        if elev_y > entry.1 {
-                            entry.1 = elev_y;
-                        }
-
-                        processed_vertices += 1;
+            // Extração de Cor do Material baseada na face/grupo
+            let mut hex_color = String::from("#888888"); // Concreto Brutalista (Fallback)
+            if let Some(mat_id) = mesh.material_id {
+                if let Some(mat) = materials.get(mat_id) {
+                    if let Some(diffuse) = mat.diffuse {
+                        let r = (diffuse[0] * 255.0) as u8;
+                        let g = (diffuse[1] * 255.0) as u8;
+                        let b = (diffuse[2] * 255.0) as u8;
+                        hex_color = format!("#{:02X}{:02X}{:02X}", r, g, b);
                     }
                 }
+            }
+
+            // O Wavefront OBJ usa coordenadas locais.
+            // O laço não pula mais vértices destrutivamente. Processamos todos e a grade 1x1x1 absorve a redundância.
+            for i in (0..positions.len()).step_by(3) {
+                let raw_x = positions[i] as f64 + self.offset_x;
+                let raw_y = positions[i + 1] as f64 + self.offset_y;
+                let raw_z = positions[i + 2] as f64 + self.offset_z;
+
+                let (mc_x, mc_z) = if let Some(ref p) = proj {
+                    // Trata X e Z como Coordenadas Georreferenciadas (Ex: UTM)
+                    if let Ok((lon, lat)) = p.convert((raw_x, raw_z)) {
+                        if let Ok(llpoint) = LLPoint::new(lat, lon) {
+                            // Early-Z Culling Espacial
+                            if !bbox.contains(&llpoint) {
+                                continue;
+                            }
+                            let xz = transformer.transform_point(llpoint);
+                            (xz.x, xz.z)
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    // Trata como Plano Cartesiano Local (Origem no Centro do Modelo)
+                    let mc_x = (raw_x * self.scale_h).round() as i32;
+                    let mc_z = (raw_z * self.scale_h).round() as i32;
+                    (mc_x, mc_z)
+                };
+
+                let mc_y = (raw_y * self.scale_v).round() as i32;
+
+                // Insere na Grade 3D
+                // Múltiplos vértices no mesmo metro cúbico colidem na mesma chave (Decimação Topológica Natural)
+                voxel_grid.insert((mc_x, mc_y, mc_z), hex_color.clone());
             }
         }
 
         println!(
-            "[INFO] ?? Malha fatiada: {} v�rtices colapsados em {} colunas Voxel.",
-            processed_vertices,
+            "[INFO] 🧱 Malha processada: {} voxels 3D sólidos e coloridos gerados.",
             voxel_grid.len()
         );
 
         let mut features = Vec::with_capacity(voxel_grid.len());
-        let mut next_id = 7_000_000_000; // Offset dedicado para Mesh Voxel
 
-        // 3. Converter as Colunas Voxel em Features de Alta Fidelidade
-        for ((mc_x, mc_z), (min_elev, max_elev)) in voxel_grid {
-            // Cria um pol�gono de 1x1 bloco exato para essa coluna
-            let voxel_poly = vec![
-                XZPoint::new(mc_x, mc_z),
-                XZPoint::new(mc_x + 1, mc_z),
-                XZPoint::new(mc_x + 1, mc_z + 1),
-                XZPoint::new(mc_x, mc_z + 1),
-            ];
+        // 🚨 O ID dinâmico e seguro gerado pela hash do filepath
+        let mut next_id = self.generate_base_id();
 
+        // 3. Converter os Voxels em Features Pontuais (Pulando extrusão 2.5D)
+        for ((mc_x, mc_y, mc_z), color_hex) in voxel_grid {
             let mut tags = HashMap::new();
-            tags.insert("source".to_string(), "GDF_Mesh_Voxel".to_string());
-            tags.insert("building".to_string(), "yes".to_string()); // For�a o motor a extrudar
+            tags.insert("source".to_string(), "GDF_Mesh_Voxel3D".to_string());
 
-            // O Segredo da Geometria Complexa: Se houver diferen�a entre a base e o topo,
-            // o Arnis vai criar um v�o livre de ar embaixo (min_height) e teto em (height).
-            tags.insert(
-                "min_height".to_string(),
-                format!("{:.2}", min_elev * self.scale_v),
-            );
-            tags.insert(
-                "height".to_string(),
-                format!("{:.2}", max_elev * self.scale_v),
-            );
+            // Repassamos a altura e cor exatas. O compilador do Minecraft usará a cor HEX
+            // para escolher o bloco (Lã, Terracota, Concreto) mais parecido visualmente.
+            tags.insert("elevation".to_string(), mc_y.to_string());
+            tags.insert("color".to_string(), color_hex);
+            tags.insert("material".to_string(), "photogrammetry".to_string());
 
             let feature = Feature::new(
                 next_id,
-                SemanticGroup::Building, // Tratamos o mesh como constru��o para sofrer extrus�o
+                SemanticGroup::TerrainDetail, // 🚨 Cessa a dependência do Building. Voxels são tratados como pontos no espaço.
                 tags,
-                GeometryType::Polygon(voxel_poly),
+                GeometryType::Point(XZPoint::new(mc_x, mc_z)),
                 "Photogrammetry_Mesh".to_string(),
-                self.priority, // Prioridade Alt�ssima para perfurar e sobrepor pol�gonos normais
+                self.priority,
             );
 
             features.push(feature);

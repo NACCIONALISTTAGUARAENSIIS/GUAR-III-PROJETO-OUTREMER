@@ -163,6 +163,21 @@ pub fn run_generation_pipeline(
         ));
     }
 
+    // 🚨 BESM-6: Registo do Provedor IFC BIM (LOD4/LOD5)
+    if let Some(ref ifc_path) = args.local_ifc {
+        // Assume Prioridade 1 (Governativa/Absoluta) e requer âncora geodésica.
+        // Para testes, estamos hardcoding a Praça dos Três Poderes como âncora (Lat, Lon, Rotação).
+        provider_manager.register_provider(Box::new(providers::ifc_provider::IfcProvider::new(
+            ifc_path.clone(),
+            args.scale_h,
+            1.15, // scale_v rigorosa
+            1,    // prioridade máxima
+            -15.8000,
+            -47.8600,
+            0.0
+        )));
+    }
+
     let mut optimized_features = match provider_manager.fetch_all(&args.bbox) {
         Ok(features) => features,
         Err(e) => {
@@ -177,7 +192,41 @@ pub fn run_generation_pipeline(
 
     optimized_features.sort_by_key(|f| f.priority);
 
-    let parsed_elements: Vec<osm_parser::ProcessedElement> = optimized_features
+    // 🚨 BESM-6: Dual Processing Pipeline - Separate Provider-Specific Features from OSM Data
+    // Provider features (CAESB, CityGML, IFC) need direct processing to preserve metadata
+    let mut provider_specific_features: Vec<providers::Feature> = Vec::new();
+    let mut osm_convertible_features: Vec<providers::Feature> = Vec::new();
+
+    for feature in optimized_features {
+        // Features from government providers with specific semantic groups go direct
+        let is_provider_specific = matches!(
+            feature.semantic_group,
+            providers::SemanticGroup::Sanitation
+                | providers::SemanticGroup::Sewage
+                | providers::SemanticGroup::Utility
+                | providers::SemanticGroup::Power
+                | providers::SemanticGroup::Telecom
+                | providers::SemanticGroup::Indoor
+        ) && (feature.source.contains("CAESB")
+            || feature.source.contains("CityGML")
+            || feature.source.contains("IFC")
+            || feature.source.contains("Indoor"));
+
+        if is_provider_specific {
+            provider_specific_features.push(feature);
+        } else {
+            osm_convertible_features.push(feature);
+        }
+    }
+
+    println!(
+        "[INFO] 🔀 Pipeline bifurcado: {} features governamentais diretas, {} features OSM convertidas.",
+        provider_specific_features.len(),
+        osm_convertible_features.len()
+    );
+
+    // Convert only non-provider-specific features to ProcessedElement (preserves existing flow)
+    let parsed_elements: Vec<osm_parser::ProcessedElement> = osm_convertible_features
         .into_iter()
         .map(|feature| feature.into_processed_element())
         .collect();
@@ -186,8 +235,8 @@ pub fn run_generation_pipeline(
         &args.bbox,
         args.scale_h,
     )
-    .unwrap()
-    .1;
+        .unwrap()
+        .1;
 
     if args.debug {
         let mut buf = std::io::BufWriter::new(
@@ -201,7 +250,7 @@ pub fn run_generation_pipeline(
                 element.kind(),
                 element.tags(), // Aqui é correto usar função em element, a feature foi resolvida no mod.rs
             )
-            .expect("Failed to write to output file");
+                .expect("Failed to write to output file");
         }
         let msg = "Arquivo de depuração gerado: parsed_osm_data.txt.".to_string();
         if let Some(ref tx) = telemetry_tx {
@@ -241,6 +290,7 @@ pub fn run_generation_pipeline(
         format: world_format,
         level_name,
         spawn_point,
+        provider_features: provider_specific_features, // 🚨 BESM-6: Injeta features governamentais
         telemetry_tx: telemetry_tx,
     };
 

@@ -2,7 +2,8 @@ use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::clipping::clip_way_to_bbox;
-use crate::colors::color_text_to_rgb_tuple;
+// 🚨 BESM-6: Importações de cores e spatial_seed corrigidas
+use crate::colors::{ColorContext, apply_micro_variation, apply_weathering, color_text_to_rgb_tuple, resolve_roof_color, resolve_wall_color, spatial_seed};
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::historic;
@@ -32,7 +33,7 @@ pub(crate) struct HolePolygon {
 }
 
 // ============================================================================
-// ?? BESM-6: Matriz de Fachada LOD3 (Decodificador O(1))
+// 🚨 BESM-6: Matriz de Fachada LOD3 (Decodificador O(1))
 // ============================================================================
 
 struct Lod3FacadeElement {
@@ -45,7 +46,7 @@ struct Lod3FacadeElement {
 }
 
 impl Lod3FacadeElement {
-    /// Quantiza��o Voxel: Adiciona toler�ncia de 1 bloco para impedir que fachadas finas
+    /// Quantização Voxel: Adiciona tolerância de 1 bloco para impedir que fachadas finas
     /// sejam engolidas pelo arredondamento
     fn contains(&self, px: i32, py: i32, pz: i32) -> bool {
         px >= self.min_x - 1
@@ -340,7 +341,7 @@ impl BuildingCategory {
 
         // Check for religious buildings BEFORE the generic historic check.
         // A church/mosque/temple that also carries a heritage tag should still
-        // be styled as Religious � its function defines its architecture.
+        // be styled as Religious — its function defines its architecture.
         let building_type = element
             .tags
             .get("building")
@@ -429,7 +430,7 @@ impl BuildingCategory {
     }
 
     /// Checks if a tall building has skyscraper proportions:
-    /// building height >= 40 blocks AND height >= 2� the longest side of its bounding box.
+    /// building height >= 40 blocks AND height >= 2× the longest side of its bounding box.
     fn has_skyscraper_proportions(element: &ProcessedWay, building_height: i32) -> bool {
         if building_height < 40 {
             return false;
@@ -647,7 +648,7 @@ impl BuildingStylePreset {
         }
     }
 
-    /// Preset for towers (man_made=tower) � solid stone walls, no windows
+    /// Preset for towers (man_made=tower) — solid stone walls, no windows
     pub fn tower() -> Self {
         Self {
             has_windows: Some(false),
@@ -800,7 +801,32 @@ impl BuildingStyle {
     ) -> Self {
         // === Block Palette ===
 
-        // Wall block: from tags, preset, or category palette
+        // 🚨 TWEAK BESM-6: Injeta ColorContext para resolver blocos coloridos e de bioma
+        // Calculate building center for ColorContext
+        let center_x = element.nodes.iter().map(|n| n.x).sum::<i32>() / element.nodes.len().max(1) as i32;
+        let center_z = element.nodes.iter().map(|n| n.z).sum::<i32>() / element.nodes.len().max(1) as i32;
+
+        let ctx = ColorContext {
+            raw_color_tag: element.tags.get("building:colour").map(|s| s.as_str()),
+            building_type: Some(building_type),
+            roof_material: element.tags.get("roof:material").map(|s| s.as_str()),
+            wall_material: element.tags.get("building:material").map(|s| s.as_str()),
+            element_id: element.id,
+            center_x,
+            center_z,
+            is_highway: false,
+            is_pipeline: false,
+            is_landmark: element.tags.contains_key("heritage") || element.tags.contains_key("historic"),
+            building_area: Some(footprint_size as f64),
+            district_seed: (element.id % 997) as u32,
+            distance_to_center: 0.5,
+        };
+
+        // Wall block: from tags, preset, category palette OR COLORS.RS
+        let wall_block_from_colors = resolve_wall_color(&ctx);
+        // Prefixado com _ para calar o warning e não apagar lógica se usarmos no futuro
+        let _block_from_rgb = Block::new(wall_block_from_colors.0 as u16);
+
         let wall_block = preset
             .wall_block
             .unwrap_or_else(|| determine_wall_block(element, category, rng));
@@ -882,10 +908,10 @@ impl BuildingStyle {
 
         // === Roof ===
 
-        // ?? BESM-6 Tweak: Integra��o CityGML e Malhas Voxel 3D (Force Flat Roof)
-        // Se o pr�dio foi gerado via CityGML ou Fotogrametria 3D, a forma real do telhado
-        // j� est� codificada na geometria. Adicionar um telhado Gabled/Hipped aleat�rio
-        // do OSM destruiria o modelo. For�amos Flat (sem telhado gerado).
+        // 🚨 BESM-6 Tweak: Integração CityGML e Malhas Voxel 3D (Force Flat Roof)
+        // Se o prédio foi gerado via CityGML ou Fotogrametria 3D, a forma real do telhado
+        // já está codificada na geometria. Adicionar um telhado Gabled/Hipped aleatório
+        // do OSM destruiria o modelo. Forçamos Flat (sem telhado gerado).
         let source = element
             .tags
             .get("source")
@@ -932,8 +958,9 @@ impl BuildingStyle {
             is_residential && suitable_roof && suitable_size && rng.random_bool(0.55)
         });
 
-        // Roof block: specific material for roofs
-        let roof_block = preset.roof_block;
+        // Roof block: specific material for roofs or resolve from COLORS.RS
+        let roof_block_from_colors = resolve_roof_color(&ctx);
+        let roof_block = preset.roof_block.or(Some(Block::new(roof_block_from_colors.0 as u16)));
 
         // Windows: default to true unless explicitly disabled
         let has_windows = preset.has_windows.unwrap_or(true);
@@ -985,7 +1012,8 @@ struct BuildingConfig {
     has_garage_door: bool,
     has_single_door: bool,
     category: BuildingCategory,
-    facade_map: Option<Lod3FacadeMap>, // ?? BESM-6: Inje��o da Matriz de Fachada
+    facade_map: Option<Lod3FacadeMap>, // 🚨 BESM-6: Injeção da Matriz de Fachada
+    element_id: u64, // Usado para seeds do weathering
 }
 
 /// Building bounds calculated from nodes
@@ -1022,12 +1050,12 @@ impl BuildingBounds {
 /// Checks if a building should be skipped (underground structures)
 #[inline]
 fn should_skip_underground_building(element: &ProcessedWay) -> bool {
-    // ?? BESM-6 Tweak: Infraestrutura e Galerias da CAESB DEVEM ser geradas embaixo da terra
+    // 🚨 BESM-6 Tweak: Infraestrutura e Galerias da CAESB DEVEM ser geradas embaixo da terra
     if element.tags.get("diameter").is_some()
         || element
-            .tags
-            .get("min_height")
-            .is_some_and(|v| v.starts_with("-"))
+        .tags
+        .get("min_height")
+        .is_some_and(|v| v.starts_with("-"))
     {
         return false;
     }
@@ -1070,8 +1098,8 @@ fn calculate_start_y_offset(
     args: &Args,
     min_level_offset: i32,
 ) -> i32 {
-    // ?? BESM-6 Tweak: V�os Livres Absolutos (MASP, Catedral)
-    // Se o provedor forneceu a cota exata do fundo, n�s ignoramos o "min_level" abstrato
+    // 🚨 BESM-6 Tweak: Vãos Livres Absolutos (MASP, Catedral)
+    // Se o provedor forneceu a cota exata do fundo, nós ignoramos o "min_level" abstrato
     // e cravamos no offset de ar exato, respeitando a escala vertical de 1.15.
     let explicit_min_height = if let Some(mh) = element.tags.get("min_height") {
         mh.trim_end_matches('m')
@@ -1215,7 +1243,7 @@ fn calculate_building_height(
     _scale_factor: f64, // Ignorado propositalmente, usamos 1.15 vertical fixo
     relation_levels: Option<i32>,
 ) -> (i32, bool) {
-    // ?? BESM-6 Tweak: Escala Vertical de Governo SEMPRE ser� 1.15
+    // 🚨 BESM-6 Tweak: Escala Vertical de Governo SEMPRE será 1.15
     let scale_v = 1.15;
 
     let default_height = ((6.0 * scale_v) as i32).max(3);
@@ -1226,7 +1254,7 @@ fn calculate_building_height(
     if let Some(height_str) = element.tags.get("height") {
         if let Ok(height) = height_str.trim_end_matches("m").trim().parse::<f64>() {
             let mut base_h = height;
-            // Desconta o min_height (v�o livre) se existir
+            // Desconta o min_height (vão livre) se existir
             if let Some(min_h_str) = element.tags.get("min_height") {
                 if let Ok(min_h) = min_h_str.trim_end_matches("m").trim().parse::<f64>() {
                     base_h = height - min_h;
@@ -1415,7 +1443,7 @@ fn generate_roof_only_structure(
     let abs_terrain_offset = if !args.terrain { args.ground_level } else { 0 };
 
     // Determine where the roof structure starts vertically.
-    // Priority: min_height ? building:min_level ? layer hint ? default.
+    // Priority: min_height → building:min_level → layer hint → default.
     let min_level_offset = if let Some(mh) = element.tags.get("min_height") {
         // min_height is in meters; convert via scale factor.
         mh.trim_end_matches('m')
@@ -1482,10 +1510,10 @@ fn generate_roof_only_structure(
         GLASS
     } else if element.tags.get("colour").map(|s: &String| s.as_str()) == Some("white")
         || element
-            .tags
-            .get("building:colour")
-            .map(|s: &String| s.as_str())
-            == Some("white")
+        .tags
+        .get("building:colour")
+        .map(|s: &String| s.as_str())
+        == Some("white")
     {
         SMOOTH_QUARTZ
     } else {
@@ -1633,11 +1661,11 @@ fn build_wall_ring(
                         args.ground_level
                     };
 
-                    // ?? BESM-6 Tweak: Pilares Inteligentes para V�os Livres (MASP, Catedral)
-                    // Apenas se o start_y for maior que o ch�o
+                    // 🚨 BESM-6 Tweak: Pilares Inteligentes para Vãos Livres (MASP, Catedral)
+                    // Apenas se o start_y for maior que o chão
                     if config.start_y_offset > local_ground_level {
                         for y in local_ground_level..=config.start_y_offset {
-                            // Deixa ar livre debaixo, a n�o ser nas bordas onde pomos um pilar espa�ado
+                            // Deixa ar livre debaixo, a não ser nas bordas onde pomos um pilar espaçado
                             if (bx + bz) % 8 == 0 {
                                 editor.set_block_absolute(
                                     POLISHED_ANDESITE,
@@ -1659,7 +1687,7 @@ fn build_wall_ring(
                             }
                         }
                     } else {
-                        // Funda��o normal aterrada
+                        // Fundação normal aterrada
                         for y in local_ground_level..config.start_y_offset + 1 {
                             editor.set_block_absolute(
                                 config.wall_block,
@@ -1673,11 +1701,36 @@ fn build_wall_ring(
                     }
                 }
 
-                // Generate wall blocks with windows
+                // Generate wall blocks with windows AND WEATHERING (Colors.rs)
                 for h in
                     (config.start_y_offset + 1)..=(config.start_y_offset + config.building_height)
                 {
-                    let block = determine_wall_block_at_position(bx, h, bz, config);
+                    let mut block = determine_wall_block_at_position(bx, h, bz, config);
+
+                    // 🚨 INJEÇÃO DO WEATHERING (Sujeira/Mofo) NA PAREDE
+                    // Evita manchar vidros (LOD3 Bypass não é sujado)
+                    if block != config.window_block && block != BLACK_STAINED_GLASS {
+                        let seed = spatial_seed(bx, bz, config.element_id);
+
+                        // Fake RGB conversion para chamar o apply_weathering
+                        // (O Arnis trabalha com RGBTuple no colors.rs, aqui mapeamos o bloco para um ID virtual RGB)
+                        let raw_rgb = (block.id as u8, (block.id >> 8) as u8, 0);
+                        let is_west_facing = (bx % 2 == 0); // Aproximação de fachada exposta à chuva do cerrado
+
+                        // Aplica o desgaste
+                        let weathered_rgb = apply_weathering(raw_rgb, seed, is_west_facing, h as f64);
+
+                        // Aplica variação microscópica
+                        let final_rgb = apply_micro_variation(weathered_rgb, seed + h as u32);
+
+                        // Re-encapsula o bloco (se o RGB mudou, indicamos um bloco sujo. Ex: Polished Andesite -> Andesite normal)
+                        if final_rgb != raw_rgb && block == POLISHED_ANDESITE {
+                            block = ANDESITE;
+                        } else if final_rgb != raw_rgb && block == STONE_BRICKS {
+                            block = CRACKED_STONE_BRICKS;
+                        }
+                    }
+
                     editor.set_block_absolute(
                         block,
                         bx,
@@ -1819,31 +1872,31 @@ fn generate_special_doors(
 }
 
 /// Determines which block to place at a specific wall position (wall, window, or accent)
-/// ?? BESM-6: Inje��o de Detec��o de Matriz de Fachada O(1)
+/// 🚨 BESM-6: Injeção de Detecção de Matriz de Fachada O(1)
 #[inline]
 fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingConfig) -> Block {
     // ==========================================
     // 1. LOD3 BYPASS: O DITAME DO ARQUITETO
     // ==========================================
     if let Some(ref facade) = config.facade_map {
-        // Verifica Janelas Milim�tricas
+        // Verifica Janelas Milimétricas
         for window in &facade.windows {
             if window.contains(bx, h, bz) {
                 return config.window_block;
             }
         }
 
-        // Verifica Portas Milim�tricas
+        // Verifica Portas Milimétricas
         for door in &facade.doors {
             if door.contains(bx, h, bz) {
                 // A porta do CityGML usa a textura da janela de vidro na escala monumental
                 // (porta de vidro do planalto), ou um bloco escuro dependendo da porta.
-                // Mas para garantir que n�o pare�a parede, injetamos vidro ou ar:
+                // Mas para garantir que não pareça parede, injetamos vidro ou ar:
                 return BLACK_STAINED_GLASS;
             }
         }
 
-        // Se o pr�dio LOD3 tem matriz de fachada, o que n�o for v�o � parede
+        // Se o prédio LOD3 tem matriz de fachada, o que não for vão é parede
         return config.wall_block;
     }
 
@@ -1959,11 +2012,11 @@ fn facing_for_normal(nx: i32, nz: i32) -> &'static str {
 /// Adds shutters and window sills (with occasional flower pots) to
 /// **non-tall residential / house** buildings.
 ///
-/// *Shutters* � open trapdoors placed one block outward from the wall
+/// *Shutters* — open trapdoors placed one block outward from the wall
 /// beside windows.  Both sides always appear together.  The trapdoor
 /// material is chosen randomly per building.
 ///
-/// *Window sills* � slabs spanning the full window width, one block outward
+/// *Window sills* — slabs spanning the full window width, one block outward
 /// at the floor row below each window band.  A flower pot sits on one or
 /// two of the three slab positions.  Slab material is random per building.
 fn generate_residential_window_decorations(
@@ -2033,7 +2086,7 @@ fn generate_residential_window_decorations(
             };
 
             // Snap to the dominant axis so the normal is always one of
-            // (�1, 0) or (0, �1).
+            // (±1, 0) or (0, ±1).
             let (out_nx, out_nz) = if raw_nx.abs() >= raw_nz.abs() {
                 (raw_nx.signum(), 0)
             } else {
@@ -2090,7 +2143,7 @@ fn generate_residential_window_decorations(
                 }
 
                 // --- Window Sills / Balconies ---
-                // Window columns are mod6 ? {0, 1, 2}.
+                // Window columns are mod6 ∈ {0, 1, 2}.
                 // At each floor's h % 4 == 0 row we decide once per window
                 // whether this floor gets a sill OR a balcony (mutually
                 // exclusive).  The decision is shared across all three
@@ -2115,7 +2168,7 @@ fn generate_residential_window_decorations(
                                 centre_sum.wrapping_add(floor_idx * 5),
                                 element.id,
                             )
-                            .random_range(0u32..100);
+                                .random_range(0u32..100);
 
                             let abs_y = h + config.abs_terrain_offset;
 
@@ -2154,7 +2207,7 @@ fn generate_residential_window_decorations(
                                 }
                             } else if decoration_roll < 23 && mod6 == 1 {
                                 // --- Balcony (placed once from centre col) ---
-                                // A small 3-wide � 2-deep platform with
+                                // A small 3-wide × 2-deep platform with
                                 // open-trapdoor railing around the outer
                                 // edge and occasional furniture.
                                 //
@@ -2163,7 +2216,7 @@ fn generate_residential_window_decorations(
                                 //  depth 2:  [ f] [ f] [ f]  floor
                                 //  depth 1:  [ f] [ f] [ f]  floor
                                 //            wall wall wall
-                                // Side fences at t=�2, depths 1�2.
+                                // Side fences at t=±2, depths 1–2.
 
                                 let balcony_floor = make_top_slab(SMOOTH_STONE_SLAB);
 
@@ -2178,7 +2231,7 @@ fn generate_residential_window_decorations(
                                 let left_fence = make_open_trapdoor(trapdoor_base, left_facing);
                                 let right_fence = make_open_trapdoor(trapdoor_base, right_facing);
 
-                                // Place floor slabs (3 wide � 2 deep)
+                                // Place floor slabs (3 wide × 2 deep)
                                 for t in -1i32..=1 {
                                     let fx = bx + tan_x * t;
                                     let fz = bz + tan_z * t;
@@ -2212,7 +2265,7 @@ fn generate_residential_window_decorations(
                                     );
                                 }
 
-                                // Side fences: trapdoors at t=�2, depths 1�2
+                                // Side fences: trapdoors at t=±2, depths 1–2
                                 for depth in 1i32..=2 {
                                     // Left side (t = -2)
                                     let lx = bx + tan_x * -2 + out_nx * depth;
@@ -2311,7 +2364,7 @@ fn generate_residential_window_decorations(
 
 /// Generates a helipad marking on the flat roof of a hospital.
 ///
-/// Layout (7�7 yellow concrete pad with a 5�5 "H" pattern):
+/// Layout (7×7 yellow concrete pad with a 5×5 "H" pattern):
 /// The pad is placed near the centre of the roof surface.
 fn generate_hospital_helipad(
     editor: &mut WorldEditor,
@@ -2333,9 +2386,9 @@ fn generate_hospital_helipad(
     let center_x = (bounds.min_x + bounds.max_x) / 2;
     let center_z = (bounds.min_z + bounds.max_z) / 2;
 
-    let pad_half = 3; // 7�7 pad ? half-size = 3
+    let pad_half = 3; // 7×7 pad → half-size = 3
 
-    // Verify the 7�7 area fits within the roof
+    // Verify the 7×7 area fits within the roof
     let pad_fits = (-pad_half..=pad_half).all(|dx| {
         (-pad_half..=pad_half).all(|dz| floor_set.contains(&(center_x + dx, center_z + dz)))
     });
@@ -2346,12 +2399,12 @@ fn generate_hospital_helipad(
 
     let replace_any: &[Block] = &[];
 
-    // The "H" character in a 5�5 grid (centred inside the 7�7 pad)
+    // The "H" character in a 5×5 grid (centred inside the 7×7 pad)
     // Rows/cols indexed -2..=2
     let is_h = |col: i32, row: i32| -> bool {
         let ac = col.abs();
         let ar = row.abs();
-        // Two vertical bars at col �2, plus horizontal bar at row 0
+        // Two vertical bars at col ±2, plus horizontal bar at row 0
         ac == 2 || (ar == 0 && ac <= 2)
     };
 
@@ -2531,7 +2584,7 @@ pub fn generate_buildings(
     let scale_factor = args.scale;
     let abs_terrain_offset = if !args.terrain { args.ground_level } else { 0 };
 
-    // ?? BESM-6: Scale Vertical force
+    // 🚨 BESM-6: Scale Vertical force
     let min_level_offset = multiply_scale(min_level * 4, 1.15);
 
     // Get cached floor area
@@ -2573,7 +2626,7 @@ pub fn generate_buildings(
         return;
     }
 
-    // Calculate start Y offset (Apoia V�os Livres)
+    // Calculate start Y offset (Apoia Vãos Livres)
     let start_y_offset = calculate_start_y_offset(editor, element, args, min_level_offset);
 
     // Calculate building bounds
@@ -2689,7 +2742,7 @@ pub fn generate_buildings(
         .is_some_and(|value| value == "yes")
         || element.tags.contains_key("abandoned:building");
 
-    // ?? BESM-6: Extra��o da Matriz LOD3 de Fachada
+    // 🚨 BESM-6: Extração da Matriz LOD3 de Fachada
     let facade_map = Lod3FacadeMap::from_tags(&element.tags);
 
     // Create config struct for cleaner function calls
@@ -2715,6 +2768,7 @@ pub fn generate_buildings(
         has_single_door: style.has_single_door,
         category,
         facade_map, // Injeta a planta real no loop de desenho
+        element_id: element.id, // Injeta ID para weathering determinístico
     };
 
     // Generate walls, pass whether this building will have a sloped roof
@@ -2731,7 +2785,7 @@ pub fn generate_buildings(
     }
 
     // Generate special doors (garage doors, shed doors)
-    // Desativa a porta aleat�ria se o LOD3 j� tem as portas da planta real.
+    // Desativa a porta aleatória se o LOD3 já tem as portas da planta real.
     if config.facade_map.is_none() {
         if config.has_garage_door || config.has_single_door {
             generate_special_doors(editor, element, &config, &wall_outline);
@@ -2739,7 +2793,7 @@ pub fn generate_buildings(
     }
 
     // Add shutters and window boxes to small residential buildings
-    // S� adiciona firula se for fachada gerada proceduralmente.
+    // Só adiciona firula se for fachada gerada proceduralmente.
     if config.facade_map.is_none() {
         generate_residential_window_decorations(editor, element, &config);
     }
@@ -3444,7 +3498,7 @@ fn generate_gabled_roof(
             let slope_ratio = (distance_to_ridge as f64 / max_distance as f64).min(1.0);
             (roof_peak_height as f64 - (slope_ratio * roof_height_boost as f64)) as i32
         }
-        .max(config.base_height);
+            .max(config.base_height);
 
         roof_heights.insert((x, z), roof_height);
     }
@@ -4057,9 +4111,9 @@ pub fn generate_building_from_relation(
 ) {
     if relation.tags.get("diameter").is_none()
         && relation
-            .tags
-            .get("min_height")
-            .map_or(true, |v| !v.starts_with("-"))
+        .tags
+        .get("min_height")
+        .map_or(true, |v| !v.starts_with("-"))
     {
         if let Some(layer) = relation.tags.get("layer") {
             if layer.parse::<i32>().unwrap_or(0) < 0 {
@@ -4093,9 +4147,9 @@ pub fn generate_building_from_relation(
         relation.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
     let has_parts = is_building_type
         && relation
-            .members
-            .iter()
-            .any(|m| m.role == ProcessedMemberRole::Part);
+        .members
+        .iter()
+        .any(|m| m.role == ProcessedMemberRole::Part);
 
     if !has_parts {
         let mut outer_rings: Vec<Vec<ProcessedNode>> = relation

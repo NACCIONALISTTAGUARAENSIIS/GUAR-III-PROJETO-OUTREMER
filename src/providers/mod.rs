@@ -1,5 +1,6 @@
 pub mod citygml_provider;
 pub mod csv_provider;
+pub mod ifc_provider;
 pub mod dem_provider;
 pub mod dsm_provider;
 pub mod gdf_provider;
@@ -12,7 +13,11 @@ pub mod osm_provider;
 pub mod pbf_provider;
 pub mod raster_provider;
 pub mod vegetation_provider;
+pub mod mvt_provider;
 pub mod wfs_provider;
+pub mod kml_provider;
+pub mod postgis_provider;
+mod tiles3d_provider;
 
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::LLBBox;

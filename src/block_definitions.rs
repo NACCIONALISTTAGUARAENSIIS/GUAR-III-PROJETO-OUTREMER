@@ -57,7 +57,8 @@ type ColorBlockMapping = (ColorTuple, BlockOptions);
 
 #[derive(Copy, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Debug)]
 pub struct Block {
-    id: u16, // Aumentado para u16 para garantir espaço futuro
+    // 🚨 BESM-6: Campo tornado PÚBLICO para acesso direto e veloz no map_renderer e exportadores
+    pub id: u16, // Aumentado para u16 para garantir espaço futuro
 }
 
 // Extended block with dynamic properties

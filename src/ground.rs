@@ -10,6 +10,9 @@ use crate::coordinate_system::cartesian::XZPoint;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
+// 🚨 BESM-6: Importação do marcador de bioma nulo para o fallback seguro
+use crate::providers::vegetation_provider::BIOME_NONE;
+
 /// Represents terrain data, stratified into Bare Earth and Surface Canopy.
 /// 🚨 BESM-6: Matrizes globais vetoriais (`Vec<i32>`) foram extintas.
 /// Apenas o extrato quantizado O(1) da região atual (Scanline) é referenciado aqui.
@@ -21,6 +24,9 @@ pub struct Ground {
     // Caches locais do quadrante Scanline atual injetados pelo orquestrador
     bare_earth_cache: Arc<FxHashMap<(i32, i32), i32>>,
     canopy_surface_cache: Arc<FxHashMap<(i32, i32), i32>>,
+
+    // 🚨 BESM-6: Cache O(1) para a Verdade Biológica do MapBiomas/SICAR
+    biome_cache: Arc<FxHashMap<(i32, i32), u16>>,
 }
 
 impl Ground {
@@ -31,6 +37,7 @@ impl Ground {
             ground_level,
             bare_earth_cache: Arc::new(FxHashMap::default()),
             canopy_surface_cache: Arc::new(FxHashMap::default()),
+            biome_cache: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -40,12 +47,14 @@ impl Ground {
         ground_level: i32,
         bare_earth_cache: Arc<FxHashMap<(i32, i32), i32>>,
         canopy_surface_cache: Arc<FxHashMap<(i32, i32), i32>>,
+        biome_cache: Arc<FxHashMap<(i32, i32), u16>>, // 🚨 Nova injeção de dependência biológica
     ) -> Self {
         Self {
             elevation_enabled: true,
             ground_level,
             bare_earth_cache,
             canopy_surface_cache,
+            biome_cache,
         }
     }
 
@@ -80,6 +89,12 @@ impl Ground {
         } else {
             self.level(coord) // Se não tem teto, o teto é o chão
         }
+    }
+
+    /// 🚨 BESM-6: Consulta O(1) da tipologia do bioma oficial (MapBiomas/SICAR)
+    #[inline(always)]
+    pub fn get_biome(&self, x: i32, z: i32) -> u16 {
+        *self.biome_cache.get(&(x, z)).unwrap_or(&BIOME_NONE)
     }
 
     #[allow(unused)]
