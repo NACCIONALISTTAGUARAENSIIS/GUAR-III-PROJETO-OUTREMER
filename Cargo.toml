@@ -42,7 +42,7 @@ lru = "0.12.3"
 noise = "0.9.0"
 # Elementos Pontuais (Postes/Árvores)
 geozero = { version = "0.13.0", features = ["with-wkb", "with-geo"] }
-geo = { version = "0.31.0", features = ["use-serde"] }
+geo = { version = "0.33.1", features = ["use-serde"] }
 proj = "0.27.2"                                  # Motor de Reprojeção Geodésica
 quick-xml = "0.31.0"                             # CityGML SAX Streaming (LOD2/LOD3)
 fastanvil = "0.32.0"                             # Voxelização Java Edition
