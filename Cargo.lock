@@ -2955,7 +2955,7 @@ dependencies = [
  "byteorder",
  "color_quant",
  "gif 0.11.4",
- "jpeg-decoder 0.1.22",
+ "jpeg-decoder",
  "num-iter",
  "num-rational 0.3.2",
  "num-traits 0.2.19",
@@ -3203,12 +3203,6 @@ checksum = "229d53d58899083193af11e15917b5640cd40b29ff475a1fe4ef725deb02d0f2"
 dependencies = [
  "rayon",
 ]
-
-[[package]]
-name = "jpeg-decoder"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
 
 [[package]]
 name = "js-sys"
@@ -4595,7 +4589,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-shell",
  "tempfile",
- "tiff 0.9.1",
+ "tiff 0.10.3",
  "tobj",
  "tokio",
  "uuid 1.20.0",
@@ -6899,19 +6893,8 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a53f4706d65497df0c4349241deddf35f84cee19c87ed86ea8ca590f4464437"
 dependencies = [
- "jpeg-decoder 0.1.22",
+ "jpeg-decoder",
  "miniz_oxide 0.4.4",
- "weezl",
-]
-
-[[package]]
-name = "tiff"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba1310fcea54c6a9a4fd1aad794ecc02c31682f6bfbecdf460bf19533eed1e3e"
-dependencies = [
- "flate2",
- "jpeg-decoder 0.3.2",
  "weezl",
 ]
 
@@ -7279,7 +7262,7 @@ version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
- "cfg-if 1.0.4",
+ "cfg-if 0.1.10",
  "static_assertions",
 ]
 
