@@ -11,6 +11,7 @@
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use rustc_hash::FxHashMap;
+use shapefile::dbase::{FieldValue, Record};
 use shapefile::record::polygon::Polygon;
 use shapefile::ShapeReader;
 use std::fs::File;
@@ -28,8 +29,49 @@ pub const BIOME_CERRADO_SS: u16 = 3; // �rvores tortuosas (Ip�s, Pequizeiros
 pub const BIOME_CAMPO_SUJO: u16 = 4; // Arbustos espa�ados, gram�neas
 pub const BIOME_VEREDA: u16 = 5; // Buritis, solo alagado, nascentes
 pub const BIOME_CAMPO_RUPESTRE: u16 = 6; // Afloramentos rochosos, capim
+pub const BIOME_CAMPO_LIMPO: u16 = 7; // Campinas abertas: s� gram�neas, sem arbustos
                                          // M�scaras de prote��o legal (Bitwise flags)
 pub const MASK_APP_SICAR: u16 = 0x8000; // �rea de Preserva��o Permanente (For�a vegeta��o m�xima)
+
+/// Infere a fitofisionomia real a partir dos atributos do DBF do shapefile do IBGE.
+///
+/// Schemas de fitofisionomia variam por fonte/estado (nome da coluna, grafia), então em vez
+/// de depender de um nome de campo fixo, varremos todos os campos de texto do registro em
+/// busca de palavras-chave. Termos mais específicos são checados antes dos genéricos para
+/// que "Cerrado (stricto sensu)" não engula "Cerradão"/"Campo Rupestre" por conter "cerrado".
+fn classify_ibge_record(record: &Record) -> u16 {
+    for value in record.as_ref().values() {
+        let FieldValue::Character(Some(text)) = value else {
+            continue;
+        };
+        let normalized = text.to_lowercase();
+
+        if normalized.contains("vereda") {
+            return BIOME_VEREDA;
+        }
+        if normalized.contains("rupestre") {
+            return BIOME_CAMPO_RUPESTRE;
+        }
+        if normalized.contains("cerradao") || normalized.contains("cerrad\u{e3}o") {
+            return BIOME_CERRADAO;
+        }
+        if normalized.contains("galeria") || normalized.contains("ciliar") {
+            return BIOME_MATA_GALERIA;
+        }
+        if normalized.contains("campo limpo") {
+            return BIOME_CAMPO_LIMPO;
+        }
+        if normalized.contains("campo sujo") {
+            return BIOME_CAMPO_SUJO;
+        }
+        if normalized.contains("cerrado") || normalized.contains("savana") {
+            return BIOME_CERRADO_SS;
+        }
+    }
+
+    // Sem atributo textual reconhecido: mant�m o fallback hist�rico.
+    BIOME_CERRADO_SS
+}
 
 /// O Aut�mato Espacial de Vegeta��o.
 pub struct VegetationProvider {
@@ -105,11 +147,11 @@ impl VegetationProvider {
 
         // 1. Extra��o do IBGE (Fitofisionomia exata do solo)
         if let Some(ref path) = self.ibge_shapefile_path {
-            if let Ok(reader) = ShapeReader::from_path(path) {
-                // Lemos as geometrias. Num cen�rio real de banco de dados, o GeoPackage usaria a R-Tree.
-                // Como este � o provedor raw, filtramos pela BBox (Streaming).
-                if let Ok(shapes) = reader.read() {
-                    for shape in shapes {
+            // Usamos o Reader combinado (shp+dbf) em vez do ShapeReader (s� geometria) para que
+            // o atributo real de fitofisionomia do DBF decida o bioma, e n�o um fallback fixo.
+            if let Ok(mut reader) = shapefile::Reader::from_path(path) {
+                if let Ok(shapes_and_records) = reader.read() {
+                    for (shape, record) in shapes_and_records {
                         if let shapefile::Shape::Polygon(polygon) = shape {
                             // Culling brutal: Se o bounding box do pol�gono est� totalmente fora do mapa atual, descarta.
                             let p_box = polygon.bbox();
@@ -121,10 +163,7 @@ impl VegetationProvider {
                                 continue;
                             }
 
-                            // Determina��o do Bioma IBGE (Mapeado pelos metadados do DBF no mundo real,
-                            // aqui inferimos pelo tipo geom�trico simulado para a blindagem arquitetural).
-                            // Num pipeline completo, ler�amos o dbf concomitante. Assumimos Cerrado Sensu Stricto como base.
-                            let biome_id = BIOME_CERRADO_SS;
+                            let biome_id = classify_ibge_record(&record);
                             ibge_polygons.push((biome_id, polygon));
                         }
                     }
@@ -201,12 +240,20 @@ impl VegetationProvider {
                             let pixel_index = (y * width + x) as usize;
                             let mapbiomas_class = image_data[pixel_index];
 
-                            // O MapBiomas diz SE tem planta.
+                            // O MapBiomas diz SE tem planta e QUE TIPO (legenda oficial da Cole��o,
+                            // classes 1/2 = Floresta/Formação Natural n�o Florestal).
                             // Se for classe urbana (24) ou �gua (33), ignoramos a vegeta��o aqui.
                             let mut base_biome = match mapbiomas_class {
-                                3..=5 => BIOME_CERRADAO,     // Florestas
-                                10..=13 => BIOME_CERRADO_SS, // Savanas e Campos
-                                15 => BIOME_CAMPO_SUJO,      // Pastagem
+                                3 => BIOME_CERRADAO,        // Forest Formation: dossel fechado
+                                4 => BIOME_CERRADO_SS,      // Savanna Formation: o Cerrado t�pico
+                                5 | 6 | 49 => BIOME_MATA_GALERIA, // Mangue/Mata Alag�vel/Restinga Arb�rea
+                                9 => BIOME_CERRADO_SS,      // Silvicultura: trata como matriz aberta
+                                10 => BIOME_CAMPO_SUJO,     // Cobertura Herb�cea/Arbustiva mista
+                                11 | 50 => BIOME_VEREDA,    // Wetland/Restinga Herb�cea: solo alagado
+                                12 => BIOME_CAMPO_LIMPO,    // Grassland: campo limpo, s� gram�neas
+                                15 => BIOME_CAMPO_SUJO,     // Pastagem
+                                29 => BIOME_CAMPO_RUPESTRE, // Afloramento Rochoso
+                                13 => BIOME_CERRADO_SS,     // Outra �rea n�o vegetada (fallback conservador)
                                 _ => BIOME_NONE,
                             };
 

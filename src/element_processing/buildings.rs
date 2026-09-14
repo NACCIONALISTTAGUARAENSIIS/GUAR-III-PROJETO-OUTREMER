@@ -7,6 +7,7 @@ use crate::colors::{ColorContext, apply_micro_variation, apply_weathering, color
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::historic;
+use crate::element_processing::landmarks;
 use crate::floodfill_cache::FloodFillCache;
 use crate::osm_parser::{ProcessedMemberRole, ProcessedNode, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
@@ -290,9 +291,10 @@ pub enum BuildingCategory {
     Warehouse,  // Storage and logistics
 
     // Institutional types
-    School,    // Schools, kindergartens, colleges
-    Hospital,  // Healthcare buildings
-    Religious, // Churches, mosques, temples, etc.
+    School,     // Schools, kindergartens, colleges
+    Hospital,   // Healthcare buildings
+    Religious,  // Churches, mosques, temples, etc.
+    Government, // Ministries, secretarias, prédios públicos/civis (pilotis + cobogó)
 
     // Special types
     TallBuilding,     // Tall buildings (>7 floors or >28m)
@@ -365,6 +367,18 @@ impl BuildingCategory {
             return BuildingCategory::Historic;
         }
 
+        // Check for government/civic buildings (ministérios, secretarias, prédios públicos):
+        // arquitetura própria (pilotis + cobogó), não deveriam herdar o preset de Escola.
+        let is_government_building = matches!(building_type, "government" | "public" | "civic");
+        let is_government_amenity =
+            element.tags.get("amenity").map(|s: &String| s.as_str()) == Some("townhall");
+        let is_government_office =
+            element.tags.get("office").map(|s: &String| s.as_str()) == Some("government");
+
+        if is_government_building || is_government_amenity || is_government_office {
+            return BuildingCategory::Government;
+        }
+
         match building_type {
             // Single-family homes
             "house" | "detached" | "semidetached_house" | "terrace" | "bungalow" | "villa"
@@ -420,9 +434,6 @@ impl BuildingCategory {
 
             // Greenhouses
             "greenhouse" | "glasshouse" => BuildingCategory::Greenhouse,
-
-            // Public/civic (map to appropriate institutional)
-            "public" | "government" | "civic" => BuildingCategory::School, // Use school style for generic institutional
 
             // Default for unknown types
             _ => BuildingCategory::Default,
@@ -626,6 +637,23 @@ impl BuildingStylePreset {
         }
     }
 
+    /// Preset for government/civic buildings (ministries, secretarias)
+    /// Assinatura modernista de Brasília: pilotis no térreo + cobogó nas janelas,
+    /// implementados em `determine_wall_block_at_position`.
+    pub fn government() -> Self {
+        Self {
+            use_vertical_windows: Some(true),
+            use_horizontal_windows: Some(false),
+            use_accent_roof_line: Some(true),
+            use_accent_lines: Some(true),
+            use_vertical_accent: Some(false),
+            roof_type: Some(RoofType::Flat),
+            generate_roof: Some(true),
+            has_chimney: Some(false),
+            ..Default::default()
+        }
+    }
+
     /// Preset for hospitals
     pub fn hospital() -> Self {
         Self {
@@ -731,6 +759,7 @@ impl BuildingStylePreset {
             BuildingCategory::Industrial => Self::industrial(),
             BuildingCategory::Warehouse => Self::warehouse(),
             BuildingCategory::School => Self::school(),
+            BuildingCategory::Government => Self::government(),
             BuildingCategory::Hospital => Self::hospital(),
             BuildingCategory::Religious => Self::religious(),
             BuildingCategory::Historic => Self::historic(),
@@ -1180,6 +1209,17 @@ fn get_wall_block_for_category(category: BuildingCategory, rng: &mut impl Rng) -
         }
         BuildingCategory::School | BuildingCategory::Hospital => {
             INSTITUTIONAL_WALL_OPTIONS[rng.random_range(0..INSTITUTIONAL_WALL_OPTIONS.len())]
+        }
+        BuildingCategory::Government => {
+            // Concreto aparente claro: paleta institucional modernista (Niemeyer), não vidro.
+            const GOVERNMENT_WALL_OPTIONS: [Block; 5] = [
+                WHITE_CONCRETE,
+                LIGHT_GRAY_CONCRETE,
+                SMOOTH_QUARTZ,
+                SMOOTH_STONE,
+                POLISHED_ANDESITE,
+            ];
+            GOVERNMENT_WALL_OPTIONS[rng.random_range(0..GOVERNMENT_WALL_OPTIONS.len())]
         }
         BuildingCategory::Farm => FARM_WALL_OPTIONS[rng.random_range(0..FARM_WALL_OPTIONS.len())],
         BuildingCategory::Historic => {
@@ -1903,6 +1943,15 @@ fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingC
     // ==========================================
     // 2. PROCEDURAL FALLBACK (Modo Legado)
     // ==========================================
+
+    // 🚨 Pilotis: assinatura modernista de Brasília (Niemeyer). O térreo dos prédios
+    // de Governo fica aberto sobre pilares espaçados em vez de parede cheia, deixando
+    // o volume "flutuar" — só se aplica ao primeiro pavimento (abaixo do 1º piso real).
+    if config.category == BuildingCategory::Government && h <= config.start_y_offset + 3 {
+        let is_pilotis_pillar = (bx + bz) % 6 == 0;
+        return if is_pilotis_pillar { config.wall_block } else { AIR };
+    }
+
     if !config.has_windows {
         let above_floor = h > config.start_y_offset + 1;
         let use_accent_line = config.use_accent_lines && above_floor && h % 4 == 0;
@@ -1914,7 +1963,7 @@ fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingC
 
     let above_floor = h > config.start_y_offset + 1;
 
-    if config.use_horizontal_windows {
+    let base_block = if config.use_horizontal_windows {
         // Modern skyscraper pattern: continuous horizontal window bands
         // with stone separation bands at floor levels (every 4th block)
         if above_floor && h % 4 == 0 {
@@ -1950,6 +1999,15 @@ fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingC
                 config.wall_block
             }
         }
+    };
+
+    // 🚨 Cobogó/Brise-soleil: nos andares de Governo, a "janela" vira um bloco vazado
+    // (o mesmo elemento vazado de concreto usado em muros — COPPER_GRATE), lendo como
+    // tela de ventilação em vez de vidro comum.
+    if config.category == BuildingCategory::Government && base_block == config.window_block {
+        COPPER_GRATE
+    } else {
+        base_block
     }
 }
 
@@ -2121,8 +2179,13 @@ fn generate_residential_window_decorations(
                 // Both sides share the same roll (seeded on window centre).
                 if mod6 == 3 || mod6 == 5 {
                     let centre_sum = if mod6 == 3 { bx + bz - 2 } else { bx + bz + 2 };
-                    let shutter_roll =
-                        coord_rng(centre_sum, centre_sum, element.id).random_range(0u32..100);
+                    let shutter_roll = coord_rng(
+                        centre_sum,
+                        config.start_y_offset,
+                        centre_sum,
+                        element.id,
+                    )
+                    .random_range(0u32..100);
                     if shutter_roll < 25 {
                         for h in (config.start_y_offset + 1)
                             ..=(config.start_y_offset + config.building_height)
@@ -2165,6 +2228,7 @@ fn generate_residential_window_decorations(
                             };
                             let decoration_roll = coord_rng(
                                 centre_sum.wrapping_add(floor_idx * 3),
+                                h,
                                 centre_sum.wrapping_add(floor_idx * 5),
                                 element.id,
                             )
@@ -2186,8 +2250,12 @@ fn generate_residential_window_decorations(
                                     None,
                                 );
 
-                                let mut pot_rng =
-                                    coord_rng(bx, bz.wrapping_add(floor_idx), element.id);
+                                let mut pot_rng = coord_rng(
+                                    bx,
+                                    abs_y,
+                                    bz.wrapping_add(floor_idx),
+                                    element.id,
+                                );
                                 let pot_here = if mod6 == 1 {
                                     pot_rng.random_range(0u32..100) < 70
                                 } else {
@@ -2295,6 +2363,7 @@ fn generate_residential_window_decorations(
                                 // Occasional furniture on the balcony floor
                                 let mut furn_rng = coord_rng(
                                     bx.wrapping_add(floor_idx * 11),
+                                    abs_y,
                                     bz.wrapping_add(floor_idx * 17),
                                     element.id,
                                 );
@@ -2572,6 +2641,17 @@ pub fn generate_buildings(
     if element.tags.get("tomb").map(|v: &String| v.as_str()) == Some("pyramid") {
         historic::generate_pyramid(editor, element, args, flood_fill_cache);
         return;
+    }
+
+    // 🚨 Interceptador de Monumentos Únicos: prédios com nome batendo em landmarks.rs
+    // (Congresso Nacional, Palácio do Planalto, STF, Itamaraty, Catedral etc.) usam seu
+    // desenho artesanal específico em vez do gerador paramétrico genérico abaixo.
+    if !element.nodes.is_empty() {
+        let landmark_ground_y =
+            editor.get_ground_level(element.nodes[0].x, element.nodes[0].z);
+        if landmarks::generate_unique_landmark(editor, element, landmark_ground_y) {
+            return;
+        }
     }
 
     // Parse min_level from tags
@@ -3053,7 +3133,7 @@ fn generate_roof_terrace(
     }
 
     for &(x, z) in &interior {
-        let mut rng = coord_rng(x, z, element.id);
+        let mut rng = coord_rng(x, terrace_y, z, element.id);
         let roll: u32 = rng.random_range(0..100);
 
         if roll >= 15 {
@@ -3199,7 +3279,7 @@ fn generate_rooftop_equipment(
             continue;
         }
 
-        let mut rng = coord_rng(x, z, element.id);
+        let mut rng = coord_rng(x, equip_y, z, element.id);
         let roll: u32 = rng.random_range(0..1200);
 
         if roll >= 7 {
@@ -4133,6 +4213,25 @@ pub fn generate_building_from_relation(
         if relation.tags.contains_key("building:levels:underground")
             && !relation.tags.contains_key("building:levels")
         {
+            return;
+        }
+    }
+
+    // 🚨 Interceptador de Monumentos Únicos (multipolígonos): alguns marcos de Brasília
+    // (ex: Congresso Nacional) podem vir como relação em vez de way simples.
+    if let Some(outer_member) = relation
+        .members
+        .iter()
+        .find(|m| m.role == ProcessedMemberRole::Outer && !m.way.nodes.is_empty())
+    {
+        let synthetic_way = ProcessedWay {
+            id: outer_member.way.id,
+            nodes: outer_member.way.nodes.clone(),
+            tags: relation.tags.clone(),
+        };
+        let landmark_ground_y =
+            editor.get_ground_level(synthetic_way.nodes[0].x, synthetic_way.nodes[0].z);
+        if landmarks::generate_unique_landmark(editor, &synthetic_way, landmark_ground_y) {
             return;
         }
     }

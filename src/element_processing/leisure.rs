@@ -369,7 +369,7 @@ pub fn generate_leisure(
                     let bm_noise = organic_noise(x, z, 0.05); // Densidade macro (Canteiros/Bosques)
                     let micro_noise = organic_noise(x, z, 0.2); // Densidade fina (Flores/Árvores isoladas)
 
-                    let mut tile_rng = coord_rng(x, z, element.id);
+                    let mut tile_rng = coord_rng(x, ground_y, z, element.id);
                     let random_roll = tile_rng.random_range(0..1000);
 
                     if is_cristais {
@@ -479,7 +479,7 @@ pub fn generate_leisure(
                 if matches!(leisure_type.as_str(), "playground" | "recreation_ground")
                     && !is_ana_lidia
                 {
-                    let mut tile_rng = coord_rng(x, z, element.id);
+                    let mut tile_rng = coord_rng(x, ground_y, z, element.id);
                     let play_roll = tile_rng.random_range(0..5000);
 
                     // 🚨 CORREÇÃO DOS INTERVALOS (Exclusivos para Inclusivos)

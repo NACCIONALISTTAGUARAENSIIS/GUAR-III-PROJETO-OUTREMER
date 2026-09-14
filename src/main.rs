@@ -238,6 +238,82 @@ pub fn run_generation_pipeline(
         .unwrap()
         .1;
 
+    // ================================================================
+    // 🚨 RECONEXÃO ESTRUTURAL (BESM-6): Elevação real e Bioma real
+    // ================================================================
+    // Até aqui, `data_processing.rs` sempre construía `Ground::new_enabled`
+    // com `bare_earth_cache`/`canopy_surface_cache`/`biome_cache` vazios —
+    // o próprio código dizia "o orquestrador no futuro injetará os
+    // rasterizadores (DEM/DSM/Vegetation) aqui". `get_ground_level` (usado
+    // por árvores, estradas, pontes, prédios) e `get_biome` sempre caíam no
+    // fallback plano/matemático, mesmo com `--terrain` ativo. As duas buscas
+    // abaixo alimentam essas caches de verdade; ver `GenerationOptions` e o
+    // Scanline em `data_processing.rs` para onde os dados são fatiados por
+    // região.
+
+    // Elevação real (SRTM via AWS Terrarium, ou LiDAR local se fornecido).
+    // Busca UMA vez para o bbox inteiro (função já existente em
+    // elevation_data.rs, só nunca chamada); desativada em --offline porque
+    // a busca SRTM faz requisições HTTP.
+    let elevation_data: Option<elevation_data::ElevationData> = if args.terrain && !args.offline {
+        println!(
+            "{} Fetching real elevation data (SRTM/LiDAR)...",
+            "[3.5/7]".bold()
+        );
+        match elevation_data::fetch_elevation_data(
+            &args.bbox,
+            args.scale_h,
+            args.scale_v,
+            args.ground_level,
+            args.local_lidar.as_ref(),
+        ) {
+            Ok(data) => Some(data),
+            Err(e) => {
+                let msg = format!(
+                    "Falha ao buscar elevação real: {}. Terreno ficará plano nesta execução.",
+                    e
+                );
+                if let Some(ref tx) = telemetry_tx {
+                    let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+                }
+                eprintln!("{} {}", "Aviso:".yellow().bold(), msg);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Bioma real (MapBiomas + fitofisionomia IBGE + APP SICAR). Só produz dados
+    // reais se os caminhos forem passados via CLI (--mapbiomas-tiff etc.);
+    // sem eles, `fetch_quantized_biomes` retorna um mapa vazio de forma segura
+    // e o motor mantém o fallback matemático de sempre em `natural.rs`.
+    let biome_grid: Option<rustc_hash::FxHashMap<(i32, i32), u16>> = if args.terrain {
+        let vegetation_provider = providers::vegetation_provider::VegetationProvider::new(
+            args.mapbiomas_tiff.clone(),
+            args.ibge_shapefile.clone(),
+            args.sicar_shapefile.clone(),
+            args.scale_h,
+            args.mapbiomas_top_left_lat.unwrap_or(0.0),
+            args.mapbiomas_top_left_lon.unwrap_or(0.0),
+            args.mapbiomas_pixel_size_deg.unwrap_or(0.00027),
+            args.mapbiomas_pixel_size_deg.unwrap_or(0.00027),
+        );
+        match vegetation_provider.fetch_quantized_biomes(&args.bbox) {
+            Ok(grid) => Some(grid),
+            Err(e) => {
+                let msg = format!("Falha ao classificar biomas reais: {}.", e);
+                if let Some(ref tx) = telemetry_tx {
+                    let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+                }
+                eprintln!("{} {}", "Aviso:".yellow().bold(), msg);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     if args.debug {
         let mut buf = std::io::BufWriter::new(
             fs::File::create("parsed_osm_data.txt").expect("Failed to create output file"),
@@ -291,6 +367,9 @@ pub fn run_generation_pipeline(
         level_name,
         spawn_point,
         provider_features: provider_specific_features, // 🚨 BESM-6: Injeta features governamentais
+        elevation_data: elevation_data.map(std::sync::Arc::new), // 🚨 Reconexão: elevação real
+        biome_grid: biome_grid.map(std::sync::Arc::new), // 🚨 Reconexão: bioma real
+        ambient_forest: args.terrain && !args.no_ambient_forest, // 🚨 Reconexão: floresta ambiente
         telemetry_tx: telemetry_tx,
     };
 

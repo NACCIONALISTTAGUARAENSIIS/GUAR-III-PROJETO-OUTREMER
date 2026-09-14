@@ -2,10 +2,13 @@ use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZPoint;
-use crate::floodfill_cache::FloodFillCache;
+use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
+use crate::deterministic_rng::coord_rng;
+use crate::element_processing::tree::{Tree, TreeType};
 use crate::osm_parser::{ProcessedElement, ProcessedWay};
 use crate::world_editor::WorldEditor;
-use std::collections::HashMap;
+use rand::Rng;
+use std::collections::{HashMap, HashSet};
 
 /// Type alias for highway connectivity map
 pub type HighwayConnectivityMap = HashMap<(i32, i32), Vec<i32>>;
@@ -74,6 +77,7 @@ enum DFRoadType {
     ViaComercialSatelite, // TWEAK RP: Avenidas largas de Taguatinga/Ceilândia (Hélio Prates, Comercial)
     ViaGuara,             // Vias de Cidades-Satélites (Casas coladas na rua)
     ViaLocal,             // Fallback residencial
+    Ciclovia,             // Ciclovias dedicadas (asfalto vermelho, sem faixa de estacionamento)
     Generic(String),      // Fallback OSM
 }
 
@@ -108,6 +112,11 @@ fn detect_df_road(way: &ProcessedWay, base_highway: &str) -> DFRoadType {
         .get("place")
         .map(|s: &String| s.to_lowercase())
         .unwrap_or_default();
+
+    // Ciclovia dedicada: checado antes de tudo, nomes não devem sobrepor a tipologia.
+    if base_highway == "cycleway" {
+        return DFRoadType::Ciclovia;
+    }
 
     if junction == "roundabout" {
         return DFRoadType::Rotatoria;
@@ -199,6 +208,7 @@ pub fn generate_highways(
     args: &Args,
     highway_connectivity: &HighwayConnectivityMap,
     flood_fill_cache: &FloodFillCache,
+    building_footprints: &BuildingFootprintBitmap,
 ) {
     generate_highways_internal(
         editor,
@@ -206,6 +216,7 @@ pub fn generate_highways(
         args,
         highway_connectivity,
         flood_fill_cache,
+        building_footprints,
     );
 }
 
@@ -252,6 +263,7 @@ fn generate_highways_internal(
     args: &Args,
     highway_connectivity: &HashMap<(i32, i32), Vec<i32>>,
     flood_fill_cache: &FloodFillCache,
+    building_footprints: &BuildingFootprintBitmap,
 ) {
     if let Some(highway_type) = element.tags().get("highway") {
         if highway_type == "street_lamp" {
@@ -362,6 +374,19 @@ fn generate_highways_internal(
 
             let df_road_type = detect_df_road(way, highway_type);
 
+            // 🚨 Faixas de pedestre (zebra): nós compartilhados com a via que carregam
+            // highway=crossing (exceto crossing=unmarked) viram travessias pintadas.
+            let crossing_points: HashSet<(i32, i32)> = way
+                .nodes
+                .iter()
+                .filter(|n| {
+                    n.tags.get("highway").map(|s: &String| s.as_str()) == Some("crossing")
+                        && n.tags.get("crossing").map(|s: &String| s.as_str())
+                            != Some("unmarked")
+                })
+                .map(|n| (n.x, n.z))
+                .collect();
+
             let mut previous_node: Option<(i32, i32)> = None;
             let mut block_type = GRAY_CONCRETE;
             let mut block_range: i32 = 2;
@@ -372,6 +397,7 @@ fn generate_highways_internal(
 
             let mut physical_median_radius: i32 = 0;
             let mut is_detached_sidewalk = false;
+            let mut plant_street_trees = false;
 
             let scale_factor = args.scale;
 
@@ -410,6 +436,7 @@ fn generate_highways_internal(
                     grass_buffer = 8;
                     physical_median_radius = 6; // Canteiro Largo do Eixão
                     is_detached_sidewalk = true;
+                    plant_street_trees = true;
                 }
                 DFRoadType::Monumental => {
                     block_type = BLACK_CONCRETE;
@@ -418,6 +445,7 @@ fn generate_highways_internal(
                     grass_buffer = 12;
                     physical_median_radius = 10; // Gramadão Central da Esplanada
                     is_detached_sidewalk = true;
+                    plant_street_trees = true;
                 }
                 DFRoadType::ExpressaDF => {
                     block_type = BLACK_CONCRETE;
@@ -425,6 +453,7 @@ fn generate_highways_internal(
                     add_stripe = true;
                     grass_buffer = 5;
                     physical_median_radius = 1; // Barreira New Jersey (Mureta)
+                    plant_street_trees = true;
                 }
                 DFRoadType::L2L4 | DFRoadType::Arterial => {
                     block_type = BLACK_CONCRETE;
@@ -433,6 +462,7 @@ fn generate_highways_internal(
                     grass_buffer = 5;
                     physical_median_radius = 1;
                     is_detached_sidewalk = true;
+                    plant_street_trees = true;
                 }
                 DFRoadType::W3 => {
                     block_type = POLISHED_BASALT; // Asfalto diferente para diferenciar W3
@@ -475,6 +505,7 @@ fn generate_highways_internal(
                     parking_lane = true;
                     grass_buffer = 5;
                     is_detached_sidewalk = true;
+                    plant_street_trees = true; // A marca registrada da superquadra: dossel denso
                 }
                 DFRoadType::ViaGuara | DFRoadType::ViaLocal => {
                     block_type = GRAY_CONCRETE;
@@ -482,6 +513,16 @@ fn generate_highways_internal(
                     parking_lane = true;
                     grass_buffer = 0;
                     is_detached_sidewalk = false;
+                }
+                DFRoadType::Ciclovia => {
+                    // Asfalto avermelhado característico das ciclovias do DF: estreita,
+                    // sem vaga de carro, com uma pequena faixa verde separando da calçada.
+                    block_type = RED_CONCRETE;
+                    block_range = 2;
+                    parking_lane = false;
+                    add_stripe = false;
+                    add_outline = true;
+                    grass_buffer = 1;
                 }
                 DFRoadType::Generic(ref t) => match t.as_str() {
                     "footway" | "pedestrian" => {
@@ -623,8 +664,55 @@ fn generate_highways_internal(
                         (1.0, 0.0)
                     };
 
+                    // Vetor ao longo da via (mesma direção do tráfego), usado para orientar
+                    // as listras da faixa de pedestre e as árvores no canteiro/passeio.
+                    let (dir_x, dir_z) = if len_segment > 0.0 {
+                        (dx_segment / len_segment, dz_segment / len_segment)
+                    } else {
+                        (0.0, 1.0)
+                    };
+
                     for (_point_index, (bx, _, bz)) in bresenham_points.iter().enumerate() {
                         distance_accumulator += 1;
+
+                        // 🚨 Pinta a faixa de pedestre quando o ponto central bate com um nó
+                        // de travessia marcada. Só em vias reais (não calçadas/trilhas).
+                        if block_range >= 2 && crossing_points.contains(&(*bx, *bz)) {
+                            paint_zebra_crossing(
+                                editor, *bx, *bz, norm_x, norm_z, dir_x, dir_z, block_range,
+                            );
+                        }
+
+                        // 🚨 Arborização urbana: planta árvores esparsas no canteiro/faixa
+                        // verde da via (a marca registrada das ruas de superquadra).
+                        // Só em trechos ao nível do solo — sem pontes/elevados.
+                        if plant_street_trees
+                            && !is_bridge
+                            && effective_elevation == 0
+                            && grass_buffer > 0
+                            && distance_accumulator % 7 == 0
+                        {
+                            let tree_offset = block_range + (grass_buffer / 2).max(1);
+                            for side in [1.0_f64, -1.0_f64] {
+                                let tx =
+                                    (*bx as f64 + tree_offset as f64 * norm_x * side).round() as i32;
+                                let tz =
+                                    (*bz as f64 + tree_offset as f64 * norm_z * side).round() as i32;
+
+                                let mut tree_rng = coord_rng(tx, 0, tz, way.id);
+                                if tree_rng.random_bool(0.6) {
+                                    let tree_type =
+                                        street_tree_type_for(&df_road_type, &mut tree_rng);
+                                    let tree_ground_y = editor.get_ground_level(tx, tz);
+                                    Tree::create_of_type(
+                                        editor,
+                                        (tx, tree_ground_y + 1, tz),
+                                        tree_type,
+                                        Some(building_footprints),
+                                    );
+                                }
+                            }
+                        }
 
                         let (current_y, use_absolute_y) = if is_valley_bridge {
                             (bridge_deck_y, true)
@@ -1011,6 +1099,61 @@ fn generate_highways_internal(
                 previous_node = Some((node.x, node.z));
             }
         }
+    }
+}
+
+/// Pinta uma faixa de pedestre (zebra) centrada em `(cx, cz)`, com listras alternadas
+/// perpendiculares à via (eixo `norm`) e alongadas na direção do tráfego (eixo `dir`).
+fn paint_zebra_crossing(
+    editor: &mut WorldEditor,
+    cx: i32,
+    cz: i32,
+    norm_x: f64,
+    norm_z: f64,
+    dir_x: f64,
+    dir_z: f64,
+    road_half_width: i32,
+) {
+    for w in -road_half_width..=road_half_width {
+        // Listras de ~1 bloco separadas por ~1 bloco de vão, atravessando a via inteira.
+        if w.rem_euclid(2) != 0 {
+            continue;
+        }
+        for along in -1i32..=1i32 {
+            let px = (cx as f64 + w as f64 * norm_x + along as f64 * dir_x).round() as i32;
+            let pz = (cz as f64 + w as f64 * norm_z + along as f64 * dir_z).round() as i32;
+            let py = editor.get_ground_level(px, pz);
+
+            if !editor.check_for_block_absolute(px, py, pz, Some(PROTECTED_BLOCKS), None) {
+                editor.set_block_absolute(WHITE_CONCRETE, px, py, pz, None, None);
+            }
+        }
+    }
+}
+
+/// Escolhe a espécie de árvore de arborização urbana conforme a tipologia da via —
+/// eixos monumentais recebem espécies mais "solenes" (Pequi, Jatobá, Copaíba);
+/// vias de superquadra recebem a mistura mais variada (a marca do dossel real).
+fn street_tree_type_for(df_road_type: &DFRoadType, rng: &mut impl Rng) -> TreeType {
+    match df_road_type {
+        DFRoadType::ViaSuperquadra => match rng.random_range(0..5) {
+            0 => TreeType::IpeAmarelo,
+            1 => TreeType::Pequi,
+            2 => TreeType::Copaiba,
+            3 => TreeType::Angico,
+            _ => TreeType::Sucupira,
+        },
+        DFRoadType::Eixao | DFRoadType::Monumental => match rng.random_range(0..3) {
+            0 => TreeType::Pequi,
+            1 => TreeType::Jatoba,
+            _ => TreeType::Copaiba,
+        },
+        _ => match rng.random_range(0..4) {
+            0 => TreeType::Sucupira,
+            1 => TreeType::Angico,
+            2 => TreeType::Aroeira,
+            _ => TreeType::Baru,
+        },
     }
 }
 

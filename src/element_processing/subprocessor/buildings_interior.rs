@@ -1897,7 +1897,23 @@ pub fn generate_building_interior(
                                 }
                             }
                             Bairro::Outro => {
-                                if has_core {
+                                // 🚨 Antes: sem has_core (a maioria dos prédios baixos fora dos
+                                // bairros nomeados) o andar ficava totalmente oco. Agora sempre
+                                // recebe um interior real — apartamento simples ou corredor.
+                                if height <= 12 && tipologia == Tipologia::Residencial {
+                                    generate_residential_layout(
+                                        editor,
+                                        min_x,
+                                        max_x,
+                                        min_z,
+                                        max_z,
+                                        floor_y,
+                                        ceiling,
+                                        offset,
+                                        bairro,
+                                        total_floors,
+                                    );
+                                } else {
                                     generate_corridor(
                                         editor,
                                         min_x,
@@ -1910,17 +1926,19 @@ pub fn generate_building_interior(
                                         bairro,
                                         tipologia,
                                     );
-                                    generate_elevator_core(
-                                        editor,
-                                        min_x,
-                                        max_x,
-                                        min_z,
-                                        max_z,
-                                        floor_y + 1,
-                                        ceiling,
-                                        offset,
-                                        tipologia,
-                                    );
+                                    if has_core {
+                                        generate_elevator_core(
+                                            editor,
+                                            min_x,
+                                            max_x,
+                                            min_z,
+                                            max_z,
+                                            floor_y + 1,
+                                            ceiling,
+                                            offset,
+                                            tipologia,
+                                        );
+                                    }
                                 }
                             }
                         }

@@ -243,7 +243,8 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                 segment_distance += 1;
 
                 // Hash Espacial Org�nico O(1)
-                let mut rng = coord_rng(bx, bz, way.id);
+                let exact_ground_y = editor.get_ground_level(bx, bz);
+                let mut rng = coord_rng(bx, exact_ground_y, bz, way.id);
 
                 // ?? TOPOGRAFIA SUAVE: Evita degraus absurdos sob muros em ladeiras
                 // Pega a m�dia de altura local em um raio 3x3 se houver terreno ativo
@@ -256,7 +257,6 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     }
                 }
                 let avg_ground_y = (local_y_sum as f64 / count as f64).round() as i32;
-                let exact_ground_y = editor.get_ground_level(bx, bz);
 
                 // Culling de Intersec��o: Se bateu num asfalto monumental ou �gua, pula.
                 if editor.check_for_block_absolute(

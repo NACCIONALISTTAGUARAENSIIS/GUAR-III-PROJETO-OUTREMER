@@ -22,18 +22,15 @@ type Coord = (i32, i32, i32);
 // =====================================================
 // CONSTANTES DE BLOCOS EXTRAS (Cerrado e Builder Specs)
 // =====================================================
-pub const AZALEA_LEAVES: Block = Block::new(225);
-pub const FLOWERING_AZALEA: Block = Block::new(189);
-pub const MOSS_CARPET: Block = Block::new(141);
 pub const SHORT_GRASS: Block = Block::new(29);
 pub const POLISHED_BASALT: Block = Block::new(56); // Usado para casca podre/escura na base do tronco
 pub const STRIPPED_DARK_OAK_LOG: Block = Block::new(20); // Variação de casca lisa
 pub const BROWN_MUSHROOM_BLOCK: Block = Block::new(99);
 
-pub const YELLOW_TERRACOTTA: Block = Block::new(159); // Ipê Amarelo
-pub const PINK_TERRACOTTA: Block = Block::new(159); // Ipê Roxo
-pub const WHITE_TERRACOTTA: Block = Block::new(159); // Ipê Branco
-pub const ORANGE_TERRACOTTA: Block = Block::new(159); // Flamboyant
+// YELLOW_TERRACOTTA, WHITE_TERRACOTTA, ORANGE_TERRACOTTA e MOSS_CARPET vêm de block_definitions
+// (via `use crate::block_definitions::*` acima). Não redefinir aqui — redefini-los como o
+// mesmo Block::new(159) fazia Ipê Amarelo/Branco e Flamboyant renderizarem idênticos.
+pub const PINK_TERRACOTTA: Block = MAGENTA_CONCRETE; // Ipê Roxo (não existe terracota rosa na paleta)
 pub const YELLOW_CARPET: Block = Block::new(171); // Folhas caídas de Ipê Amarelo
 
 // =====================================================
@@ -151,6 +148,14 @@ pub enum TreeType {
     Buriti,   // Palmeira de Vereda
     Sucupira, // Tronco muito retorcido
     Copaiba,  // Copa grande e arredondada
+    Pequi,      // Casca grossa e corticeira, copa larga e densa
+    Barbatimao, // Arbusto/sub-bosque, copa rala e baixa
+    Angico,     // Leguminosa alta, copa esparsa e plumosa
+    Jatoba,     // Tronco robusto, copa densa e escura
+    Baru,       // Leguminosa de copa larga e achatada
+    Aroeira,    // Perene de copa densa e compacta, madeira avermelhada
+    Cagaita,    // Pequeno porte, folhagem clara
+    Gameleira,  // Figueira de Mata de Galeria: gigante, copa densa e larga
 }
 
 pub struct Tree<'a> {
@@ -196,13 +201,39 @@ impl Tree<'_> {
             TreeType::Copaiba
         } else if species.contains("flamboyant") {
             TreeType::Acacia
+        } else if species.contains("pequi") || species.contains("caryocar") {
+            TreeType::Pequi
+        } else if species.contains("barbatimão")
+            || species.contains("barbatimao")
+            || species.contains("stryphnodendron")
+        {
+            TreeType::Barbatimao
+        } else if species.contains("angico") || species.contains("anadenanthera") {
+            TreeType::Angico
+        } else if species.contains("jatobá") || species.contains("jatoba") || species.contains("hymenaea")
+        {
+            TreeType::Jatoba
+        } else if species.contains("baru") || species.contains("dipteryx") {
+            TreeType::Baru
+        } else if species.contains("aroeira")
+            || species.contains("myracrodruon")
+            || species.contains("astronium")
+        {
+            TreeType::Aroeira
+        } else if species.contains("cagaita") || species.contains("eugenia dysenterica") {
+            TreeType::Cagaita
+        } else if species.contains("gameleira") || species.contains("ficus") {
+            TreeType::Gameleira
         } else {
-            let mut rng = coord_rng(x, z, 0);
-            match rng.random_range(1..=10) {
-                1..=4 => TreeType::Oak,
-                5..=7 => TreeType::DarkOak,
-                8..=10 => TreeType::Acacia,
-                _ => unreachable!(),
+            let mut rng = coord_rng(x, y, z, 0);
+            match rng.random_range(1..=20) {
+                1..=6 => TreeType::Oak,
+                7..=11 => TreeType::DarkOak,
+                12..=15 => TreeType::Acacia,
+                16..=17 => TreeType::Pequi,
+                18 => TreeType::Angico,
+                19 => TreeType::Jatoba,
+                _ => TreeType::Baru,
             }
         };
 
@@ -223,12 +254,15 @@ impl Tree<'_> {
         (x, y, z): Coord,
         building_footprints: Option<&BuildingFootprintBitmap>,
     ) {
-        let mut rng = coord_rng(x, z, 0);
-        let tree_type = match rng.random_range(1..=10) {
-            1..=4 => TreeType::Oak,
-            5..=7 => TreeType::DarkOak,
-            8..=10 => TreeType::Acacia,
-            _ => unreachable!(),
+        let mut rng = coord_rng(x, y, z, 0);
+        let tree_type = match rng.random_range(1..=20) {
+            1..=6 => TreeType::Oak,
+            7..=11 => TreeType::DarkOak,
+            12..=15 => TreeType::Acacia,
+            16..=17 => TreeType::Pequi,
+            18 => TreeType::Angico,
+            19 => TreeType::Jatoba,
+            _ => TreeType::Baru,
         };
         Self::create_of_type_with_height(editor, (x, y, z), tree_type, None, building_footprints);
     }
@@ -279,7 +313,7 @@ impl Tree<'_> {
         }
 
         let mut tree = Self::get_tree(tree_type);
-        let mut rng = coord_rng(x, z, 0);
+        let mut rng = coord_rng(x, ground_y, z, 0);
 
         if let Some(h) = height_override {
             tree.log_height = (h * GOV_V_SCALE).round() as i32;
@@ -289,7 +323,10 @@ impl Tree<'_> {
         }
 
         let is_old_tree = tree.log_height > 10;
-        let is_twisted = tree_type == TreeType::Sucupira || tree_type == TreeType::Acacia;
+        let is_twisted = tree_type == TreeType::Sucupira
+            || tree_type == TreeType::Acacia
+            || tree_type == TreeType::Barbatimao
+            || tree_type == TreeType::Pequi;
 
         if tree_type == TreeType::Buriti {
             editor.fill_column_absolute(
@@ -341,6 +378,23 @@ impl Tree<'_> {
                                     None,
                                 );
                             }
+                        }
+                    }
+                }
+            }
+
+            // 🚨 Saia de frondes secas: buritis reais sempre têm folhas mortas
+            // pendendo logo abaixo da coroa verde. Anel esparso, mais largo e
+            // mais baixo que a copa, para simular o pendor natural.
+            for dx in -3i32..=3i32 {
+                for dz in -3i32..=3i32 {
+                    let dist = dx.abs() + dz.abs();
+                    if (2..=4).contains(&dist) && rng.random_bool(0.35) {
+                        let fx = x + dx;
+                        let fz = z + dz;
+                        let fy = ground_y + tree.log_height - 3;
+                        if !editor.check_for_block_absolute(fx, fy, fz, Some(&blacklist), None) {
+                            editor.set_block_absolute(HAY_BALE, fx, fy, fz, None, None);
                         }
                     }
                 }
@@ -585,6 +639,21 @@ impl Tree<'_> {
             }
         }
 
+        // 🚨 Ninho de João-de-barro: elemento cultural/visual comum em áreas rurais do
+        // Cerrado, raro e discreto, preso ao tronco a meia-altura.
+        if tree_type != TreeType::Buriti && tree.log_height > 4 && rng.random_bool(0.03) {
+            let nest_y = ground_y + rng.random_range(3..tree.log_height);
+            let (nest_x, nest_z) = if rng.random_bool(0.5) {
+                (current_x + 1, current_z)
+            } else {
+                (current_x - 1, current_z)
+            };
+            if !editor.check_for_block_absolute(nest_x, nest_y, nest_z, Some(&blacklist), None) {
+                editor.set_block_absolute(TERRACOTTA, nest_x, nest_y, nest_z, None, None);
+                editor.set_block_absolute(DIRT, nest_x, nest_y - 1, nest_z, Some(&[AIR]), None);
+            }
+        }
+
         let is_ipe = tree_type == TreeType::IpeAmarelo
             || tree_type == TreeType::IpeRoxo
             || tree_type == TreeType::IpeBranco;
@@ -767,6 +836,102 @@ impl Tree<'_> {
                 leaves_fill: &[],
                 round_ranges: [vec![], vec![], vec![]],
             },
+            TreeType::Pequi => Self {
+                log_block: DARK_OAK_LOG,
+                twig_block: DARK_OAK_FENCE,
+                log_height: 9,
+                leaves_block: OAK_LEAVES,
+                leaves_fill: &OAK_LEAVES_FILL,
+                round_ranges: [
+                    (3..=9).rev().collect(),
+                    (4..=8).rev().collect(),
+                    (5..=7).rev().collect(),
+                ],
+            },
+            TreeType::Barbatimao => Self {
+                log_block: ACACIA_LOG,
+                twig_block: ACACIA_FENCE,
+                log_height: 4,
+                leaves_block: ACACIA_LEAVES,
+                leaves_fill: &DARK_OAK_LEAVES_FILL,
+                round_ranges: [
+                    (2..=4).rev().collect(),
+                    (2..=3).rev().collect(),
+                    (3..=3).rev().collect(),
+                ],
+            },
+            TreeType::Angico => Self {
+                log_block: ACACIA_LOG,
+                twig_block: ACACIA_FENCE,
+                log_height: 9,
+                leaves_block: ACACIA_LEAVES,
+                leaves_fill: &ACACIA_LEAVES_FILL,
+                round_ranges: [
+                    (6..=9).rev().collect(),
+                    (6..=8).rev().collect(),
+                    (7..=8).rev().collect(),
+                ],
+            },
+            TreeType::Jatoba => Self {
+                log_block: DARK_OAK_LOG,
+                twig_block: DARK_OAK_FENCE,
+                log_height: 10,
+                leaves_block: DARK_OAK_LEAVES,
+                leaves_fill: &OAK_LEAVES_FILL,
+                round_ranges: [
+                    (4..=9).rev().collect(),
+                    (5..=8).rev().collect(),
+                    (6..=7).rev().collect(),
+                ],
+            },
+            TreeType::Baru => Self {
+                log_block: ACACIA_LOG,
+                twig_block: ACACIA_FENCE,
+                log_height: 7,
+                leaves_block: OAK_LEAVES,
+                leaves_fill: &ACACIA_LEAVES_FILL,
+                round_ranges: [
+                    (5..=8).rev().collect(),
+                    (5..=7).rev().collect(),
+                    (6..=7).rev().collect(),
+                ],
+            },
+            TreeType::Aroeira => Self {
+                log_block: ACACIA_LOG,
+                twig_block: ACACIA_FENCE,
+                log_height: 7,
+                leaves_block: DARK_OAK_LEAVES,
+                leaves_fill: &DARK_OAK_LEAVES_FILL,
+                round_ranges: [
+                    (4..=7).rev().collect(),
+                    (4..=6).rev().collect(),
+                    (5..=6).rev().collect(),
+                ],
+            },
+            TreeType::Cagaita => Self {
+                log_block: OAK_LOG,
+                twig_block: OAK_FENCE,
+                log_height: 5,
+                leaves_block: AZALEA_LEAVES,
+                leaves_fill: &DARK_OAK_LEAVES_FILL,
+                round_ranges: [
+                    (3..=5).rev().collect(),
+                    (3..=4).rev().collect(),
+                    (4..=4).rev().collect(),
+                ],
+            },
+            TreeType::Gameleira => Self {
+                log_block: JUNGLE_LOG,
+                twig_block: JUNGLE_FENCE,
+                log_height: 13,
+                leaves_block: JUNGLE_LEAVES,
+                leaves_fill: &OAK_LEAVES_FILL,
+                round_ranges: [
+                    (9..=13).rev().collect(),
+                    (9..=12).rev().collect(),
+                    (10..=11).rev().collect(),
+                ],
+            },
         }
     }
 
@@ -925,6 +1090,23 @@ pub fn generate_chunk(
                 (topo * 40.0 * VERTICAL_SCALE) as i32 + 70
             };
 
+            // 🚨 Fronteira urbana e viária: `urban_ground::UrbanGroundLookup` pinta
+            // POLISHED_ANDESITE em vez de GRASS_BLOCK nas quadras urbanas, e as ruas de
+            // highways.rs usam esta mesma paleta de asfalto/calçada (GRAY_CONCRETE nas
+            // coletoras/vias locais, GRAY_TERRACOTTA nas vias de superquadra). A floresta
+            // ambiente (e o sub-bosque que nasce nas células de baixa densidade abaixo)
+            // respeita essas superfícies — sem touceira de capim nem árvore de Cerrado
+            // brotando de calçada ou asfalto.
+            if editor.check_for_block_absolute(
+                wx,
+                base_height,
+                wz,
+                Some(&[POLISHED_ANDESITE, GRAY_CONCRETE, LIGHT_GRAY_CONCRETE, GRAY_TERRACOTTA]),
+                None,
+            ) {
+                continue;
+            }
+
             let density = NOISE_DENSITY.get([sx * 0.6, sz * 0.6]);
             let spawn_threshold = 0.25 - (moisture * 0.4);
 
@@ -971,6 +1153,11 @@ pub fn generate_chunk(
                     YELLOW_CONCRETE,
                     RED_CONCRETE,
                     POLISHED_BASALT,
+                    // 🚨 Solo urbano (urban_ground::UrbanGroundLookup) pinta POLISHED_ANDESITE
+                    // em vez de GRASS_BLOCK — é o mesmo sinal que o motor já usa pra saber
+                    // "aqui é cidade, não campo". A floresta ambiente respeita essa fronteira
+                    // em vez de brotar árvore de Cerrado no meio de uma quadra urbana.
+                    POLISHED_ANDESITE,
                 ]),
                 None,
             );
@@ -981,12 +1168,20 @@ pub fn generate_chunk(
             let species_roll = NOISE_SPECIES.get([sx * 1.5, sz * 1.5]);
             let tree_type = if moisture > 0.8 && species_roll > 0.7 {
                 TreeType::Buriti
-            } else if species_roll > 0.5 {
+            } else if species_roll > 0.6 {
                 TreeType::Copaiba
-            } else if species_roll < -0.5 {
+            } else if species_roll > 0.35 {
+                TreeType::Jatoba
+            } else if species_roll > 0.15 {
+                TreeType::Pequi
+            } else if species_roll > -0.15 {
+                TreeType::Acacia
+            } else if species_roll > -0.35 {
+                TreeType::Baru
+            } else if species_roll > -0.6 {
                 TreeType::Sucupira
             } else {
-                TreeType::Acacia
+                TreeType::Aroeira
             };
 
             Tree::create_of_type_with_height(
@@ -1034,6 +1229,7 @@ fn generate_fallen_log(
             YELLOW_CONCRETE,
             RED_CONCRETE,
             POLISHED_BASALT,
+            POLISHED_ANDESITE, // Solo urbano: sem tronco caído de Cerrado dentro da cidade
         ]),
         None,
     ) {

@@ -1,12 +1,13 @@
 use crate::args::Args;
 use crate::block_definitions::{
-    AIR, BEDROCK, BRICK, COARSE_DIRT, COPPER_BLOCK, DIRT, GRASS_BLOCK, GRAVEL, POLISHED_ANDESITE,
-    RED_TERRACOTTA, SMOOTH_STONE, STONE, WATER,
+    AIR, BEDROCK, BRICK, COARSE_DIRT, COPPER_BLOCK, CYAN_TERRACOTTA, DIRT, GRASS_BLOCK, GRAVEL,
+    POLISHED_ANDESITE, RED_TERRACOTTA, SMOOTH_STONE, STONE, WATER,
 };
 use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::element_processing::*;
+use crate::elevation_data::ElevationData;
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::ground::Ground;
 use crate::master_control::BesmSignal; // 🚨 A Ponte com a Telemetria
@@ -35,6 +36,18 @@ pub struct GenerationOptions {
     pub spawn_point: Option<(i32, i32)>,
     // 🚨 BESM-6: Features governamentais diretas (CAESB, CityGML, IFC)
     pub provider_features: Vec<crate::providers::Feature>,
+    // 🚨 RECONEXÃO: Elevação real (SRTM/LiDAR), buscada uma vez para o bbox inteiro em
+    // main.rs. O Scanline abaixo fatia esta grade densa em `bare_earth_cache` por região.
+    // Empacotada em Arc para que o clone por região seja O(1) (só o ponteiro), nunca
+    // uma cópia profunda da grade inteira.
+    pub elevation_data: Option<Arc<ElevationData>>,
+    // 🚨 RECONEXÃO: Bioma real (MapBiomas/IBGE/SICAR), já esparso e em coordenadas
+    // absolutas do Minecraft — compartilhado (via Arc) entre todas as regiões sem
+    // recorte, pois já é pequeno o bastante (só pixels com vegetação são inseridos).
+    pub biome_grid: Option<Arc<FxHashMap<(i32, i32), u16>>>,
+    // 🚨 RECONEXÃO: Liga a floresta ambiente procedural (tree::generate_chunk) no
+    // Scanline. Calculado em main.rs a partir de `--terrain` e `--no-ambient-forest`.
+    pub ambient_forest: bool,
     // 🚨 BESM-6: Canal de telemetria opcional para GUI/MasterControl
     pub telemetry_tx: Option<mpsc::Sender<BesmSignal>>,
 }
@@ -55,9 +68,12 @@ pub fn generate_underground_infrastructure(
         return;
     }
 
+    // 🚨 Aceita tanto `width` (convenção OSM comum) quanto `diameter` (convenção
+    // usada pelos dados WFS/CAESB), o que faltava aqui e existia só no pipeline órfão.
     let width_str = element
         .tags
         .get("width")
+        .or_else(|| element.tags.get("diameter"))
         .map(|s: &String| s.as_str())
         .unwrap_or("1");
 
@@ -81,13 +97,24 @@ pub fn generate_underground_infrastructure(
         .get("substance")
         .map(|s: &String| s.as_str())
         .unwrap_or("");
-    let is_sewage = substance == "sewage";
+    // 🚨 Também aceita a tag `utility` (convenção CAESB/WFS: "sewer"/"water", em
+    // português "esgoto"/"agua") — antes só existia no pipeline órfão de man_made.rs.
+    let utility = element
+        .tags
+        .get("utility")
+        .map(|s: &String| s.to_lowercase())
+        .unwrap_or_default();
+    let is_sewage =
+        substance == "sewage" || utility.contains("sewer") || utility.contains("esgoto");
+    let is_water = substance == "water" || utility.contains("water") || utility.contains("agua");
     let is_power = power == Some("cable") || power == Some("line");
 
     let (wall_block, fluid_block) = if is_sewage {
         (BRICK, Some(WATER))
     } else if is_power {
         (COPPER_BLOCK, None)
+    } else if is_water {
+        (CYAN_TERRACOTTA, Some(WATER))
     } else {
         (SMOOTH_STONE, None)
     };
@@ -226,6 +253,7 @@ fn dispatch_element(
                     args,
                     highway_connectivity,
                     flood_fill_cache,
+                    building_footprints,
                 );
             } else if way.tags.contains_key("landuse") {
                 landuse::generate_landuse(editor, way, args, flood_fill_cache, building_footprints);
@@ -298,6 +326,7 @@ fn dispatch_element(
                     args,
                     highway_connectivity,
                     flood_fill_cache,
+                    building_footprints,
                 );
             } else if node.tags.contains_key("tourism") {
                 tourisms::generate_tourisms(editor, node);
@@ -455,27 +484,67 @@ pub fn generate_world_with_options(
             editor.set_active_region(rx, rz);
 
             // 1. CARREGAMENTO DINÂMICO DE TOPOGRAFIA E BIOLOGIA
-            // Em vez de caches nulos, extrairemos dados reais via Providers ou fallbacks robustos
-            // O orquestrador no futuro injetará os rasterizadores (DEM/DSM/Vegetation) aqui,
-            // processando os sub-chunks para polular os HashMaps de forma O(1).
+            //
+            // 🚨 RECONEXÃO ESTRUTURAL: `bare_earth_cache` era sempre um HashMap vazio
+            // aqui — `Ground::level()` caía sempre no `ground_level` plano, e todo
+            // `get_ground_level()` do motor inteiro (árvores, estradas, pontes,
+            // prédios, declividade) media terreno chato mesmo com `--terrain` ativo.
+            // Agora, se `options.elevation_data` veio de `main.rs` (busca real de
+            // SRTM/LiDAR, feita uma única vez para o bbox inteiro), fatiamos a grade
+            // densa dela para as coordenadas absolutas desta região de 512×512 blocos.
+            //
+            // `canopy_surface_cache` continua vazio: não há fonte de DSM (superfície
+            // com telhados/copas) religada ainda — `Ground::surface_level` já degrada
+            // graciosamente para `level()` quando a célula não existe, então isso é
+            // seguro, só menos detalhado (sem "chão" separado para topo de prédios).
+            let mut bare_cache: FxHashMap<(i32, i32), i32> = FxHashMap::default();
+            let canopy_cache: FxHashMap<(i32, i32), i32> = FxHashMap::default();
 
-            // Para garantir que a compilação passe e os biomas não quebrem (Zero Collapse),
-            // inicializamos os Caches locais como vazios, mas perfeitamente tipados.
-            let mut bare_cache = FxHashMap::default();
-            let mut canopy_cache = FxHashMap::default();
-            let mut biome_cache = FxHashMap::default();
+            if let Some(ref elevation) = options.elevation_data {
+                let region_min_x = (rx << 9).max(xzbbox.min_x());
+                let region_max_x = ((rx << 9) + 511).min(xzbbox.max_x());
+                let region_min_z = (rz << 9).max(xzbbox.min_z());
+                let region_max_z = ((rz << 9) + 511).min(xzbbox.max_z());
+
+                // A grade de `ElevationData` é densa e relativa ao canto mínimo do
+                // bbox (índice 0,0 = xzbbox.min_x()/min_z()). O `.get()` com checagem
+                // de limites é proposital: `grid_width`/`grid_height` vêm de uma
+                // fórmula de distância diferente da usada para calcular o `XZBBox`
+                // (ENU/elipsoide vs. distância geodésica simples), então podem
+                // divergir por poucos blocos nas bordas — preferimos pular a célula
+                // (mantendo o fallback plano ali) a arriscar um índice fora da grade.
+                for z in region_min_z..=region_max_z {
+                    let row = (z - xzbbox.min_z()) as usize;
+                    let Some(row_heights) = elevation.heights.get(row) else {
+                        continue;
+                    };
+                    for x in region_min_x..=region_max_x {
+                        let col = (x - xzbbox.min_x()) as usize;
+                        if let Some(&h) = row_heights.get(col) {
+                            bare_cache.insert((x, z), h);
+                        }
+                    }
+                }
+            }
 
             // 🚨 TWEAK O(1): Injeção Direta do Fallback de Biomas
-            // Se o usuário não providenciou um MapBiomas (Raster), a Scanline não quebra.
-            // Os Caches vazios farão com que o motor use o ground_level e o bioma "Cerrado_SS" matemático
-            // implementado como fallback no natural.rs
+            // Se o usuário não providenciou um MapBiomas (Raster), `options.biome_grid`
+            // é `None` e a Scanline não quebra: o motor usa o ground_level e o bioma
+            // "Cerrado_SS" matemático implementado como fallback no natural.rs.
+            // Quando fornecido, o mapa já vem em coordenadas absolutas do Minecraft e
+            // é compartilhado (Arc, sem recorte) entre todas as regiões — ver o campo
+            // `biome_grid` em `GenerationOptions` para o porquê disso ser seguro.
+            let biome_cache: Arc<FxHashMap<(i32, i32), u16>> = options
+                .biome_grid
+                .clone()
+                .unwrap_or_else(|| Arc::new(FxHashMap::default()));
 
             let local_ground = if args.terrain {
                 Ground::new_enabled(
                     args.ground_level,
                     Arc::new(bare_cache),
                     Arc::new(canopy_cache),
-                    Arc::new(biome_cache),
+                    biome_cache,
                 )
             } else {
                 Ground::new_flat(args.ground_level)
@@ -594,6 +663,48 @@ pub fn generate_world_with_options(
                     || feat_min_z > region_max_z);
 
                 if intersects {
+                    // 🚨 RECONEXÃO DO PIPELINE CAESB (água/esgoto/indoor subterrâneo)
+                    //
+                    // Antes desta correção, TODA feature de provedor — incluindo as de
+                    // saneamento do IndoorUtilityProvider (CAESB) — passava por
+                    // `into_processed_element()` e caía no dispatcher genérico de OSM
+                    // abaixo. Isso funcionava, mas descartava metadados finos que só a
+                    // Feature original carrega (a tag `utility` distinguindo água/esgoto,
+                    // o `diameter` preciso, o `semantic_group`), e o motor especializado
+                    // de `man_made::generate_from_provider_feature` — que desenha a seção
+                    // transversal oca com líquido parcial, câmaras de inspeção com poço de
+                    // acesso e desgaste orgânico determinístico — nunca era chamado.
+                    //
+                    // Por isso os grupos semânticos de infraestrutura têm prioridade aqui:
+                    // se a feature pertence a Sanitation/Utility/Sewage/Indoor/Power/Telecom
+                    // (os grupos que o IndoorUtilityProvider produz para a rede da CAESB),
+                    // ela é desenhada pelo motor especializado e NUNCA passa pelo
+                    // dispatcher genérico — evita processamento duplicado do mesmo elemento.
+                    //
+                    // 🚨 REVISÃO: Power/Telecom antes ficavam de fora daqui por engano —
+                    // a suposição era "não são CAESB, são CEB/telecom solta". Mas o filtro
+                    // em `main.rs` (`is_provider_specific`) só deixa uma feature chegar em
+                    // `provider_features` se o `source` contiver "CAESB"/"CityGML"/"IFC"/
+                    // "Indoor" — ou seja, todo Power/Telecom que passa por aqui já é dado
+                    // de infraestrutura governamental do mesmo pacote, não CEB solta. O
+                    // motor especializado (`generate_underground_cable`) desenha um cabo
+                    // fino de 1 bloco com cor distinta por tipo (laranja/energia, azul/
+                    // telecom), mais fiel que o duto genérico de `generate_underground_infrastructure`.
+                    let is_caesb_infrastructure_feature = matches!(
+                        feature.semantic_group,
+                        crate::providers::SemanticGroup::Sanitation
+                            | crate::providers::SemanticGroup::Utility
+                            | crate::providers::SemanticGroup::Sewage
+                            | crate::providers::SemanticGroup::Indoor
+                            | crate::providers::SemanticGroup::Power
+                            | crate::providers::SemanticGroup::Telecom
+                    );
+
+                    if is_caesb_infrastructure_feature {
+                        man_made::generate_from_provider_feature(&mut editor, feature, args);
+                        continue;
+                    }
+
                     // 🚨 TWEAK: Roteador Semântico de Features de Alta Precisão
                     let processed_element = feature.clone().into_processed_element();
 
@@ -608,6 +719,24 @@ pub fn generate_world_with_options(
                         &suppressed_building_outlines,
                         &xzbbox,
                     );
+                }
+            }
+
+            // 4.5 FLORESTA AMBIENTE (RECONEXÃO): `tree::generate_chunk` existia pronta
+            // — ruído de Perlin, variação de espécie do Cerrado, troncos caídos,
+            // sub-bosque — mas nenhum lugar do motor a chamava; só havia árvore onde
+            // o OSM/GDF marcava `natural=tree/wood` explicitamente. Roda por chunk
+            // (16×16, mesma grade de `chunk_min_x..chunk_max_x` usada na geração do
+            // chão acima) DEPOIS de prédios/vias desta região já estarem desenhados,
+            // para que o bloqueio de superfície urbana/viária em tree.rs (ver os
+            // comentários de `POLISHED_ANDESITE`/`GRAY_CONCRETE`/`GRAY_TERRACOTTA` em
+            // `element_processing/tree.rs`) veja o chão real e não brote árvore em
+            // cima de rua recém-pavimentada. `--no-ambient-forest` desliga.
+            if options.ambient_forest {
+                for cx in chunk_min_x..=chunk_max_x {
+                    for cz in chunk_min_z..=chunk_max_z {
+                        tree::generate_chunk(cx, cz, Some(&building_footprints), &mut editor);
+                    }
                 }
             }
 

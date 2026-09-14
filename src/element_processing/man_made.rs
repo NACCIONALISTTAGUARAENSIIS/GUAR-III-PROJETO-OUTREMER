@@ -1,9 +1,11 @@
 use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
+use crate::deterministic_rng::coord_rng;
 use crate::floodfill_cache::FloodFillCache;
 use crate::osm_parser::{ProcessedElement, ProcessedNode};
 use crate::world_editor::WorldEditor;
+use rand::Rng;
 // 🚨 BESM-6: Integração com Indoor Utility Provider (CAESB Infrastructure)
 use crate::providers::{Feature, GeometryType, SemanticGroup};
 
@@ -429,6 +431,13 @@ fn generate_street_cabinet(editor: &mut WorldEditor, element: &ProcessedElement,
     }
 }
 
+/// Tampa de bueiro (poço de visita de esgoto/drenagem/telecom): elemento onipresente
+/// nas ruas, ausente até agora. Substitui o pavimento existente pela tampa metálica.
+fn generate_manhole(editor: &mut WorldEditor, node: &ProcessedNode) {
+    let ground_y = editor.get_ground_level(node.x, node.z);
+    editor.set_block_absolute(IRON_TRAPDOOR, node.x, ground_y, node.z, None, Some(&[]));
+}
+
 /// Estações de Tratamento de Esgoto (CAESB) e Complexos Industriais
 fn generate_industrial_works(
     editor: &mut WorldEditor,
@@ -634,6 +643,7 @@ pub fn generate_man_made_nodes(editor: &mut WorldEditor, node: &ProcessedNode, a
             "water_tower" => generate_water_tower(editor, &element, args),
             "street_cabinet" => generate_street_cabinet(editor, &element, args),
             "utility_pole" => generate_utility_pole(editor, &element, args),
+            "manhole" => generate_manhole(editor, node),
             _ => {}
         }
     }
@@ -642,9 +652,22 @@ pub fn generate_man_made_nodes(editor: &mut WorldEditor, node: &ProcessedNode, a
 // ============================================================================
 // 🚨 BESM-6: CAESB Infrastructure Generator (Indoor Utility Provider Integration)
 // ============================================================================
+//
+// Este módulo é o motor especializado que consome as `Feature`s produzidas pelo
+// `IndoorUtilityProvider` — a rede subterrânea de água, esgoto e câmaras de
+// inspeção da CAESB (Companhia de Saneamento Ambiental do Distrito Federal).
+//
+// Ele é chamado por `data_processing.rs` ANTES do dispatcher genérico de OSM:
+// uma `Feature` cujo `semantic_group` seja Sanitation/Utility/Sewage/Indoor é
+// desenhada aqui, com a fidelidade da fonte original (diâmetro exato, tipo de
+// utilidade, geometria de câmara), e nunca chega a ser convertida de volta para
+// um `ProcessedElement` genérico. Isso preserva metadados que se perderiam no
+// caminho legado (`generate_underground_infrastructure`), que existe para as
+// tubulações mapeadas via OSM puro (tags `substance`/`width`) e continua sendo
+// o caminho ativo para essas — os dois convivem sem se sobrepor.
 
-/// Gera infraestrutura subterrânea a partir de Features do IndoorUtilityProvider.
-/// Processa dutos, galerias, tubulações e redes de esgoto/água da CAESB.
+/// Roteador semântico: decide qual motor de desenho usar a partir do
+/// `semantic_group` da Feature, preservando a origem/precisão do dado da CAESB.
 pub fn generate_from_provider_feature(editor: &mut WorldEditor, feature: &Feature, args: &Args) {
     match feature.semantic_group {
         SemanticGroup::Sanitation | SemanticGroup::Utility | SemanticGroup::Sewage => {
@@ -661,6 +684,13 @@ pub fn generate_from_provider_feature(editor: &mut WorldEditor, feature: &Featur
 }
 
 /// Gera tubulações subterrâneas (água, esgoto, drenagem) da CAESB.
+///
+/// A seção transversal é oca (casca + núcleo), com líquido parcial na metade
+/// inferior para tubos de água/esgoto — como a tubulação real, não um cilindro
+/// maciço. A casca intercala o material principal com uma variante "envelhecida"
+/// usando `coord_rng` (semente determinística por posição): a mesma tubulação
+/// sempre desgasta da mesma forma entre execuções, mas nunca fica uniforme
+/// demais — o objetivo é uma infraestrutura que pareça usada, não recém-moldada.
 fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, args: &Args) {
     // Extrai diâmetro da tubulação (se disponível)
     let diameter = feature
@@ -678,18 +708,23 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
         .map(|level| if level < 0 { level * 4 } else { -3 })
         .unwrap_or(-3);
 
-    // Determina material baseado no tipo de utilidade
-    let pipe_material = if let Some(utility) = feature.get_tag("utility") {
-        let util_lower = utility.to_lowercase();
-        if util_lower.contains("sewer") || util_lower.contains("esgoto") {
-            STONE_BRICKS // Esgoto: tijolo de pedra
-        } else if util_lower.contains("water") || util_lower.contains("agua") {
-            CYAN_TERRACOTTA // Água: terracota ciano
-        } else {
-            POLISHED_ANDESITE // Genérico: andesito polido
-        }
+    let utility_lower = feature
+        .get_tag("utility")
+        .map(|u| u.to_lowercase())
+        .unwrap_or_default();
+    let is_sewage = utility_lower.contains("sewer") || utility_lower.contains("esgoto");
+    let is_water = utility_lower.contains("water") || utility_lower.contains("agua");
+    let is_wet = is_sewage || is_water;
+
+    // Material principal, variante envelhecida (desgaste orgânico) e líquido
+    // interno (se houver) — determinados uma única vez pelo tipo de utilidade.
+    let (shell_block, weathered_block, fluid_block): (Block, Block, Option<Block>) = if is_sewage
+    {
+        (STONE_BRICKS, CRACKED_STONE_BRICKS, Some(WATER)) // Esgoto: tijolo de pedra rachado
+    } else if is_water {
+        (CYAN_TERRACOTTA, CRACKED_STONE_BRICKS, Some(WATER)) // Água: terracota ciano
     } else {
-        POLISHED_ANDESITE
+        (POLISHED_ANDESITE, ANDESITE, None) // Genérico: andesito, desgasta pra andesito bruto
     };
 
     match &feature.geometry {
@@ -709,18 +744,45 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                     };
 
                     let pipe_y = base_y + depth_offset;
+                    let mut weather_rng = coord_rng(px, pipe_y, pz, feature.id);
 
-                    // Gera seção circular da tubulação
+                    // Seção transversal oca: casca (anel externo) + núcleo (ar ou
+                    // líquido na metade inferior), em vez de um cilindro maciço.
+                    let inner_radius = (pipe_radius - 1).max(0);
                     for dy in -pipe_radius..=pipe_radius {
                         for dx in -pipe_radius..=pipe_radius {
-                            if dx * dx + dy * dy <= pipe_radius * pipe_radius {
+                            let dist_sq = dx * dx + dy * dy;
+                            if dist_sq > pipe_radius * pipe_radius {
+                                continue;
+                            }
+
+                            let set_x = px + dx;
+                            let set_y = pipe_y + dy;
+
+                            let is_shell = pipe_radius <= 1 || dist_sq > inner_radius * inner_radius;
+
+                            if is_shell {
+                                // ~18% da casca vira a variante desgastada.
+                                let block = if weather_rng.random_bool(0.18) {
+                                    weathered_block
+                                } else {
+                                    shell_block
+                                };
                                 editor.set_block_absolute(
-                                    pipe_material,
-                                    px + dx,
-                                    pipe_y + dy,
+                                    block,
+                                    set_x,
+                                    set_y,
                                     pz,
+                                    Some(&[DIRT, STONE, COARSE_DIRT, GRAVEL]),
                                     None,
-                                    None,
+                                );
+                            } else {
+                                let core_block = match fluid_block {
+                                    Some(fluid) if dy <= 0 => fluid, // líquido só embaixo
+                                    _ => AIR,
+                                };
+                                editor.set_block_absolute(
+                                    core_block, set_x, set_y, pz, None, None,
                                 );
                             }
                         }
@@ -729,7 +791,10 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
             }
         }
         GeometryType::Point(pt) => {
-            // Caixas de inspeção, válvulas, poços de visita
+            // Caixas de inspeção, válvulas, poços de visita — câmara cúbica 3x3x3
+            // com um único bloco interior (o espaço real de um poço de inspeção),
+            // paredes com desgaste e, ocasionalmente, uma teia de aranha e umidade
+            // acumulada no fundo se a câmara for de água/esgoto.
             let base_y = if args.terrain {
                 editor.get_ground_level(pt.x, pt.z)
             } else {
@@ -737,16 +802,26 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
             };
 
             let chamber_y = base_y + depth_offset;
+            let mut chamber_rng = coord_rng(pt.x, chamber_y, pt.z, feature.id);
 
-            // Cria uma câmara cúbica 3x3x3
+            let has_cobweb = chamber_rng.random_bool(0.3);
+            let cobweb_dx = chamber_rng.random_range(-1..=1);
+            let cobweb_dz = chamber_rng.random_range(-1..=1);
+
             for dx in -1i32..=1i32 {
                 for dy in -1i32..=1i32 {
                     for dz in -1i32..=1i32 {
                         let is_wall = dx.abs() == 1 || dy.abs() == 1 || dz.abs() == 1;
-                        let block = if is_wall {
-                            pipe_material
+                        let block = if !is_wall {
+                            AIR // Interior vazio (o vão real do poço)
+                        } else if has_cobweb && dy == 1 && dx == cobweb_dx && dz == cobweb_dz {
+                            COBWEB // Câmara pouco visitada: sensação de esquecida
+                        } else if is_wet && dy == -1 && chamber_rng.random_bool(0.35) {
+                            MOSS_BLOCK // Umidade acumulada no fundo
+                        } else if chamber_rng.random_bool(0.2) {
+                            weathered_block
                         } else {
-                            AIR // Interior vazio
+                            shell_block
                         };
                         editor.set_block_absolute(
                             block,
@@ -792,22 +867,27 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                 let wall_points = bresenham_line(start.x, 0, start.z, end.x, 0, end.z);
 
                 for (px, _, pz) in wall_points {
-                    // Paredes laterais
+                    let mut wall_rng = coord_rng(px, chamber_y, pz, feature.id);
+
+                    // Paredes laterais, com desgaste orgânico intercalado.
                     for dy in 0..chamber_height {
-                        editor.set_block_absolute(
-                            pipe_material,
-                            px,
-                            chamber_y + dy,
-                            pz,
-                            None,
-                            None,
-                        );
+                        let block = if wall_rng.random_bool(0.15) {
+                            weathered_block
+                        } else {
+                            shell_block
+                        };
+                        editor.set_block_absolute(block, px, chamber_y + dy, pz, None, None);
                     }
-                    // Piso
-                    editor.set_block_absolute(pipe_material, px, chamber_y - 1, pz, None, None);
+                    // Piso — galerias de água/esgoto acumulam musgo no rodapé.
+                    let floor_block = if is_wet && wall_rng.random_bool(0.25) {
+                        MOSS_BLOCK
+                    } else {
+                        shell_block
+                    };
+                    editor.set_block_absolute(floor_block, px, chamber_y - 1, pz, None, None);
                     // Teto
                     editor.set_block_absolute(
-                        pipe_material,
+                        shell_block,
                         px,
                         chamber_y + chamber_height,
                         pz,
@@ -854,7 +934,13 @@ fn generate_underground_cable(editor: &mut WorldEditor, feature: &Feature, args:
     }
 }
 
-/// Gera estruturas internas (salas, corredores, níveis indoor).
+/// Gera estruturas internas subterrâneas (câmaras de válvula, salas técnicas)
+/// a partir de polígonos indoor do IndoorUtilityProvider (CAESB).
+///
+/// Paredes recebem leve variação de tom — evita o clichê do bloco branco
+/// perfeitamente uniforme — e, em níveis subterrâneos, o piso acumula musgo:
+/// reflexo da umidade real de uma sala técnica enterrada, não uma sala limpa
+/// recém-construída.
 fn generate_indoor_structure(editor: &mut WorldEditor, feature: &Feature, args: &Args) {
     // Indoor structures são polígonos representando plantas baixas
     if let GeometryType::Polygon(points) = &feature.geometry {
@@ -866,6 +952,7 @@ fn generate_indoor_structure(editor: &mut WorldEditor, feature: &Feature, args: 
             .get_tag("level")
             .and_then(|l| l.parse::<i32>().ok())
             .unwrap_or(0);
+        let is_underground = level < 0;
 
         let room_height = feature
             .get_tag("height")
@@ -890,12 +977,24 @@ fn generate_indoor_structure(editor: &mut WorldEditor, feature: &Feature, args: 
             let wall_points = bresenham_line(start.x, 0, start.z, end.x, 0, end.z);
 
             for (px, _, pz) in wall_points {
-                // Piso
-                editor.set_block_absolute(SMOOTH_STONE, px, floor_y, pz, None, None);
+                let mut room_rng = coord_rng(px, floor_y, pz, feature.id);
 
-                // Paredes
+                // Piso: musgo perto da parede em salas subterrâneas.
+                let floor_block = if is_underground && room_rng.random_bool(0.2) {
+                    MOSS_BLOCK
+                } else {
+                    SMOOTH_STONE
+                };
+                editor.set_block_absolute(floor_block, px, floor_y, pz, None, None);
+
+                // Paredes: leve variação de tom, nunca perfeitamente uniforme.
                 for dy in 1..room_height {
-                    editor.set_block_absolute(WHITE_CONCRETE, px, floor_y + dy, pz, None, None);
+                    let wall_block = if room_rng.random_bool(0.15) {
+                        LIGHT_GRAY_CONCRETE
+                    } else {
+                        WHITE_CONCRETE
+                    };
+                    editor.set_block_absolute(wall_block, px, floor_y + dy, pz, None, None);
                 }
 
                 // Teto

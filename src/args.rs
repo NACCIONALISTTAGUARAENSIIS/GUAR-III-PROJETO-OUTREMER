@@ -204,6 +204,45 @@ pub struct Args {
     #[arg(long, default_value_t = true, action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true")]
     pub city_boundaries: bool,
 
+    // ==========================================================
+    // 🚨 RECONEXÃO CAESB/VEGETAÇÃO — Bioma real do MapBiomas/IBGE/SICAR
+    // (BIOME_* de vegetation_provider.rs só têm efeito quando estes
+    // caminhos são fornecidos; sem eles o motor mantém o fallback
+    // matemático de sempre, sem quebrar nada).
+    // ==========================================================
+    /// Path to a local MapBiomas GeoTIFF raster (land-cover classes) for real biome
+    /// classification. Requires --mapbiomas-top-left-lat/-lon and --mapbiomas-pixel-size-deg.
+    #[arg(long)]
+    pub mapbiomas_tiff: Option<PathBuf>,
+
+    /// Path to the IBGE phytophysiognomy shapefile (.shp) — refines MapBiomas pixels
+    /// into exact Cerrado sub-types (Vereda, Cerradão, Campo Rupestre etc.)
+    #[arg(long)]
+    pub ibge_shapefile: Option<PathBuf>,
+
+    /// Path to the SICAR shapefile (.shp) of Permanent Preservation Areas (APP)
+    #[arg(long)]
+    pub sicar_shapefile: Option<PathBuf>,
+
+    /// Latitude of the MapBiomas raster's top-left pixel (required with --mapbiomas-tiff)
+    #[arg(long)]
+    pub mapbiomas_top_left_lat: Option<f64>,
+
+    /// Longitude of the MapBiomas raster's top-left pixel (required with --mapbiomas-tiff)
+    #[arg(long)]
+    pub mapbiomas_top_left_lon: Option<f64>,
+
+    /// Pixel size in degrees of the MapBiomas raster (required with --mapbiomas-tiff;
+    /// typically ~0.00027 for the standard 30m MapBiomas product)
+    #[arg(long)]
+    pub mapbiomas_pixel_size_deg: Option<f64>,
+
+    /// Disable the ambient procedural Cerrado forest that fills open (non-urban,
+    /// non-road) terrain independently of OSM natural=* tags (enabled by default
+    /// when --terrain is set)
+    #[arg(long, default_value_t = false)]
+    pub no_ambient_forest: bool,
+
     /// Enable debug mode (optional)
     #[arg(long)]
     pub debug: bool,
