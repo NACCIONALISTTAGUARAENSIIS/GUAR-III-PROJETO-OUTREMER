@@ -1,0 +1,33 @@
+ISO-10303-21;
+/* Fixture minima IFC4/STEP para tests/multi_provider_smoke.rs.
+   src/providers/ifc_provider.rs faz um "bypass analitico" documentado no
+   proprio codigo: em vez de resolver a arvore completa
+   IfcLocalPlacement -> IfcAxis2Placement3D -> IfcCartesianPoint (custaria
+   gigabytes de RAM para um IFC real), ele procura qualquer token "#N" na
+   MESMA linha da entidade alvo (IFCWALL/IFCSLAB/...) e usa o ponto
+   cadastrado sob esse ID. Por isso as entidades abaixo referenciam
+   IFCCARTESIANPOINT diretamente em vez de passar por uma cadeia de
+   IfcLocalPlacement -- isso NAO e o que um exportador BIM real (Revit,
+   ArchiCAD) produz, mas e exatamente o padrao que este parser simplificado
+   foi desenhado para reconhecer; ver o comentario "bypass analitico" em
+   ifc_provider.rs para o design original.
+   Coordenadas locais (metros, CAD/Revit) calculadas para cair dentro do
+   bbox de teste do Guara I (-15.8182,-47.9832,-15.8178,-47.9828) apos a
+   transformacao afim com a ancora geodesica fixa em ifc_provider.rs/main.rs
+   (Praca dos Tres Poderes, lat -15.8000 lon -47.8600, rotacao 0 graus):
+     global_lat = anchor_lat + local_y / 111320
+     global_lon = anchor_lon + local_x / (111320 * cos(anchor_lat_rad))
+   local_x=-13177.5, local_y=-2003.76 -> lat -15.8180, lon -47.9830
+   (verificado com `cs2cs +init=epsg:4326 +to +init=epsg:31983` invertido). */
+HEADER;
+FILE_DESCRIPTION((''),'2;1');
+FILE_NAME('pincelism_fixture.ifc','2024-01-01T00:00:00',('Pincelism'),('Pincelism'),'IFC4','','');
+FILE_SCHEMA(('IFC4'));
+ENDSEC;
+DATA;
+#1=IFCCARTESIANPOINT((-13177.5,-2003.76,3.0));
+#2=IFCCARTESIANPOINT((-13175.0,-2003.76,0.0));
+#3=IFCWALL('1a2B3c4D5e6F7g8H9i0Jkl',$,'Muro Fixture','Parede de teste (fixture Pincelism)',$,#1,$,$,$);
+#4=IFCSLAB('2b3C4d5E6f7G8h9I0j1Kmn',$,'Laje Fixture','Laje de teste (fixture Pincelism)',$,#2,$,$,$);
+ENDSEC;
+END-ISO-10303-21;

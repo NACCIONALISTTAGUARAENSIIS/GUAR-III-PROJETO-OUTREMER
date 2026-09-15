@@ -251,34 +251,41 @@ pub fn run_generation_pipeline(
     // Busca UMA vez para o bbox inteiro (função já existente em
     // elevation_data.rs, só nunca chamada); desativada em --offline porque
     // a busca SRTM faz requisições HTTP.
-    let elevation_data: Option<elevation_data::ElevationData> = if args.terrain && !args.offline {
-        println!(
-            "{} Fetching real elevation data (SRTM/LiDAR)...",
-            "[3.5/7]".bold()
-        );
-        match elevation_data::fetch_elevation_data(
-            &args.bbox,
-            args.scale_h,
-            args.scale_v,
-            args.ground_level,
-            args.local_lidar.as_ref(),
-        ) {
-            Ok(data) => Some(data),
-            Err(e) => {
-                let msg = format!(
-                    "Falha ao buscar elevação real: {}. Terreno ficará plano nesta execução.",
-                    e
-                );
-                if let Some(ref tx) = telemetry_tx {
-                    let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+    //
+    // CORREÇÃO: `--local-lidar` não precisa de rede (só o fallback SRTM
+    // precisa — ver `elevation_data::fetch_elevation_data`, que pula o
+    // download de tiles inteiramente quando o LiDAR local é lido com
+    // sucesso). Bloquear isso atrás de `!args.offline` descartava SEMPRE o
+    // LiDAR local em modo offline, mesmo com o arquivo fornecido.
+    let elevation_data: Option<elevation_data::ElevationData> =
+        if args.terrain && (!args.offline || args.local_lidar.is_some()) {
+            println!(
+                "{} Fetching real elevation data (SRTM/LiDAR)...",
+                "[3.5/7]".bold()
+            );
+            match elevation_data::fetch_elevation_data(
+                &args.bbox,
+                args.scale_h,
+                args.scale_v,
+                args.ground_level,
+                args.local_lidar.as_ref(),
+            ) {
+                Ok(data) => Some(data),
+                Err(e) => {
+                    let msg = format!(
+                        "Falha ao buscar elevação real: {}. Terreno ficará plano nesta execução.",
+                        e
+                    );
+                    if let Some(ref tx) = telemetry_tx {
+                        let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+                    }
+                    eprintln!("{} {}", "Aviso:".yellow().bold(), msg);
+                    None
                 }
-                eprintln!("{} {}", "Aviso:".yellow().bold(), msg);
-                None
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     // Bioma real (MapBiomas + fitofisionomia IBGE + APP SICAR). Só produz dados
     // reais se os caminhos forem passados via CLI (--mapbiomas-tiff etc.);
