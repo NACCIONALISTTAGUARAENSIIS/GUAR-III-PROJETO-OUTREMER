@@ -4,7 +4,7 @@ use crate::progress::{emit_gui_error, emit_gui_progress_update, is_running_with_
 #[cfg(feature = "gui")]
 use crate::telemetry::{send_log, LogLevel};
 use colored::Colorize;
-use rand::prelude::IndexedRandom;
+use rand::prelude::SliceRandom;
 use reqwest::blocking::Client;
 use reqwest::blocking::ClientBuilder;
 use serde_json::Value;
@@ -57,11 +57,37 @@ fn download_with_reqwest(url: &str, query: &str) -> Result<String, Box<dyn std::
     }
 }
 
+/// 🚨 RECONEXÃO: monta a URL com `data=<query>` devidamente percent-encoded via
+/// `reqwest::Url` (já é dependência direta do crate, sem precisar de outra).
+/// A query Overpass (`build_overpass_query`) contém colchetes, ponto-e-vírgula
+/// e quebras de linha literais (`[out:json][timeout:360]...`) — antes, essas
+/// duas funções colavam a query CRUA na URL (`format!("{url}?data={query}")`),
+/// o que: (a) faz o `curl` interpretar `[`/`]` como sintaxe de "URL globbing"
+/// (expansão de range/lista) por padrão, quebrando a requisição inteira com
+/// "Curl command failed" mesmo com a Overpass API saudável e alcançável; e
+/// (b) passava espaços/quebras de linha crus para o `wget`, que a maioria dos
+/// servidores rejeita numa URL. Reproduzido de verdade: rodar a geração com
+/// `--downloader curl` contra o Guará I falhava 100% das vezes com essa
+/// mensagem, mesmo com rede e Overpass funcionando (confirmado via `curl`
+/// manual na mesma query).
+fn build_overpass_url(url: &str, query: &str) -> io::Result<reqwest::Url> {
+    let mut full_url =
+        reqwest::Url::parse(url).map_err(|e| io::Error::other(format!("URL inválida: {e}")))?;
+    full_url.query_pairs_mut().append_pair("data", query);
+    Ok(full_url)
+}
+
 /// Function to download data using `curl`
 fn download_with_curl(url: &str, query: &str) -> io::Result<String> {
+    let full_url = build_overpass_url(url, query)?;
     let output: std::process::Output = Command::new("curl")
         .arg("-s") // Add silent mode to suppress output
-        .arg(format!("{url}?data={query}"))
+        // Ver `build_overpass_url`: desabilita a expansão de glob do curl para
+        // `[`/`]`/`{`/`}` — sem isso, colchetes literais na query Overpass
+        // fazem o curl tentar expandir a URL como um range antes de sequer
+        // tentar a requisição.
+        .arg("-g")
+        .arg(full_url.as_str())
         .output()?;
 
     if !output.status.success() {
@@ -73,9 +99,10 @@ fn download_with_curl(url: &str, query: &str) -> io::Result<String> {
 
 /// Function to download data using `wget`
 fn download_with_wget(url: &str, query: &str) -> io::Result<String> {
+    let full_url = build_overpass_url(url, query)?;
     let output: std::process::Output = Command::new("wget")
         .arg("-qO-") // Use `-qO-` to output the result directly to stdout
-        .arg(format!("{url}?data={query}"))
+        .arg(full_url.as_str())
         .output()?;
 
     if !output.status.success() {
@@ -204,7 +231,7 @@ pub fn fetch_data_from_overpass(
     ];
     let fallback_api_servers: Vec<&str> =
         vec!["https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
-    let mut url: &&str = api_servers.choose(&mut rand::rng()).unwrap();
+    let mut url: &&str = api_servers.choose(&mut rand::thread_rng()).unwrap();
 
     // 🚨 BESM-6: Subdivisão do BBox
     let sub_boxes = split_bbox_if_needed(&bbox);
@@ -251,7 +278,9 @@ pub fn fetch_data_from_overpass(
                     }
 
                     println!("Request failed. Switching to fallback url...");
-                    url = fallback_api_servers.choose(&mut rand::rng()).unwrap();
+                    url = fallback_api_servers
+                        .choose(&mut rand::thread_rng())
+                        .unwrap();
                     attempt += 1;
                 }
             }

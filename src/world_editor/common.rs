@@ -209,6 +209,7 @@ impl SectionToModify {
 
     /// Read block at a raw flat index (used by Bedrock serialiser).
     #[inline(always)]
+    #[cfg_attr(not(feature = "bedrock"), allow(dead_code))]
     pub fn get_block_at_index(&self, index: usize) -> Block {
         self.storage.get(index)
     }

@@ -3,9 +3,13 @@ use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::clipping::clip_way_to_bbox;
 // 🚨 BESM-6: Importações de cores e spatial_seed corrigidas
-use crate::colors::{ColorContext, apply_micro_variation, apply_weathering, color_text_to_rgb_tuple, resolve_roof_color, resolve_wall_color, spatial_seed};
+use crate::colors::{
+    apply_micro_variation, apply_weathering, color_text_to_rgb_tuple, resolve_roof_color,
+    resolve_wall_color, spatial_seed, ColorContext,
+};
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::deterministic_rng::{coord_rng, element_rng};
+use crate::element_processing::doors::{self, DoorFacing};
 use crate::element_processing::historic;
 use crate::element_processing::landmarks;
 use crate::floodfill_cache::FloodFillCache;
@@ -283,8 +287,10 @@ pub enum BuildingCategory {
 
     // Commercial types
     Commercial, // Shops, retail, supermarkets
-    Office,     // Office buildings
-    Hotel,      // Hotels and accommodation
+    Mall,       // shop=mall — shopping centers (Conjunto Nacional, ParkShopping, Pátio Brasil…):
+    // massa de "caixa" grande, poucas janelas, não a grade residencial/office comum
+    Office, // Office buildings
+    Hotel,  // Hotels and accommodation
 
     // Industrial types
     Industrial, // Factories, manufacturing
@@ -315,6 +321,17 @@ impl BuildingCategory {
         // Check for man_made=tower before anything else
         if element.tags.get("man_made").map(|s: &String| s.as_str()) == Some("tower") {
             return BuildingCategory::Tower;
+        }
+
+        // shop=mall é o sinal real e independente de nome para um shopping center —
+        // antes, só um `name` contendo literalmente "shopping" ativava tratamento
+        // especial (na camada de interior), e a massa exterior nunca distinguia um
+        // shopping de uma loja comum. Malls reais do DF sem "shopping" no nome (Pátio
+        // Brasil, Iguatemi Brasília) ficavam de fora. Checado antes de
+        // `is_tall_building` porque a identidade de shopping (massa de caixa larga e
+        // baixa) deve prevalecer sobre a heurística de arranha-céu.
+        if element.tags.get("shop").map(|s: &String| s.as_str()) == Some("mall") {
+            return BuildingCategory::Mall;
         }
 
         if is_tall_building {
@@ -747,6 +764,25 @@ impl BuildingStylePreset {
         }
     }
 
+    /// Preset para shopping centers (`shop=mall`): massa de "caixa" grande e baixa —
+    /// Conjunto Nacional, ParkShopping, Pátio Brasil, Iguatemi Brasília — em vez da
+    /// fachada residencial/comercial comum. Sem janelas na grade regular (`has_windows:
+    /// false`): a fachada real desses prédios é predominantemente cega, com vidro
+    /// concentrado nas entradas — que o motor já resolve separadamente via portas —
+    /// não uma grade repetida de janelas pequenas como um prédio de escritório.
+    pub fn mall() -> Self {
+        Self {
+            has_windows: Some(false),
+            use_accent_lines: Some(false),
+            use_vertical_accent: Some(false),
+            use_accent_roof_line: Some(true),
+            roof_type: Some(RoofType::Flat),
+            generate_roof: Some(true),
+            has_chimney: Some(false),
+            ..Default::default()
+        }
+    }
+
     /// Gets the appropriate preset for a building category
     pub fn for_category(category: BuildingCategory) -> Self {
         match category {
@@ -754,6 +790,7 @@ impl BuildingStylePreset {
             BuildingCategory::Residential => Self::residential(),
             BuildingCategory::Farm => Self::farm(),
             BuildingCategory::Commercial => Self::commercial(),
+            BuildingCategory::Mall => Self::mall(),
             BuildingCategory::Office => Self::office(),
             BuildingCategory::Hotel => Self::hotel(),
             BuildingCategory::Industrial => Self::industrial(),
@@ -832,8 +869,10 @@ impl BuildingStyle {
 
         // 🚨 TWEAK BESM-6: Injeta ColorContext para resolver blocos coloridos e de bioma
         // Calculate building center for ColorContext
-        let center_x = element.nodes.iter().map(|n| n.x).sum::<i32>() / element.nodes.len().max(1) as i32;
-        let center_z = element.nodes.iter().map(|n| n.z).sum::<i32>() / element.nodes.len().max(1) as i32;
+        let center_x =
+            element.nodes.iter().map(|n| n.x).sum::<i32>() / element.nodes.len().max(1) as i32;
+        let center_z =
+            element.nodes.iter().map(|n| n.z).sum::<i32>() / element.nodes.len().max(1) as i32;
 
         let ctx = ColorContext {
             raw_color_tag: element.tags.get("building:colour").map(|s| s.as_str()),
@@ -845,7 +884,8 @@ impl BuildingStyle {
             center_z,
             is_highway: false,
             is_pipeline: false,
-            is_landmark: element.tags.contains_key("heritage") || element.tags.contains_key("historic"),
+            is_landmark: element.tags.contains_key("heritage")
+                || element.tags.contains_key("historic"),
             building_area: Some(footprint_size as f64),
             district_seed: (element.id % 997) as u32,
             distance_to_center: 0.5,
@@ -869,7 +909,7 @@ impl BuildingStyle {
             ) {
                 const SKYSCRAPER_ROOF_CAP_OPTIONS: [Block; 3] =
                     [POLISHED_ANDESITE, BLACKSTONE, NETHER_BRICK];
-                SKYSCRAPER_ROOF_CAP_OPTIONS[rng.random_range(0..SKYSCRAPER_ROOF_CAP_OPTIONS.len())]
+                SKYSCRAPER_ROOF_CAP_OPTIONS[rng.gen_range(0..SKYSCRAPER_ROOF_CAP_OPTIONS.len())]
             } else {
                 get_floor_block_with_rng(rng)
             }
@@ -886,7 +926,7 @@ impl BuildingStyle {
         let accent_block = preset.accent_block.unwrap_or_else(|| {
             if category == BuildingCategory::GlassySkyscraper {
                 const GLASSY_ACCENT_OPTIONS: [Block; 2] = [WHITE_STAINED_GLASS, BLACKSTONE];
-                GLASSY_ACCENT_OPTIONS[rng.random_range(0..GLASSY_ACCENT_OPTIONS.len())]
+                GLASSY_ACCENT_OPTIONS[rng.gen_range(0..GLASSY_ACCENT_OPTIONS.len())]
             } else if category == BuildingCategory::ModernSkyscraper {
                 const MODERN_ACCENT_OPTIONS: [Block; 5] = [
                     POLISHED_ANDESITE,
@@ -895,9 +935,9 @@ impl BuildingStyle {
                     NETHER_BRICK,
                     STONE_BRICKS,
                 ];
-                MODERN_ACCENT_OPTIONS[rng.random_range(0..MODERN_ACCENT_OPTIONS.len())]
+                MODERN_ACCENT_OPTIONS[rng.gen_range(0..MODERN_ACCENT_OPTIONS.len())]
             } else {
-                ACCENT_BLOCK_OPTIONS[rng.random_range(0..ACCENT_BLOCK_OPTIONS.len())]
+                ACCENT_BLOCK_OPTIONS[rng.gen_range(0..ACCENT_BLOCK_OPTIONS.len())]
             }
         });
 
@@ -905,7 +945,7 @@ impl BuildingStyle {
 
         let use_vertical_windows = preset
             .use_vertical_windows
-            .unwrap_or_else(|| rng.random_bool(0.7));
+            .unwrap_or_else(|| rng.gen_bool(0.7));
 
         // Horizontal windows: full-width bands, used by modern skyscrapers
         let use_horizontal_windows = preset
@@ -916,7 +956,7 @@ impl BuildingStyle {
 
         let use_accent_roof_line = preset
             .use_accent_roof_line
-            .unwrap_or_else(|| rng.random_bool(0.25));
+            .unwrap_or_else(|| rng.gen_bool(0.25));
 
         // Accent lines only for multi-floor buildings
         // Glassy skyscrapers get 60% chance, Modern skyscrapers always have them
@@ -924,16 +964,16 @@ impl BuildingStyle {
             if category == BuildingCategory::ModernSkyscraper {
                 true // Stone bands always present on modern skyscrapers
             } else if category == BuildingCategory::GlassySkyscraper {
-                rng.random_bool(0.6)
+                rng.gen_bool(0.6)
             } else {
-                has_multiple_floors && rng.random_bool(0.2)
+                has_multiple_floors && rng.gen_bool(0.2)
             }
         });
 
         // Vertical accent: only if no accent lines and multi-floor
         let use_vertical_accent = preset
             .use_vertical_accent
-            .unwrap_or_else(|| has_multiple_floors && !use_accent_lines && rng.random_bool(0.1));
+            .unwrap_or_else(|| has_multiple_floors && !use_accent_lines && rng.gen_bool(0.1));
 
         // === Roof ===
 
@@ -957,7 +997,7 @@ impl BuildingStyle {
             (rt, should_generate)
         } else if qualifies_for_auto_gabled_roof(building_type) {
             const MAX_FOOTPRINT_FOR_GABLED: usize = 800;
-            if footprint_size <= MAX_FOOTPRINT_FOR_GABLED && rng.random_bool(0.9) {
+            if footprint_size <= MAX_FOOTPRINT_FOR_GABLED && rng.gen_bool(0.9) {
                 (RoofType::Gabled, true)
             } else {
                 (RoofType::Flat, false)
@@ -984,12 +1024,14 @@ impl BuildingStyle {
             let suitable_roof = matches!(roof_type, RoofType::Gabled | RoofType::Hipped);
             let suitable_size = (30..=400).contains(&footprint_size);
 
-            is_residential && suitable_roof && suitable_size && rng.random_bool(0.55)
+            is_residential && suitable_roof && suitable_size && rng.gen_bool(0.55)
         });
 
         // Roof block: specific material for roofs or resolve from COLORS.RS
         let roof_block_from_colors = resolve_roof_color(&ctx);
-        let roof_block = preset.roof_block.or(Some(Block::new(roof_block_from_colors.0 as u16)));
+        let roof_block = preset
+            .roof_block
+            .or(Some(Block::new(roof_block_from_colors.0 as u16)));
 
         // Windows: default to true unless explicitly disabled
         let has_windows = preset.has_windows.unwrap_or(true);
@@ -1042,7 +1084,7 @@ struct BuildingConfig {
     has_single_door: bool,
     category: BuildingCategory,
     facade_map: Option<Lod3FacadeMap>, // 🚨 BESM-6: Injeção da Matriz de Fachada
-    element_id: u64, // Usado para seeds do weathering
+    element_id: u64,                   // Usado para seeds do weathering
 }
 
 /// Building bounds calculated from nodes
@@ -1080,11 +1122,11 @@ impl BuildingBounds {
 #[inline]
 fn should_skip_underground_building(element: &ProcessedWay) -> bool {
     // 🚨 BESM-6 Tweak: Infraestrutura e Galerias da CAESB DEVEM ser geradas embaixo da terra
-    if element.tags.get("diameter").is_some()
+    if element.tags.contains_key("diameter")
         || element
-        .tags
-        .get("min_height")
-        .is_some_and(|v| v.starts_with("-"))
+            .tags
+            .get("min_height")
+            .is_some_and(|v| v.starts_with("-"))
     {
         return false;
     }
@@ -1196,19 +1238,32 @@ fn determine_wall_block(
 fn get_wall_block_for_category(category: BuildingCategory, rng: &mut impl Rng) -> Block {
     match category {
         BuildingCategory::House | BuildingCategory::Residential => {
-            RESIDENTIAL_WALL_OPTIONS[rng.random_range(0..RESIDENTIAL_WALL_OPTIONS.len())]
+            RESIDENTIAL_WALL_OPTIONS[rng.gen_range(0..RESIDENTIAL_WALL_OPTIONS.len())]
         }
         BuildingCategory::Commercial | BuildingCategory::Office | BuildingCategory::Hotel => {
-            COMMERCIAL_WALL_OPTIONS[rng.random_range(0..COMMERCIAL_WALL_OPTIONS.len())]
+            COMMERCIAL_WALL_OPTIONS[rng.gen_range(0..COMMERCIAL_WALL_OPTIONS.len())]
+        }
+        BuildingCategory::Mall => {
+            // Tons claros de revestimento/concreto — a "caixa" bege/branca real dos
+            // shoppings do DF (Conjunto Nacional, ParkShopping, Pátio Brasil), distinta
+            // da paleta de loja de rua comum.
+            const MALL_WALL_OPTIONS: [Block; 5] = [
+                WHITE_CONCRETE,
+                LIGHT_GRAY_CONCRETE,
+                SMOOTH_QUARTZ,
+                SMOOTH_SANDSTONE,
+                WHITE_TERRACOTTA,
+            ];
+            MALL_WALL_OPTIONS[rng.gen_range(0..MALL_WALL_OPTIONS.len())]
         }
         BuildingCategory::Industrial | BuildingCategory::Warehouse => {
-            INDUSTRIAL_WALL_OPTIONS[rng.random_range(0..INDUSTRIAL_WALL_OPTIONS.len())]
+            INDUSTRIAL_WALL_OPTIONS[rng.gen_range(0..INDUSTRIAL_WALL_OPTIONS.len())]
         }
         BuildingCategory::Religious => {
-            RELIGIOUS_WALL_OPTIONS[rng.random_range(0..RELIGIOUS_WALL_OPTIONS.len())]
+            RELIGIOUS_WALL_OPTIONS[rng.gen_range(0..RELIGIOUS_WALL_OPTIONS.len())]
         }
         BuildingCategory::School | BuildingCategory::Hospital => {
-            INSTITUTIONAL_WALL_OPTIONS[rng.random_range(0..INSTITUTIONAL_WALL_OPTIONS.len())]
+            INSTITUTIONAL_WALL_OPTIONS[rng.gen_range(0..INSTITUTIONAL_WALL_OPTIONS.len())]
         }
         BuildingCategory::Government => {
             // Concreto aparente claro: paleta institucional modernista (Niemeyer), não vidro.
@@ -1219,16 +1274,16 @@ fn get_wall_block_for_category(category: BuildingCategory, rng: &mut impl Rng) -
                 SMOOTH_STONE,
                 POLISHED_ANDESITE,
             ];
-            GOVERNMENT_WALL_OPTIONS[rng.random_range(0..GOVERNMENT_WALL_OPTIONS.len())]
+            GOVERNMENT_WALL_OPTIONS[rng.gen_range(0..GOVERNMENT_WALL_OPTIONS.len())]
         }
-        BuildingCategory::Farm => FARM_WALL_OPTIONS[rng.random_range(0..FARM_WALL_OPTIONS.len())],
+        BuildingCategory::Farm => FARM_WALL_OPTIONS[rng.gen_range(0..FARM_WALL_OPTIONS.len())],
         BuildingCategory::Historic => {
-            HISTORIC_WALL_OPTIONS[rng.random_range(0..HISTORIC_WALL_OPTIONS.len())]
+            HISTORIC_WALL_OPTIONS[rng.gen_range(0..HISTORIC_WALL_OPTIONS.len())]
         }
         BuildingCategory::Garage => {
-            GARAGE_WALL_OPTIONS[rng.random_range(0..GARAGE_WALL_OPTIONS.len())]
+            GARAGE_WALL_OPTIONS[rng.gen_range(0..GARAGE_WALL_OPTIONS.len())]
         }
-        BuildingCategory::Shed => SHED_WALL_OPTIONS[rng.random_range(0..SHED_WALL_OPTIONS.len())],
+        BuildingCategory::Shed => SHED_WALL_OPTIONS[rng.gen_range(0..SHED_WALL_OPTIONS.len())],
         BuildingCategory::Tower => {
             const TOWER_WALL_OPTIONS: [Block; 8] = [
                 STONE_BRICKS,
@@ -1240,14 +1295,14 @@ fn get_wall_block_for_category(category: BuildingCategory, rng: &mut impl Rng) -
                 DEEPSLATE_BRICKS,
                 SMOOTH_STONE,
             ];
-            TOWER_WALL_OPTIONS[rng.random_range(0..TOWER_WALL_OPTIONS.len())]
+            TOWER_WALL_OPTIONS[rng.gen_range(0..TOWER_WALL_OPTIONS.len())]
         }
         BuildingCategory::Greenhouse => {
-            GREENHOUSE_WALL_OPTIONS[rng.random_range(0..GREENHOUSE_WALL_OPTIONS.len())]
+            GREENHOUSE_WALL_OPTIONS[rng.gen_range(0..GREENHOUSE_WALL_OPTIONS.len())]
         }
         BuildingCategory::TallBuilding => {
             // Tall buildings use commercial palette (glass, concrete, stone)
-            COMMERCIAL_WALL_OPTIONS[rng.random_range(0..COMMERCIAL_WALL_OPTIONS.len())]
+            COMMERCIAL_WALL_OPTIONS[rng.gen_range(0..COMMERCIAL_WALL_OPTIONS.len())]
         }
         BuildingCategory::ModernSkyscraper => {
             // Modern skyscrapers use clean concrete/stone wall materials
@@ -1259,8 +1314,7 @@ fn get_wall_block_for_category(category: BuildingCategory, rng: &mut impl Rng) -
                 SMOOTH_STONE,
                 QUARTZ_BLOCK,
             ];
-            MODERN_SKYSCRAPER_WALL_OPTIONS
-                [rng.random_range(0..MODERN_SKYSCRAPER_WALL_OPTIONS.len())]
+            MODERN_SKYSCRAPER_WALL_OPTIONS[rng.gen_range(0..MODERN_SKYSCRAPER_WALL_OPTIONS.len())]
         }
         BuildingCategory::GlassySkyscraper => {
             // Glass-facade skyscrapers use stained glass as wall material
@@ -1270,7 +1324,7 @@ fn get_wall_block_for_category(category: BuildingCategory, rng: &mut impl Rng) -
                 BLUE_STAINED_GLASS,
                 LIGHT_BLUE_STAINED_GLASS,
             ];
-            GLASSY_WALL_OPTIONS[rng.random_range(0..GLASSY_WALL_OPTIONS.len())]
+            GLASSY_WALL_OPTIONS[rng.gen_range(0..GLASSY_WALL_OPTIONS.len())]
         }
         BuildingCategory::Default => get_fallback_building_block(),
     }
@@ -1550,10 +1604,10 @@ fn generate_roof_only_structure(
         GLASS
     } else if element.tags.get("colour").map(|s: &String| s.as_str()) == Some("white")
         || element
-        .tags
-        .get("building:colour")
-        .map(|s: &String| s.as_str())
-        == Some("white")
+            .tags
+            .get("building:colour")
+            .map(|s: &String| s.as_str())
+            == Some("white")
     {
         SMOOTH_QUARTZ
     } else {
@@ -1755,13 +1809,26 @@ fn build_wall_ring(
                         // Fake RGB conversion para chamar o apply_weathering
                         // (O Arnis trabalha com RGBTuple no colors.rs, aqui mapeamos o bloco para um ID virtual RGB)
                         let raw_rgb = (block.id as u8, (block.id >> 8) as u8, 0);
-                        let is_west_facing = (bx % 2 == 0); // Aproximação de fachada exposta à chuva do cerrado
+                        let is_west_facing = bx % 2 == 0; // Aproximação de fachada exposta à chuva do cerrado
 
                         // Aplica o desgaste
-                        let weathered_rgb = apply_weathering(raw_rgb, seed, is_west_facing, h as f64);
+                        let weathered_rgb =
+                            apply_weathering(raw_rgb, seed, is_west_facing, h as f64);
 
                         // Aplica variação microscópica
-                        let final_rgb = apply_micro_variation(weathered_rgb, seed + h as u32);
+                        // 🚨 RECONEXÃO/CORREÇÃO: `seed` já é um hash Murmur3 de faixa
+                        // cheia (`spatial_seed`, colors.rs) — para qualquer bloco cujo
+                        // (bx, bz, element_id) resulte num hash perto de `u32::MAX`,
+                        // somar `h` (altura da parede) com `+` normal estoura o u32 e
+                        // derruba a geração inteira (`attempt to add with overflow`,
+                        // reproduzido rodando o motor contra dado real do Guará I —
+                        // não uma via rara, qualquer prédio suficientemente alto tem
+                        // chance real de bater nesse hash). `apply_micro_variation` só
+                        // usa `seed % 7`, então um wraparound é semanticamente
+                        // idêntico a uma soma exata — ainda determinístico, ainda
+                        // varia por altura.
+                        let final_rgb =
+                            apply_micro_variation(weathered_rgb, seed.wrapping_add(h as u32));
 
                         // Re-encapsula o bloco (se o RGB mudou, indicamos um bloco sujo. Ex: Polished Andesite -> Andesite normal)
                         if final_rgb != raw_rgb && block == POLISHED_ANDESITE {
@@ -1901,13 +1968,184 @@ fn generate_special_doors(
         // Place a single oak door somewhere on the wall
         // Pick a random position from the wall outline
         if !wall_outline.is_empty() {
-            let door_idx = rng.random_range(0..wall_outline.len());
+            let door_idx = rng.gen_range(0..wall_outline.len());
             let (door_x, door_z) = wall_outline[door_idx];
 
             // Place single oak door (empty blacklist to overwrite wall blocks)
             editor.set_block_absolute(OAK_DOOR, door_x, door_y, door_z, None, Some(&[]));
             editor.set_block_absolute(OAK_DOOR_UPPER, door_x, door_y + 1, door_z, None, Some(&[]));
         }
+    }
+}
+
+/// 🚨 BESM-6: Reconecta os nós `entrance=*`/`door=*` do próprio way do prédio à API completa
+/// de portas em `doors.rs` (material por tag, dobradiça, rampa de acessibilidade), cobrindo
+/// QUALQUER prédio do OSM com entrada mapeada — não só os presets de garagem/galpão tratados
+/// por `generate_special_doors`.
+fn place_entrance_doors(
+    editor: &mut WorldEditor,
+    element: &ProcessedWay,
+    config: &BuildingConfig,
+    args: &Args,
+) {
+    // A fachada LOD3 (CityGML) já desenha suas próprias portas milimétricas em
+    // `determine_wall_block_at_position`; não sobrepor com a heurística genérica.
+    if config.facade_map.is_some() {
+        return;
+    }
+
+    let nodes = &element.nodes;
+    let n = nodes.len();
+    if n < 3 {
+        return;
+    }
+
+    // Ways de building fechados no OSM repetem o primeiro nó no final: não processar
+    // esse nó duplicado nem usá-lo como vizinho de si mesmo.
+    let closed = nodes[0].x == nodes[n - 1].x && nodes[0].z == nodes[n - 1].z;
+    let ring_len = if closed { n - 1 } else { n };
+    if ring_len < 3 {
+        return;
+    }
+
+    // Centroide do polígono, usado só para decidir de que lado da parede fica "fora" do prédio.
+    let (mut sum_x, mut sum_z): (i64, i64) = (0, 0);
+    for node in &nodes[0..ring_len] {
+        sum_x += node.x as i64;
+        sum_z += node.z as i64;
+    }
+    let centroid_x = sum_x / ring_len as i64;
+    let centroid_z = sum_z / ring_len as i64;
+
+    let y_base = config.start_y_offset + config.abs_terrain_offset;
+
+    for i in 0..ring_len {
+        let node = &nodes[i];
+
+        let has_entrance = node.tags.get("entrance").is_some_and(|v| v != "no");
+        let has_door = node.tags.get("door").is_some_and(|v| v != "no");
+        if !has_entrance && !has_door {
+            continue;
+        }
+
+        let prev = &nodes[(i + ring_len - 1) % ring_len];
+        let next = &nodes[(i + 1) % ring_len];
+
+        let Some(facing) = entrance_facing_from_wall(
+            (node.x, node.z),
+            (prev.x, prev.z),
+            (next.x, next.z),
+            (centroid_x, centroid_z),
+        ) else {
+            continue;
+        };
+
+        let width = node
+            .tags
+            .get("width")
+            .and_then(|w| w.parse::<f64>().ok())
+            .map(|w| (w * args.scale_h).round().clamp(1.0, 6.0) as i32)
+            .unwrap_or(1);
+        let height = node
+            .tags
+            .get("height")
+            .and_then(|h| h.parse::<f64>().ok())
+            .map(|h| (h * args.scale_v).round().clamp(2.0, 5.0) as i32)
+            .unwrap_or(2);
+
+        doors::carve_and_place_door(
+            editor, node.x, y_base, node.z, width, height, facing, &node.tags,
+        );
+    }
+}
+
+/// Deriva o `DoorFacing` (uma das 4 direções cardeais) para um nó de entrada, a partir da
+/// direção da parede naquele ponto (corda `prev -> next`) e do centroide do polígono do
+/// prédio, usado para decidir qual das duas normais perpendiculares aponta para fora.
+/// Retorna `None` quando `prev`/`next` coincidem (segmento degenerado, sem direção definida).
+fn entrance_facing_from_wall(
+    node: (i32, i32),
+    prev: (i32, i32),
+    next: (i32, i32),
+    centroid: (i64, i64),
+) -> Option<DoorFacing> {
+    let dx = next.0 - prev.0;
+    let dz = next.1 - prev.1;
+    if dx == 0 && dz == 0 {
+        return None;
+    }
+
+    // Duas normais candidatas, perpendiculares à parede.
+    let (n1x, n1z) = (-dz, dx);
+    let (n2x, n2z) = (dz, -dx);
+
+    let out_ref_x = node.0 as i64 - centroid.0;
+    let out_ref_z = node.1 as i64 - centroid.1;
+    let dot1 = n1x as i64 * out_ref_x + n1z as i64 * out_ref_z;
+    let dot2 = n2x as i64 * out_ref_x + n2z as i64 * out_ref_z;
+    let (nx, nz) = if dot1 >= dot2 { (n1x, n1z) } else { (n2x, n2z) };
+
+    // O enum DoorFacing só tem as 4 direções cardeais: normais diagonais são
+    // arredondadas para a mais próxima com base no eixo dominante.
+    Some(if nx.abs() >= nz.abs() {
+        if nx > 0 {
+            DoorFacing::East
+        } else {
+            DoorFacing::West
+        }
+    } else if nz > 0 {
+        DoorFacing::South
+    } else {
+        DoorFacing::North
+    })
+}
+
+// 🚨 Módulo de teste no meio do arquivo (não no fim) — deixado assim de propósito
+// para ficar logo após `entrance_facing_from_wall`, a função que testa; mover só
+// por estilo arriscaria conflito com edições concorrentes nesta área do arquivo.
+#[allow(clippy::items_after_test_module)]
+#[cfg(test)]
+mod entrance_facing_tests {
+    use super::*;
+
+    // Prédio quadrado 0..=10 em X e Z, girando no sentido horário em coordenadas
+    // Minecraft (X=leste, Z=sul): (0,0) -> (10,0) -> (10,10) -> (0,10) -> (0,0).
+    // Centroide fica em (5,5).
+    const CENTROID: (i64, i64) = (5, 5);
+
+    #[test]
+    fn entrance_on_north_wall_faces_north() {
+        // Nó de entrada no meio da parede norte (z=0), ladeado por (0,0) e (10,0).
+        let facing = entrance_facing_from_wall((5, 0), (0, 0), (10, 0), CENTROID);
+        assert_eq!(facing, Some(DoorFacing::North));
+    }
+
+    #[test]
+    fn entrance_on_south_wall_faces_south() {
+        // Parede sul (z=10), ladeada por (10,10) e (0,10).
+        let facing = entrance_facing_from_wall((5, 10), (10, 10), (0, 10), CENTROID);
+        assert_eq!(facing, Some(DoorFacing::South));
+    }
+
+    #[test]
+    fn entrance_on_east_wall_faces_east() {
+        // Parede leste (x=10), ladeada por (10,0) e (10,10).
+        let facing = entrance_facing_from_wall((10, 5), (10, 0), (10, 10), CENTROID);
+        assert_eq!(facing, Some(DoorFacing::East));
+    }
+
+    #[test]
+    fn entrance_on_west_wall_faces_west() {
+        // Parede oeste (x=0), ladeada por (0,10) e (0,0).
+        let facing = entrance_facing_from_wall((0, 5), (0, 10), (0, 0), CENTROID);
+        assert_eq!(facing, Some(DoorFacing::West));
+    }
+
+    #[test]
+    fn degenerate_segment_returns_none() {
+        // prev == next: sem direção de parede definida.
+        let facing = entrance_facing_from_wall((5, 0), (0, 0), (0, 0), CENTROID);
+        assert_eq!(facing, None);
     }
 }
 
@@ -1949,7 +2187,11 @@ fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingC
     // o volume "flutuar" — só se aplica ao primeiro pavimento (abaixo do 1º piso real).
     if config.category == BuildingCategory::Government && h <= config.start_y_offset + 3 {
         let is_pilotis_pillar = (bx + bz) % 6 == 0;
-        return if is_pilotis_pillar { config.wall_block } else { AIR };
+        return if is_pilotis_pillar {
+            config.wall_block
+        } else {
+            AIR
+        };
     }
 
     if !config.has_windows {
@@ -2098,9 +2340,8 @@ fn generate_residential_window_decorations(
 
     // --- Per-building random material choices ---
     let mut rng = element_rng(element.id);
-    let trapdoor_base =
-        SHUTTER_TRAPDOOR_OPTIONS[rng.random_range(0..SHUTTER_TRAPDOOR_OPTIONS.len())];
-    let sill_base = SILL_SLAB_OPTIONS[rng.random_range(0..SILL_SLAB_OPTIONS.len())];
+    let trapdoor_base = SHUTTER_TRAPDOOR_OPTIONS[rng.gen_range(0..SHUTTER_TRAPDOOR_OPTIONS.len())];
+    let sill_base = SILL_SLAB_OPTIONS[rng.gen_range(0..SILL_SLAB_OPTIONS.len())];
     let sill_block = make_top_slab(sill_base);
 
     // We need the building centroid so we can figure out which side of
@@ -2179,13 +2420,9 @@ fn generate_residential_window_decorations(
                 // Both sides share the same roll (seeded on window centre).
                 if mod6 == 3 || mod6 == 5 {
                     let centre_sum = if mod6 == 3 { bx + bz - 2 } else { bx + bz + 2 };
-                    let shutter_roll = coord_rng(
-                        centre_sum,
-                        config.start_y_offset,
-                        centre_sum,
-                        element.id,
-                    )
-                    .random_range(0u32..100);
+                    let shutter_roll =
+                        coord_rng(centre_sum, config.start_y_offset, centre_sum, element.id)
+                            .gen_range(0u32..100);
                     if shutter_roll < 25 {
                         for h in (config.start_y_offset + 1)
                             ..=(config.start_y_offset + config.building_height)
@@ -2232,7 +2469,7 @@ fn generate_residential_window_decorations(
                                 centre_sum.wrapping_add(floor_idx * 5),
                                 element.id,
                             )
-                                .random_range(0u32..100);
+                            .gen_range(0u32..100);
 
                             let abs_y = h + config.abs_terrain_offset;
 
@@ -2250,20 +2487,16 @@ fn generate_residential_window_decorations(
                                     None,
                                 );
 
-                                let mut pot_rng = coord_rng(
-                                    bx,
-                                    abs_y,
-                                    bz.wrapping_add(floor_idx),
-                                    element.id,
-                                );
+                                let mut pot_rng =
+                                    coord_rng(bx, abs_y, bz.wrapping_add(floor_idx), element.id);
                                 let pot_here = if mod6 == 1 {
-                                    pot_rng.random_range(0u32..100) < 70
+                                    pot_rng.gen_range(0u32..100) < 70
                                 } else {
-                                    pot_rng.random_range(0u32..100) < 25
+                                    pot_rng.gen_range(0u32..100) < 25
                                 };
                                 if pot_here {
                                     let plant = POTTED_PLANT_OPTIONS
-                                        [pot_rng.random_range(0..POTTED_PLANT_OPTIONS.len())];
+                                        [pot_rng.gen_range(0..POTTED_PLANT_OPTIONS.len())];
                                     editor.set_block_absolute(
                                         plant,
                                         lx,
@@ -2367,12 +2600,12 @@ fn generate_residential_window_decorations(
                                     bz.wrapping_add(floor_idx * 17),
                                     element.id,
                                 );
-                                let furniture_roll = furn_rng.random_range(0u32..100);
+                                let furniture_roll = furn_rng.gen_range(0u32..100);
 
                                 if furniture_roll < 30 {
                                     // Cauldron "planter" with a leaf block
                                     // on top, placed at depth 1 on one side
-                                    let side = if furn_rng.random_bool(0.5) { -1i32 } else { 1 };
+                                    let side = if furn_rng.gen_bool(0.5) { -1i32 } else { 1 };
                                     let cx = bx + tan_x * side + out_nx;
                                     let cz = bz + tan_z * side + out_nz;
                                     editor.set_block_absolute(
@@ -2393,7 +2626,7 @@ fn generate_residential_window_decorations(
                                     );
                                 } else if furniture_roll < 55 {
                                     // Stair "chair" facing outward
-                                    let side = if furn_rng.random_bool(0.5) { -1i32 } else { 1 };
+                                    let side = if furn_rng.gen_bool(0.5) { -1i32 } else { 1 };
                                     let sx = bx + tan_x * side + out_nx;
                                     let sz = bz + tan_z * side + out_nz;
                                     let stair_facing = match facing_for_normal(-out_nx, -out_nz) {
@@ -2647,8 +2880,7 @@ pub fn generate_buildings(
     // (Congresso Nacional, Palácio do Planalto, STF, Itamaraty, Catedral etc.) usam seu
     // desenho artesanal específico em vez do gerador paramétrico genérico abaixo.
     if !element.nodes.is_empty() {
-        let landmark_ground_y =
-            editor.get_ground_level(element.nodes[0].x, element.nodes[0].z);
+        let landmark_ground_y = editor.get_ground_level(element.nodes[0].x, element.nodes[0].z);
         if landmarks::generate_unique_landmark(editor, element, landmark_ground_y) {
             return;
         }
@@ -2847,7 +3079,7 @@ pub fn generate_buildings(
         has_garage_door: style.has_garage_door,
         has_single_door: style.has_single_door,
         category,
-        facade_map, // Injeta a planta real no loop de desenho
+        facade_map,             // Injeta a planta real no loop de desenho
         element_id: element.id, // Injeta ID para weathering determinístico
     };
 
@@ -2866,11 +3098,13 @@ pub fn generate_buildings(
 
     // Generate special doors (garage doors, shed doors)
     // Desativa a porta aleatória se o LOD3 já tem as portas da planta real.
-    if config.facade_map.is_none() {
-        if config.has_garage_door || config.has_single_door {
-            generate_special_doors(editor, element, &config, &wall_outline);
-        }
+    if config.facade_map.is_none() && (config.has_garage_door || config.has_single_door) {
+        generate_special_doors(editor, element, &config, &wall_outline);
     }
+
+    // 🚨 BESM-6: Reconecta nós entrance=*/door=* do OSM à API completa de portas (doors.rs),
+    // cobrindo qualquer prédio com entrada mapeada (não só os presets acima).
+    place_entrance_doors(editor, element, &config, args);
 
     // Add shutters and window boxes to small residential buildings
     // Só adiciona firula se for fachada gerada proceduralmente.
@@ -2906,8 +3140,23 @@ pub fn generate_buildings(
             );
 
             if !skip_interior && cached_floor_area.len() > 100 {
-                let _floor_levels = calculate_floor_levels(start_y_offset, building_height);
-                // generate_building_interior disabled due to signature mismatch
+                let floor_levels = calculate_floor_levels(start_y_offset, building_height);
+                // 🚨 BESM-6 RECONEXÃO: assinatura de `generate_building_interior`
+                // reconciliada com o que já está disponível neste escopo (`bounds`,
+                // `config`, `element`) — estava desativada por divergir da versão
+                // atual da função em `buildings_interior.rs`.
+                crate::element_processing::subprocessor::buildings_interior::generate_building_interior(
+                    editor,
+                    bounds.min_x,
+                    bounds.min_z,
+                    bounds.max_x,
+                    bounds.max_z,
+                    start_y_offset,
+                    building_height,
+                    &floor_levels,
+                    element,
+                    abs_terrain_offset,
+                );
             }
         }
     }
@@ -3029,7 +3278,7 @@ fn generate_chimney(
     let center_x = (min_x + max_x) / 2;
     let center_z = (min_z + max_z) / 2;
 
-    let quadrant = rng.random_range(0..4);
+    let quadrant = rng.gen_range(0..4);
 
     let candidate_points: Vec<(i32, i32)> = floor_area
         .iter()
@@ -3060,7 +3309,7 @@ fn generate_chimney(
         return;
     }
 
-    let (chimney_x, chimney_z) = final_candidates[rng.random_range(0..final_candidates.len())];
+    let (chimney_x, chimney_z) = final_candidates[rng.gen_range(0..final_candidates.len())];
 
     let chimney_base = roof_peak_height - 2;
     let chimney_height = 4;
@@ -3134,7 +3383,7 @@ fn generate_roof_terrace(
 
     for &(x, z) in &interior {
         let mut rng = coord_rng(x, terrace_y, z, element.id);
-        let roll: u32 = rng.random_range(0..100);
+        let roll: u32 = rng.gen_range(0..100);
 
         if roll >= 15 {
             continue;
@@ -3154,7 +3403,7 @@ fn generate_roof_terrace(
             }
             3..=5 => {
                 editor.set_block_absolute(CAULDRON, x, terrace_y, z, None, Some(replace_any));
-                let leaf = match rng.random_range(0..3) {
+                let leaf = match rng.gen_range(0..3) {
                     0 => OAK_LEAVES,
                     1 => BIRCH_LEAVES,
                     _ => SPRUCE_LEAVES,
@@ -3223,6 +3472,7 @@ fn should_generate_rooftop_equipment(
     let suitable_category = matches!(
         category,
         BuildingCategory::Commercial
+            | BuildingCategory::Mall
             | BuildingCategory::Office
             | BuildingCategory::Hotel
             | BuildingCategory::Industrial
@@ -3280,7 +3530,7 @@ fn generate_rooftop_equipment(
         }
 
         let mut rng = coord_rng(x, equip_y, z, element.id);
-        let roll: u32 = rng.random_range(0..1200);
+        let roll: u32 = rng.gen_range(0..1200);
 
         if roll >= 7 {
             continue;
@@ -3417,8 +3667,8 @@ impl RoofConfig {
         let base_height = start_y_offset + building_height + 1;
 
         let mut rng = element_rng(element_id);
-        let _ = rng.random::<u32>();
-        let roof_block = if rng.random_bool(0.1) {
+        let _ = rng.gen::<u32>();
+        let roof_block = if rng.gen_bool(0.1) {
             accent_block
         } else {
             wall_block
@@ -3578,7 +3828,7 @@ fn generate_gabled_roof(
             let slope_ratio = (distance_to_ridge as f64 / max_distance as f64).min(1.0);
             (roof_peak_height as f64 - (slope_ratio * roof_height_boost as f64)) as i32
         }
-            .max(config.base_height);
+        .max(config.base_height);
 
         roof_heights.insert((x, z), roof_height);
     }
@@ -4189,11 +4439,11 @@ pub fn generate_building_from_relation(
     flood_fill_cache: &FloodFillCache,
     xzbbox: &crate::coordinate_system::cartesian::XZBBox,
 ) {
-    if relation.tags.get("diameter").is_none()
+    if !relation.tags.contains_key("diameter")
         && relation
-        .tags
-        .get("min_height")
-        .map_or(true, |v| !v.starts_with("-"))
+            .tags
+            .get("min_height")
+            .is_none_or(|v| !v.starts_with("-"))
     {
         if let Some(layer) = relation.tags.get("layer") {
             if layer.parse::<i32>().unwrap_or(0) < 0 {
@@ -4246,9 +4496,9 @@ pub fn generate_building_from_relation(
         relation.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
     let has_parts = is_building_type
         && relation
-        .members
-        .iter()
-        .any(|m| m.role == ProcessedMemberRole::Part);
+            .members
+            .iter()
+            .any(|m| m.role == ProcessedMemberRole::Part);
 
     if !has_parts {
         let mut outer_rings: Vec<Vec<ProcessedNode>> = relation

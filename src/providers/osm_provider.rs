@@ -1,18 +1,37 @@
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::osm_parser::{parse_osm_data, ProcessedElement};
-use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
+use crate::providers::{
+    DataProvider, Feature, GeometryType, NodeTagsSideChannel, SemanticGroup, NODE_TAGS_ATTR,
+};
 use std::collections::HashMap;
 
 /// Provedor Nativo do OpenStreetMap (Baseado na Overpass API)
 /// Responsável por converter os "ProcessedElements" legados para as novas "Features" Governamentais.
 pub struct OSMProvider {
     pub scale_h: f64,
+    // 🚨 BESM-6 RECONEXÃO: antes `fetch_features` chamava a Overpass API
+    // incondicionalmente, hardcodando `false`/"requests" — `--offline`,
+    // `--file` (JSON pré-baixado) e `--downloader` eram lidos e validados em
+    // `args.rs` mas nunca chegavam até aqui.
+    pub local_file: Option<String>,
+    pub offline: bool,
+    pub downloader: String,
 }
 
 impl OSMProvider {
-    pub fn new(scale_h: f64) -> Self {
-        Self { scale_h }
+    pub fn new(
+        scale_h: f64,
+        local_file: Option<String>,
+        offline: bool,
+        downloader: String,
+    ) -> Self {
+        Self {
+            scale_h,
+            local_file,
+            offline,
+            downloader,
+        }
     }
 
     /// Classifica a feature do OSM no Grupo Semântico correto
@@ -34,7 +53,7 @@ impl OSMProvider {
             || tags.contains_key("water")
             || tags
                 .get("natural")
-                .map_or(false, |v| v == "water" || v == "bay")
+                .is_some_and(|v| v == "water" || v == "bay")
         {
             return SemanticGroup::Waterway;
         }
@@ -84,10 +103,22 @@ impl DataProvider for OSMProvider {
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         // 1. Usa o sistema legado do Arnis para baixar o JSON
-        // 🚨 BESM-6 TWEAK: Chamada corrigida para o novo retrieve_data.rs
-        let osm_json =
-            crate::retrieve_data::fetch_data_from_overpass(*bbox, false, "requests", None)
-                .map_err(|e| format!("Falha na Overpass API: {}", e))?;
+        // 🚨 BESM-6 RECONEXÃO: `--file` (JSON pré-baixado) tem prioridade sobre a
+        // rede quando fornecido; sem ele, `--offline` falha rápido e claro em vez
+        // de tentar a Overpass API silenciosamente (que só falharia depois, com
+        // timeout, num ambiente sem rede).
+        let osm_json = if let Some(ref file_path) = self.local_file {
+            crate::retrieve_data::fetch_data_from_file(file_path)
+                .map_err(|e| format!("Falha ao carregar OSM do arquivo local: {}", e))?
+        } else if self.offline {
+            return Err(
+                "Modo --offline ativo, mas nenhum --file (JSON OSM local) foi fornecido."
+                    .to_string(),
+            );
+        } else {
+            crate::retrieve_data::fetch_data_from_overpass(*bbox, false, &self.downloader, None)
+                .map_err(|e| format!("Falha na Overpass API: {}", e))?
+        };
 
         // 2. Usa o sistema legado para parsear em "ProcessedElements"
         let processed_elements = parse_osm_data(osm_json, *bbox, self.scale_h, false);
@@ -99,7 +130,7 @@ impl DataProvider for OSMProvider {
         // 3. A GRANDE TRADUÇÃO: Converte Elements legados para a nova Feature Tier-Gov
         for element in processed_elements.0 {
             // 🚨 BESM-6 Tweak: Adaptação para o ARC rigoroso do ProcessedElement
-            let tags_owned = element.tags().clone();
+            let mut tags_owned = element.tags().clone();
             let id = element.id();
 
             let geometry = match element {
@@ -117,16 +148,46 @@ impl DataProvider for OSMProvider {
                     } else {
                         // Pré-alocação com +1 de sobra caso precisemos fechar o anel
                         let mut pts: Vec<XZPoint> = Vec::with_capacity(way.nodes.len() + 1);
+                        // Ver `NODE_TAGS_ATTR`: preserva as tags de CADA nó (entrance=*,
+                        // door=*, highway=crossing) num canal lateral — sem isso, um nó
+                        // com `entrance=yes` dentro de uma via de prédio perdia essa tag
+                        // no round-trip `ProcessedElement` → `Feature`, e
+                        // `carve_and_place_door`/a detecção de faixa de pedestres nunca
+                        // disparava para NENHUM dado OSM real, nem pela Overpass API
+                        // padrão. `None` para nós sem tags, pra manter o JSON pequeno.
+                        let mut node_tags: NodeTagsSideChannel =
+                            Vec::with_capacity(way.nodes.len());
+                        let mut any_node_tags = false;
                         for n in &way.nodes {
                             pts.push(XZPoint::new(n.x, n.z));
+                            if n.tags.is_empty() {
+                                node_tags.push(None);
+                            } else {
+                                any_node_tags = true;
+                                node_tags.push(Some(n.tags.clone()));
+                            }
                         }
 
                         // Tolerância geométrica e Fechamento Automático
-                        if Self::is_nearly_closed(&pts) {
+                        let closing = if Self::is_nearly_closed(&pts) {
                             let first = pts[0];
                             if pts.last().unwrap() != &first {
                                 pts.push(first);
+                                node_tags.push(node_tags[0].clone());
+                                any_node_tags = any_node_tags || node_tags[0].is_some();
                             }
+                            true
+                        } else {
+                            false
+                        };
+
+                        if any_node_tags {
+                            if let Ok(json) = serde_json::to_string(&node_tags) {
+                                tags_owned.insert(NODE_TAGS_ATTR.to_string(), json);
+                            }
+                        }
+
+                        if closing {
                             GeometryType::Polygon(pts)
                         } else {
                             GeometryType::LineString(pts) // Rua/Rio/Caminho aberto

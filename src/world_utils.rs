@@ -1,5 +1,8 @@
+use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::retrieve_data;
+#[cfg(feature = "gui")]
+use crate::telemetry::{send_log, LogLevel};
 use fastnbt::Value;
 use flate2::read::GzDecoder;
 use std::io::Read;
@@ -23,6 +26,132 @@ pub fn get_area_name_for_bedrock(bbox: &LLBBox) -> String {
         Ok(Some(name)) => name,
         _ => "Unknown Location".to_string(),
     }
+}
+
+/// Adds a localized area name to the world name in level.dat.
+///
+/// 🚨 BESM-6 RECONEXÃO: espelha `get_area_name_for_bedrock` acima, mas para Java
+/// Anvil. O Bedrock já embute o nome da área no nome da pasta na hora da criação
+/// (`build_bedrock_output`); o Java não pode fazer isso na criação porque o nome
+/// só é resolvido depois de checar colisão de contador ("Pincelism World N") em
+/// `create_new_world` — então enriquecemos o `LevelName` já gravado, chamado por
+/// `main::run_generation_pipeline` logo após a criação do mundo Java.
+pub fn add_localized_world_name(world_path: PathBuf, bbox: &LLBBox) -> PathBuf {
+    // Only proceed if the path exists
+    if !world_path.exists() {
+        return world_path;
+    }
+
+    // Check the level.dat file first to get the current name
+    let level_path = world_path.join("level.dat");
+
+    if !level_path.exists() {
+        return world_path;
+    }
+
+    // Try to read the current world name from level.dat
+    let Ok(level_data) = std::fs::read(&level_path) else {
+        return world_path;
+    };
+
+    let mut decoder = GzDecoder::new(level_data.as_slice());
+    let mut decompressed_data = Vec::new();
+    if decoder.read_to_end(&mut decompressed_data).is_err() {
+        return world_path;
+    }
+
+    let Ok(Value::Compound(ref root)) = fastnbt::from_bytes::<Value>(&decompressed_data) else {
+        return world_path;
+    };
+
+    let Some(Value::Compound(ref data)) = root.get("Data") else {
+        return world_path;
+    };
+
+    let Some(Value::String(current_name)) = data.get("LevelName") else {
+        return world_path;
+    };
+
+    // Only modify if it's a Pincelism world and doesn't already have an area name
+    if !current_name.starts_with("Pincelism World ") || current_name.contains(": ") {
+        return world_path;
+    }
+
+    // Calculate center coordinates of bbox
+    let center_lat = (bbox.min().lat() + bbox.max().lat()) / 2.0;
+    let center_lon = (bbox.min().lng() + bbox.max().lng()) / 2.0;
+
+    // Try to fetch the area name
+    let area_name = match retrieve_data::fetch_area_name(center_lat, center_lon) {
+        Ok(Some(name)) => name,
+        _ => return world_path, // Keep original name if no area name found
+    };
+
+    // Create new name with localized area name, ensuring total length doesn't exceed 30 characters
+    let base_name = current_name.clone();
+    let max_area_name_len = 30 - base_name.len() - 2; // 2 chars for ": "
+
+    let truncated_area_name =
+        if area_name.chars().count() > max_area_name_len && max_area_name_len > 0 {
+            // Truncate the area name to fit within the 30 character limit
+            area_name
+                .chars()
+                .take(max_area_name_len)
+                .collect::<String>()
+        } else if max_area_name_len == 0 {
+            // If base name is already too long, don't add area name
+            return world_path;
+        } else {
+            area_name
+        };
+
+    let new_name = format!("{base_name}: {truncated_area_name}");
+
+    // Update the level.dat file with the new name
+    if let Ok(level_data) = std::fs::read(&level_path) {
+        let mut decoder = GzDecoder::new(level_data.as_slice());
+        let mut decompressed_data = Vec::new();
+        if decoder.read_to_end(&mut decompressed_data).is_ok() {
+            if let Ok(mut nbt_data) = fastnbt::from_bytes::<Value>(&decompressed_data) {
+                // Update the level name in NBT data
+                if let Value::Compound(ref mut root) = nbt_data {
+                    if let Some(Value::Compound(ref mut data)) = root.get_mut("Data") {
+                        data.insert("LevelName".to_string(), Value::String(new_name));
+
+                        // Save the updated NBT data
+                        if let Ok(serialized_data) = fastnbt::to_bytes(&nbt_data) {
+                            let mut encoder = flate2::write::GzEncoder::new(
+                                Vec::new(),
+                                flate2::Compression::default(),
+                            );
+                            if encoder.write_all(&serialized_data).is_ok() {
+                                if let Ok(compressed_data) = encoder.finish() {
+                                    if let Err(e) = std::fs::write(&level_path, compressed_data) {
+                                        eprintln!("Failed to update level.dat with area name: {e}");
+                                        #[cfg(feature = "gui")]
+                                        send_log(
+                                            LogLevel::Warning,
+                                            "Failed to update level.dat with area name",
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Return the original path since we didn't change the directory name
+    world_path
+}
+
+/// Calculates the default spawn point at X=1, Z=1 relative to the world origin.
+/// Used as a fallback when the user does not pass --spawn-lat/--spawn-lng, so every
+/// generated world still gets a sane spawn instead of Minecraft's own arbitrary default.
+pub fn calculate_default_spawn(xzbbox: &XZBBox) -> (i32, i32) {
+    (xzbbox.min_x() + 1, xzbbox.min_z() + 1)
 }
 
 /// Sanitizes an area name for safe use in filesystem paths.
@@ -211,6 +340,13 @@ pub fn create_new_world(base_path: &Path) -> Result<String, String> {
 /// Updates both the world spawn point (SpawnX/SpawnY/SpawnZ) and the player
 /// position if a Player compound exists. The Y coordinate is set to 150 as a
 /// safe default above terrain; Minecraft will adjust it on first load.
+///
+/// 🚨 Usado apenas no build sem a feature `gui` (ver `main::run_generation_pipeline`,
+/// que troca para `gui::set_player_spawn_in_level_dat` — mais completo — quando a
+/// GUI está habilitada). `--all-features` sempre liga `gui`, então o linter enxerga
+/// este ramo como "nunca chamado" nesse build específico; ele é real e usado no
+/// build headless.
+#[allow(dead_code)]
 pub fn set_spawn_in_level_dat(world_path: &Path, spawn_x: i32, spawn_z: i32) -> Result<(), String> {
     let spawn_y = 150;
 

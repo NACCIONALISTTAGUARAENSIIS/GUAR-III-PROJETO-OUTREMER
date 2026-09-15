@@ -5,16 +5,16 @@
 //! para o motor Voxel, utilizando uma âncora geodésica para converter o Cartesiano Local
 //! do CAD/Revit para o Sistema Global WGS84 -> Minecraft XZ.
 
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 
 use std::collections::HashMap;
+use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::f64::consts::PI;
 
 pub struct IfcProvider {
     pub file_path: PathBuf,
@@ -105,7 +105,10 @@ impl DataProvider for IfcProvider {
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] 🏗️ Iniciando scanner BIM/IFC de ultra-detalhe: {}", self.file_path.display());
+        println!(
+            "[INFO] 🏗️ Iniciando scanner BIM/IFC de ultra-detalhe: {}",
+            self.file_path.display()
+        );
 
         let file = File::open(&self.file_path)
             .map_err(|e| format!("Falha ao abrir arquivo IFC: {}", e))?;
@@ -118,7 +121,6 @@ impl DataProvider for IfcProvider {
         let mut next_id = 9_000_000_000; // Offset Massivo para o LOD4/LOD5
 
         // Variáveis de Estado do Scanner Lexical (STEP Format)
-        let mut entity_cache: HashMap<String, String> = HashMap::new();
         let mut points_cache: HashMap<String, (f64, f64, f64)> = HashMap::new();
 
         let mut elements_extracted = 0;
@@ -211,8 +213,9 @@ impl DataProvider for IfcProvider {
                         local_z /= points_found as f64;
 
                         // Mapeia o Cartesiano Local (X, Y) para o Global e gera a coordenada Minecraft XZ
-                        if let Some(xz_point) = self.transform_local_to_global(local_x, local_y, &transformer) {
-
+                        if let Some(xz_point) =
+                            self.transform_local_to_global(local_x, local_y, &transformer)
+                        {
                             // Cria as tags estruturais
                             let mut tags = HashMap::new();
                             tags.insert("source".to_string(), "BIM_IFC_Model".to_string());
@@ -226,12 +229,14 @@ impl DataProvider for IfcProvider {
                             // Definimos o tamanho estimado do voxel (Para LOD4 geramos uma Bounding Box de 1 bloco de espessura)
                             let half_size = if part_type == "column" { 1 } else { 2 };
 
-                            let mut poly = Vec::new();
-                            poly.push(XZPoint::new(xz_point.x - half_size, xz_point.z - half_size));
-                            poly.push(XZPoint::new(xz_point.x + half_size, xz_point.z - half_size));
-                            poly.push(XZPoint::new(xz_point.x + half_size, xz_point.z + half_size));
-                            poly.push(XZPoint::new(xz_point.x - half_size, xz_point.z + half_size));
-                            poly.push(XZPoint::new(xz_point.x - half_size, xz_point.z - half_size)); // Fecha o anel
+                            // Fecha o anel repetindo o primeiro ponto no fim
+                            let poly = vec![
+                                XZPoint::new(xz_point.x - half_size, xz_point.z - half_size),
+                                XZPoint::new(xz_point.x + half_size, xz_point.z - half_size),
+                                XZPoint::new(xz_point.x + half_size, xz_point.z + half_size),
+                                XZPoint::new(xz_point.x - half_size, xz_point.z + half_size),
+                                XZPoint::new(xz_point.x - half_size, xz_point.z - half_size),
+                            ];
 
                             let feature = Feature::new(
                                 next_id,

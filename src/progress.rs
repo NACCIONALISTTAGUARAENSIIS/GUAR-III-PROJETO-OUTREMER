@@ -58,7 +58,10 @@ pub fn emit_gui_error(message: &str) {
     emit_gui_progress_update(0.0, &format!("Error! {truncated_message}"));
 }
 
-/// Emits an event when the world map preview is ready
+/// Emits an event when the world map preview is ready.
+/// 🚨 Companheiro natural de `map_renderer::render_world_map` (também nunca
+/// chamado, ver o arquivo) — nenhum dos dois está conectado à GUI ainda.
+#[allow(dead_code)]
 pub fn emit_map_preview_ready() {
     if let Some(window) = get_main_window() {
         if let Err(e) = window.emit("map-preview-ready", ()) {

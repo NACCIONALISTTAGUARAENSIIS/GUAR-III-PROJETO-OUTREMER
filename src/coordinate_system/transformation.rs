@@ -25,6 +25,9 @@ pub struct CoordTransformer {
 }
 
 impl CoordTransformer {
+    /// Getter trivial da escala (blocos/metro) — API pública exposta para
+    /// diagnóstico/telemetria externa; nenhum caminho interno precisa dele hoje.
+    #[allow(dead_code)]
     pub fn scale(&self) -> f64 {
         self.scale
     }
@@ -52,7 +55,7 @@ impl CoordTransformer {
         if len_lat <= f64::EPSILON || len_lng <= f64::EPSILON {
             return Err(format!(
                 "{}: BBox covers zero area (min and max coordinates are identical).",
-                &err_header
+                err_header
             ));
         }
 
@@ -166,6 +169,46 @@ impl CoordTransformer {
 
         XZPoint::new(final_x.round() as i32, final_z.round() as i32)
     }
+
+    /// Inverso geodésico de `transform_point`: recebe um ponto no espaço local
+    /// Minecraft (XZ) e devolve a Lat/Lon correspondente.
+    ///
+    /// 🚨 BESM-6: `transform_point` descarta o componente vertical (ENU "Up") ao
+    /// projetar — só usa as linhas East/North de `rot_matrix`. A inversa assume
+    /// portanto altura zero sobre o plano tangente (a mesma aproximação que o
+    /// forward já faz), o que é suficiente para culling de tiles: ECEF = origem +
+    /// R^T · (east, north, 0), e como `rot_matrix` é ortogonal, R^T = R^-1 é só
+    /// usar suas linhas como colunas. De ECEF para geodésico usamos o método
+    /// iterativo padrão (Hofmann-Wellenhof) para o elipsoide WGS84.
+    ///
+    /// Único chamador é `master_control::dispatch_generation`, alcançável apenas
+    /// no build sem a feature `gui` (ver o comentário no topo de `master_control.rs`).
+    #[allow(dead_code)]
+    pub fn inverse_transform(&self, xz: XZPoint) -> Result<LLPoint, String> {
+        let enu_x = xz.x as f64 / self.scale;
+        let enu_n = -(xz.z as f64) / self.scale;
+
+        let dx = self.rot_matrix[0][0] * enu_x + self.rot_matrix[1][0] * enu_n;
+        let dy = self.rot_matrix[0][1] * enu_x + self.rot_matrix[1][1] * enu_n;
+        let dz = self.rot_matrix[0][2] * enu_x + self.rot_matrix[1][2] * enu_n;
+
+        let x = self.origin_ecef.0 + dx;
+        let y = self.origin_ecef.1 + dy;
+        let z = self.origin_ecef.2 + dz;
+
+        let lon = y.atan2(x);
+        let p = (x * x + y * y).sqrt();
+
+        // Chute inicial + refinamento iterativo (converge em poucas iterações)
+        let mut lat = z.atan2(p * (1.0 - WGS84_E2));
+        for _ in 0..5 {
+            let sin_lat = lat.sin();
+            let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
+            lat = (z + WGS84_E2 * n * sin_lat).atan2(p);
+        }
+
+        LLPoint::new(lat.to_degrees(), lon.to_degrees())
+    }
 }
 
 // (lat meters, lon meters)
@@ -202,7 +245,10 @@ fn lat_distance(lat1: f64, lat2: f64) -> f64 {
     R * c
 }
 
+// 🚨 Helper de teste legado sem chamador hoje — a projeção real do motor é
+// `CoordTransformer::transform_point`; mantido só como utilitário auxiliar.
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn lat_lon_to_minecraft_coords(
     lat: f64,
     lon: f64,

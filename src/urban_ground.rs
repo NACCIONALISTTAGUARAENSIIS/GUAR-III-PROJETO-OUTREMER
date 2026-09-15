@@ -17,6 +17,9 @@ use std::collections::VecDeque;
 pub struct UrbanGroundConfig {
     /// Grid cell size for density analysis (in blocks).
     /// Deve ser 16 (1 Chunk) para garantir o shift de bit O(1).
+    /// 🚨 Guardado só por documentação/futuro uso dinâmico — o código de
+    /// densidade hoje assume 16 diretamente via `>> 4` em vez de ler este campo.
+    #[allow(dead_code)]
     pub cell_size: i32,
 
     /// Minimum elements (buildings/roads) per cell to consider it potentially urban.

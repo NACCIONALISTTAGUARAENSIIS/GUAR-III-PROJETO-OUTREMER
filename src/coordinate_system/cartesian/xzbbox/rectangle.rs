@@ -42,18 +42,24 @@ impl XZBBoxRect {
         self.max
     }
 
-    /// Total number of blocks covered in this 2D bbox
+    /// Total number of blocks covered in this 2D bbox.
+    /// Só exercitada pelos próprios testes deste módulo hoje (nenhum código de
+    /// produção precisa do total agregado); `cargo check` sem `--all-targets`
+    /// não enxerga os testes, daí aparecer como não usada nesse comando.
+    #[allow(dead_code)]
     pub fn total_blocks(&self) -> u64 {
         (self.total_blocks_x() as u64) * (self.total_blocks_z() as u64)
     }
 
-    /// Total number of blocks covered in x direction
+    /// Total number of blocks covered in x direction (ver nota em `total_blocks`).
+    #[allow(dead_code)]
     pub fn total_blocks_x(&self) -> u32 {
         let nx = (self.max.x as i64) - (self.min.x as i64) + 1;
         nx as u32
     }
 
-    /// Total number of blocks covered in z direction
+    /// Total number of blocks covered in z direction (ver nota em `total_blocks`).
+    #[allow(dead_code)]
     pub fn total_blocks_z(&self) -> u32 {
         let nz = (self.max.z as i64) - (self.min.z as i64) + 1;
         nz as u32

@@ -331,10 +331,18 @@ impl FloodFillCache {
         Some(((sum_x / len) as i32, (sum_z / len) as i32))
     }
 
+    /// Invalida uma entrada única do cache de footprints por way. Nenhum
+    /// chamador hoje — `suppressed_building_outlines` (que exclui ways do
+    /// dispatch genérico) filtra no ponto de uso em vez de invalidar o cache
+    /// que já foi populado; ver tarefa de acompanhamento se isso se mostrar
+    /// necessário para evitar footprints obsoletos entre regiões.
+    #[allow(dead_code)]
     pub fn remove_way(&mut self, way_id: u64) {
         self.way_cache.remove(&way_id);
     }
 
+    /// Invalida múltiplas entradas de uma vez (ver `remove_way`).
+    #[allow(dead_code)]
     pub fn remove_relation_ways(&mut self, way_ids: &[u64]) {
         for &id in way_ids {
             self.way_cache.remove(&id);
@@ -359,11 +367,7 @@ pub fn configure_rayon_thread_pool(cpu_fraction: f64) {
     let target_threads = ((available_cores as f64) * cpu_fraction).floor() as usize;
     let target_threads = target_threads.max(1);
 
-    match rayon::ThreadPoolBuilder::new()
+    let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(target_threads)
-        .build_global()
-    {
-        Ok(()) => {}
-        Err(_) => {}
-    }
+        .build_global();
 }

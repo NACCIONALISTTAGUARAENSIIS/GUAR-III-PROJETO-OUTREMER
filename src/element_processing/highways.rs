@@ -2,9 +2,9 @@ use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZPoint;
-use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::deterministic_rng::coord_rng;
 use crate::element_processing::tree::{Tree, TreeType};
+use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedElement, ProcessedWay};
 use crate::world_editor::WorldEditor;
 use rand::Rng;
@@ -381,14 +381,13 @@ fn generate_highways_internal(
                 .iter()
                 .filter(|n| {
                     n.tags.get("highway").map(|s: &String| s.as_str()) == Some("crossing")
-                        && n.tags.get("crossing").map(|s: &String| s.as_str())
-                            != Some("unmarked")
+                        && n.tags.get("crossing").map(|s: &String| s.as_str()) != Some("unmarked")
                 })
                 .map(|n| (n.x, n.z))
                 .collect();
 
             let mut previous_node: Option<(i32, i32)> = None;
-            let mut block_type = GRAY_CONCRETE;
+            let block_type;
             let mut block_range: i32 = 2;
             let mut grass_buffer: i32 = 0;
             let mut parking_lane: bool = false;
@@ -672,14 +671,21 @@ fn generate_highways_internal(
                         (0.0, 1.0)
                     };
 
-                    for (_point_index, (bx, _, bz)) in bresenham_points.iter().enumerate() {
+                    for (bx, _, bz) in bresenham_points.iter() {
                         distance_accumulator += 1;
 
                         // 🚨 Pinta a faixa de pedestre quando o ponto central bate com um nó
                         // de travessia marcada. Só em vias reais (não calçadas/trilhas).
                         if block_range >= 2 && crossing_points.contains(&(*bx, *bz)) {
                             paint_zebra_crossing(
-                                editor, *bx, *bz, norm_x, norm_z, dir_x, dir_z, block_range,
+                                editor,
+                                *bx,
+                                *bz,
+                                norm_x,
+                                norm_z,
+                                dir_x,
+                                dir_z,
+                                block_range,
                             );
                         }
 
@@ -694,13 +700,13 @@ fn generate_highways_internal(
                         {
                             let tree_offset = block_range + (grass_buffer / 2).max(1);
                             for side in [1.0_f64, -1.0_f64] {
-                                let tx =
-                                    (*bx as f64 + tree_offset as f64 * norm_x * side).round() as i32;
-                                let tz =
-                                    (*bz as f64 + tree_offset as f64 * norm_z * side).round() as i32;
+                                let tx = (*bx as f64 + tree_offset as f64 * norm_x * side).round()
+                                    as i32;
+                                let tz = (*bz as f64 + tree_offset as f64 * norm_z * side).round()
+                                    as i32;
 
                                 let mut tree_rng = coord_rng(tx, 0, tz, way.id);
-                                if tree_rng.random_bool(0.6) {
+                                if tree_rng.gen_bool(0.6) {
                                     let tree_type =
                                         street_tree_type_for(&df_road_type, &mut tree_rng);
                                     let tree_ground_y = editor.get_ground_level(tx, tz);
@@ -754,23 +760,23 @@ fn generate_highways_internal(
                                                 editor.get_ground_level(set_x, set_z).max(current_y)
                                             };
 
-                                        if dist_sq <= block_range * block_range {
-                                            if !editor.check_for_block_absolute(
+                                        if dist_sq <= block_range * block_range
+                                            && !editor.check_for_block_absolute(
                                                 set_x,
                                                 final_paint_y,
                                                 set_z,
                                                 Some(PROTECTED_BLOCKS),
                                                 None,
-                                            ) {
-                                                editor.set_block_absolute(
-                                                    block_type,
-                                                    set_x,
-                                                    final_paint_y,
-                                                    set_z,
-                                                    None,
-                                                    None,
-                                                );
-                                            }
+                                            )
+                                        {
+                                            editor.set_block_absolute(
+                                                block_type,
+                                                set_x,
+                                                final_paint_y,
+                                                set_z,
+                                                None,
+                                                None,
+                                            );
                                         }
                                     }
                                 }
@@ -1104,6 +1110,7 @@ fn generate_highways_internal(
 
 /// Pinta uma faixa de pedestre (zebra) centrada em `(cx, cz)`, com listras alternadas
 /// perpendiculares à via (eixo `norm`) e alongadas na direção do tráfego (eixo `dir`).
+#[allow(clippy::too_many_arguments)]
 fn paint_zebra_crossing(
     editor: &mut WorldEditor,
     cx: i32,
@@ -1136,19 +1143,19 @@ fn paint_zebra_crossing(
 /// vias de superquadra recebem a mistura mais variada (a marca do dossel real).
 fn street_tree_type_for(df_road_type: &DFRoadType, rng: &mut impl Rng) -> TreeType {
     match df_road_type {
-        DFRoadType::ViaSuperquadra => match rng.random_range(0..5) {
+        DFRoadType::ViaSuperquadra => match rng.gen_range(0..5) {
             0 => TreeType::IpeAmarelo,
             1 => TreeType::Pequi,
             2 => TreeType::Copaiba,
             3 => TreeType::Angico,
             _ => TreeType::Sucupira,
         },
-        DFRoadType::Eixao | DFRoadType::Monumental => match rng.random_range(0..3) {
+        DFRoadType::Eixao | DFRoadType::Monumental => match rng.gen_range(0..3) {
             0 => TreeType::Pequi,
             1 => TreeType::Jatoba,
             _ => TreeType::Copaiba,
         },
-        _ => match rng.random_range(0..4) {
+        _ => match rng.gen_range(0..4) {
             0 => TreeType::Sucupira,
             1 => TreeType::Angico,
             2 => TreeType::Aroeira,

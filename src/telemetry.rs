@@ -31,7 +31,8 @@ static PLATFORM: Lazy<String> = Lazy::new(|| {
         "linux" => "linux",
         "macos" => "macos",
         _ => "unknown",
-    }.to_string()
+    }
+    .to_string()
 });
 
 /// Sets the user's telemetry consent preference
@@ -107,7 +108,11 @@ static TELEMETRY_TX: Lazy<Sender<TelemetryEvent>> = Lazy::new(|| {
                 // Fire and forget assíncrono. Não bloqueia a extração do próximo log do canal.
                 let client_clone = client.clone();
                 tokio::spawn(async move {
-                    let _ = client_clone.post(TELEMETRY_URL).json(&json_payload).send().await;
+                    let _ = client_clone
+                        .post(TELEMETRY_URL)
+                        .json(&json_payload)
+                        .send()
+                        .await;
                 });
             }
         }

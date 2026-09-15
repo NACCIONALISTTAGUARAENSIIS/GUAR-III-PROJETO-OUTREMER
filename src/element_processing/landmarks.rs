@@ -383,9 +383,7 @@ fn generate_palacio_planalto(editor: &mut WorldEditor, element: &ProcessedWay, g
                     || z == bounds.min_z
                     || z == bounds.max_z;
 
-                if y == ground_y + 1 || y == ground_y + height {
-                    editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
-                } else if is_edge && (x + z) % 6 == 0 {
+                if y == ground_y + 1 || y == ground_y + height || (is_edge && (x + z) % 6 == 0) {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
                 } else if !is_edge
                     && (x > bounds.min_x + 2
@@ -420,9 +418,7 @@ fn generate_stf(editor: &mut WorldEditor, element: &ProcessedWay, ground_y: i32)
                     || z == bounds.min_z
                     || z == bounds.max_z;
 
-                if y == ground_y + 1 || y == ground_y + height {
-                    editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
-                } else if is_edge && (x + z) % 5 == 0 {
+                if y == ground_y + 1 || y == ground_y + height || (is_edge && (x + z) % 5 == 0) {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
                 } else if !is_edge
                     && (x > bounds.min_x + 2
@@ -457,9 +453,7 @@ fn generate_palacio_alvorada(editor: &mut WorldEditor, element: &ProcessedWay, g
                     || z == bounds.min_z
                     || z == bounds.max_z;
 
-                if y == ground_y + height {
-                    editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
-                } else if is_edge && (x + z) % 8 == 0 {
+                if y == ground_y + height || (is_edge && (x + z) % 8 == 0) {
                     editor.set_block_absolute(SMOOTH_QUARTZ, x, y, z, None, None);
                 } else if !is_edge
                     && (x > bounds.min_x + 1
@@ -496,9 +490,7 @@ fn generate_itamaraty(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
 
                 if y == ground_y + 1 {
                     editor.set_block_absolute(WATER, x, y, z, None, None);
-                } else if y == ground_y + height {
-                    editor.set_block_absolute(SMOOTH_STONE, x, y, z, None, None);
-                } else if is_edge && (x + z) % 6 == 0 {
+                } else if y == ground_y + height || (is_edge && (x + z) % 6 == 0) {
                     editor.set_block_absolute(SMOOTH_STONE, x, y, z, None, None);
                 } else if !is_edge
                     && (x > bounds.min_x + 3
@@ -825,7 +817,7 @@ fn generate_igrejinha(editor: &mut WorldEditor, element: &ProcessedWay, ground_y
             let px = rot_x(lx as f64, lz as f64, angle, cx);
             let pz = rot_z(lx as f64, lz as f64, angle, cz);
 
-            let roof_y = ground_y + 8 + (lx * lx) as i32 / 5;
+            let roof_y = ground_y + 8 + (lx * lx) / 5;
             editor.set_block_absolute(WHITE_CONCRETE, px, roof_y, pz, None, None);
 
             let is_edge = lz == -rz || lz == rz;

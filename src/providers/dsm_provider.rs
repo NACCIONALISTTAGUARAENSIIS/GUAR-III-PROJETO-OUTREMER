@@ -28,6 +28,7 @@ pub struct DsmProvider {
 }
 
 impl DsmProvider {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         file_path: PathBuf,
         scale_h: f64,

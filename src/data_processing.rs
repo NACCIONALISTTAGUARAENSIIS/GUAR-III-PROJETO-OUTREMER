@@ -45,11 +45,106 @@ pub struct GenerationOptions {
     // absolutas do Minecraft — compartilhado (via Arc) entre todas as regiões sem
     // recorte, pois já é pequeno o bastante (só pixels com vegetação são inseridos).
     pub biome_grid: Option<Arc<FxHashMap<(i32, i32), u16>>>,
+    // 🚨 RECONEXÃO: Superfície real (DSM: telhados/copas), via `DsmProvider`. Mesmo
+    // formato/tratamento do `biome_grid` (esparso, coordenadas absolutas, Arc
+    // compartilhado sem recorte). Alimenta `Ground::surface_level` — que antes
+    // sempre caía no fallback do chão nu porque `canopy_surface_cache` nunca
+    // recebia dados reais (ver `generate_world_with_options`).
+    pub surface_data: Option<Arc<FxHashMap<(i32, i32), i32>>>,
+    // 🚨 RECONEXÃO: Terreno nu (bare earth) de um GeoTIFF DEM local explícito
+    // (`DemProvider`), como alternativa/complemento à busca SRTM/LiDAR de
+    // `elevation_data` — útil offline ou quando o usuário tem um DEM oficial
+    // (Copernicus/ANADEM) mais preciso que o SRTM público. Sobrepõe
+    // `bare_earth_cache` onde tiver dado; onde não tiver, o SRTM/LiDAR prevalece.
+    pub dem_override: Option<Arc<FxHashMap<(i32, i32), i32>>>,
     // 🚨 RECONEXÃO: Liga a floresta ambiente procedural (tree::generate_chunk) no
     // Scanline. Calculado em main.rs a partir de `--terrain` e `--no-ambient-forest`.
     pub ambient_forest: bool,
     // 🚨 BESM-6: Canal de telemetria opcional para GUI/MasterControl
     pub telemetry_tx: Option<mpsc::Sender<BesmSignal>>,
+}
+
+// ============================================================================
+// 🚨 BESM-6 TILE STREAMING: GERAÇÃO DE UMA ÚNICA REGIÃO A PARTIR DE FEATURES 🚨
+// ============================================================================
+
+/// Materializa uma única região `.mca` (já ativa em `editor`, ver
+/// `WorldEditor::set_active_region`) a partir de `Feature`s puxadas sob demanda
+/// dos provedores governamentais (`master_control::dispatch_generation`).
+///
+/// Espelha o mesmo roteamento usado por `generate_world_with_options` para
+/// `options.provider_features`: infraestrutura CAESB/Power/Telecom/Sanitation
+/// vai para o motor especializado (`man_made::generate_from_provider_feature`,
+/// que preserva metadados finos como diâmetro/material); o restante é traduzido
+/// para `ProcessedElement` e roteado pelo dispatcher genérico de OSM/Shapefile.
+///
+/// Diferente do pipeline de um único lote, este modo processa cada região de
+/// forma isolada (sem cache de vizinhança persistente entre regiões) — o Halo
+/// Cache do `WorldEditor` já absorve o que vaza para as regiões adjacentes.
+///
+/// Único chamador é `master_control::dispatch_generation`, alcançável apenas
+/// no build sem a feature `gui` (ver o comentário no topo de `master_control.rs`).
+#[allow(dead_code)]
+pub fn generate_region_from_global(
+    editor: &mut WorldEditor,
+    features: &[crate::providers::Feature],
+    args: &Args,
+    _transformer: &crate::coordinate_system::transformation::CoordTransformer,
+) {
+    use crate::providers::SemanticGroup;
+
+    let (min_x, min_z) = editor.get_min_coords();
+    let (max_x, max_z) = editor.get_max_coords();
+    let xzbbox = XZBBox::new(min_x, max_x, min_z, max_z);
+
+    let mut elements: Vec<ProcessedElement> = Vec::new();
+    let mut infra_features: Vec<&crate::providers::Feature> = Vec::new();
+
+    for feature in features {
+        let is_caesb_infrastructure_feature = matches!(
+            feature.semantic_group,
+            SemanticGroup::Sanitation
+                | SemanticGroup::Utility
+                | SemanticGroup::Sewage
+                | SemanticGroup::Indoor
+                | SemanticGroup::Power
+                | SemanticGroup::Telecom
+        );
+        // Espelha o mesmo motivo do roteador de `run_generation_pipeline` em
+        // main.rs: voxels de fotogrametria (`MeshProvider`) carregam tags
+        // (`color`/`elevation`/`material`) que o dispatcher genérico de
+        // `ProcessedElement::Node` não reconhece.
+        let is_photogrammetry_voxel = feature.semantic_group == SemanticGroup::TerrainDetail
+            && feature.source.contains("Photogrammetry_Mesh");
+
+        if is_caesb_infrastructure_feature || is_photogrammetry_voxel {
+            infra_features.push(feature);
+        } else {
+            elements.push(feature.clone().into_processed_element());
+        }
+    }
+
+    let highway_connectivity = highways::build_highway_connectivity_map(&elements);
+    let mut flood_fill_cache = FloodFillCache::new();
+    let building_footprints = flood_fill_cache.collect_building_footprints(&elements, &xzbbox);
+    let suppressed_building_outlines: HashSet<u64> = HashSet::new();
+
+    for feature in infra_features {
+        man_made::generate_from_provider_feature(editor, feature, args);
+    }
+
+    for element in elements {
+        dispatch_element(
+            element,
+            editor,
+            args,
+            &highway_connectivity,
+            &mut flood_fill_cache,
+            &building_footprints,
+            &suppressed_building_outlines,
+            &xzbbox,
+        );
+    }
 }
 
 // ============================================================================
@@ -144,14 +239,16 @@ pub fn generate_underground_infrastructure(
                         let a = rx as f64 + 0.5;
                         let b = ry as f64 + 0.5;
 
-                        let val = (wx as f64 * wx as f64) / (a * a) + (wy as f64 * wy as f64) / (b * b);
+                        let val =
+                            (wx as f64 * wx as f64) / (a * a) + (wy as f64 * wy as f64) / (b * b);
 
                         if val <= 1.0 {
                             // Shell Thickness Check (Aproximação heurística de parede)
                             let inner_a = (rx - 1).max(0) as f64 + 0.5;
                             let inner_b = (ry - 1).max(0) as f64 + 0.5;
                             let inner_val = if inner_a > 0.5 && inner_b > 0.5 {
-                                (wx as f64 * wx as f64) / (inner_a * inner_a) + (wy as f64 * wy as f64) / (inner_b * inner_b)
+                                (wx as f64 * wx as f64) / (inner_a * inner_a)
+                                    + (wy as f64 * wy as f64) / (inner_b * inner_b)
                             } else {
                                 2.0 // Força ser parede se o tubo for muito pequeno
                             };
@@ -172,8 +269,8 @@ pub fn generate_underground_infrastructure(
                                     None,
                                 );
                             } else {
-                                let core_block = if fluid_block.is_some() && wy <= -ry + (ry / 2).max(1) {
-                                    fluid_block.unwrap() // Preenche água só na metade de baixo
+                                let core_block = if wy <= -ry + (ry / 2).max(1) {
+                                    fluid_block.unwrap_or(AIR) // Preenche água só na metade de baixo
                                 } else {
                                     AIR
                                 };
@@ -242,7 +339,17 @@ fn dispatch_element(
 ) {
     match &element {
         ProcessedElement::Way(way) => {
-            if way.tags.contains_key("building") || way.tags.contains_key("building:part") {
+            // 🚨 RECONEXÃO: `power=substation`/`power=plant` têm prioridade sobre
+            // `building`, mesmo quando ambas as tags coexistem (padrão OSM comum:
+            // subestações urbanas mapeadas como `building=yes` + `power=substation`
+            // na MESMA way). Sem isto, o pátio de subestação nunca era desenhado —
+            // caía sempre em `buildings::generate_buildings` como uma casa genérica.
+            if matches!(
+                way.tags.get("power").map(|s| s.as_str()),
+                Some("substation") | Some("plant")
+            ) {
+                power::generate_power(editor, &element, args);
+            } else if way.tags.contains_key("building") || way.tags.contains_key("building:part") {
                 if !suppressed_building_outlines.contains(&way.id) {
                     buildings::generate_buildings(editor, way, args, None, None, flood_fill_cache);
                 }
@@ -292,6 +399,8 @@ fn dispatch_element(
                 && way.tags.get("man_made") != Some(&"pipeline".to_string())
             {
                 man_made::generate_man_made(editor, &element, args, flood_fill_cache);
+            } else if way.tags.contains_key("power") {
+                power::generate_power(editor, &element, args);
             } else if way.tags.contains_key("place") {
                 landuse::generate_place(editor, way, args, flood_fill_cache);
             }
@@ -302,9 +411,13 @@ fn dispatch_element(
             }
         }
         ProcessedElement::Node(node) => {
-            if node.tags.contains_key("door") || node.tags.contains_key("entrance") {
-                doors::generate_doors(editor, node);
-            } else if node.tags.contains_key("natural")
+            // 🚨 BESM-6: `door`/`entrance` e `advertising` migraram para uma arquitetura
+            // orientada a `Feature` (ver `doors::carve_and_place_door` e
+            // `advertising::generate_advertising`). Um nó OSM solto não carrega o
+            // contexto de parede/Ground que essas APIs agora exigem — portas são
+            // talhadas pelo gerador de paredes (`buildings.rs`) e anúncios chegam
+            // via `options.provider_features`, não por este dispatcher genérico.
+            if node.tags.contains_key("natural")
                 && node.tags.get("natural") == Some(&"tree".to_string())
             {
                 natural::generate_natural(
@@ -338,8 +451,6 @@ fn dispatch_element(
                 historic::generate_historic(editor, node);
             } else if node.tags.contains_key("emergency") {
                 emergency::generate_emergency(editor, node);
-            } else if node.tags.contains_key("advertising") {
-                advertising::generate_advertising(editor, node);
             }
         }
         ProcessedElement::Relation(rel) => {
@@ -356,10 +467,10 @@ fn dispatch_element(
                 );
             } else if rel.tags.contains_key("water")
                 || rel
-                .tags
-                .get("natural")
-                .map(|val| val == "water" || val == "bay")
-                .unwrap_or(false)
+                    .tags
+                    .get("natural")
+                    .map(|val| val == "water" || val == "bay")
+                    .unwrap_or(false)
             {
                 water_areas::generate_water_areas_from_relation(editor, rel, xzbbox);
             } else if rel.tags.contains_key("natural") {
@@ -404,7 +515,7 @@ pub fn generate_world_with_options(
     let mut editor: WorldEditor = WorldEditor::new_with_format_and_name(
         options.path,
         &xzbbox,
-        llbbox.clone(),
+        llbbox,
         options.format,
         options.level_name.clone(),
         options.spawn_point,
@@ -438,9 +549,9 @@ pub fn generate_world_with_options(
                     rel.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
                 if is_building_type
                     && rel
-                    .members
-                    .iter()
-                    .any(|m| m.role == ProcessedMemberRole::Part)
+                        .members
+                        .iter()
+                        .any(|m| m.role == ProcessedMemberRole::Part)
                 {
                     for member in &rel.members {
                         if member.role == ProcessedMemberRole::Outer {
@@ -462,6 +573,16 @@ pub fn generate_world_with_options(
         let rx = cx >> 9;
         let rz = cz >> 9;
         spatial_index.entry((rx, rz)).or_default().push(element);
+    }
+
+    // 🚨 RECONEXÃO: `osm_parser::get_priority` já existia (prioriza building >
+    // highway > waterway > water > barrier, ver `PRIORITY_ORDER`) mas nada
+    // ordenava os elementos por ela antes do dispatch — cada região era
+    // processada na ordem arbitrária de inserção do parser. Ordenar aqui
+    // garante que, por região, prédios sejam desenhados antes de vias/rios
+    // que dependam deles (ex.: recuo de calçada), de forma determinística.
+    for elements_in_region in spatial_index.values_mut() {
+        elements_in_region.sort_by_key(crate::osm_parser::get_priority);
     }
 
     // Delimitação da Matriz Global Scanline (Regiões do Minecraft: 512x512 blocos)
@@ -493,12 +614,15 @@ pub fn generate_world_with_options(
             // SRTM/LiDAR, feita uma única vez para o bbox inteiro), fatiamos a grade
             // densa dela para as coordenadas absolutas desta região de 512×512 blocos.
             //
-            // `canopy_surface_cache` continua vazio: não há fonte de DSM (superfície
-            // com telhados/copas) religada ainda — `Ground::surface_level` já degrada
-            // graciosamente para `level()` quando a célula não existe, então isso é
-            // seguro, só menos detalhado (sem "chão" separado para topo de prédios).
+            // `canopy_surface_cache` vem de `options.surface_data` (DSM real, ver
+            // `DsmProvider` + `main.rs`) quando fornecido; sem ele, fica vazio e
+            // `Ground::surface_level` degrada graciosamente para `level()` — seguro,
+            // só menos detalhado (sem "chão" separado para topo de prédios/copas).
             let mut bare_cache: FxHashMap<(i32, i32), i32> = FxHashMap::default();
-            let canopy_cache: FxHashMap<(i32, i32), i32> = FxHashMap::default();
+            let canopy_cache: Arc<FxHashMap<(i32, i32), i32>> = options
+                .surface_data
+                .clone()
+                .unwrap_or_else(|| Arc::new(FxHashMap::default()));
 
             if let Some(ref elevation) = options.elevation_data {
                 let region_min_x = (rx << 9).max(xzbbox.min_x());
@@ -527,6 +651,26 @@ pub fn generate_world_with_options(
                 }
             }
 
+            // 🚨 RECONEXÃO DEM: um GeoTIFF DEM local explícito (ver `DemProvider`,
+            // `--local-dem`) tem prioridade sobre o SRTM/LiDAR acima onde tiver
+            // dado — permite terreno nu offline ou mais preciso que o SRTM público.
+            // Iteramos a janela da região (limitada, ~512×512), não o mapa do DEM
+            // inteiro, para o custo não escalar com o tamanho do raster fornecido.
+            if let Some(ref dem_override) = options.dem_override {
+                let region_min_x = (rx << 9).max(xzbbox.min_x());
+                let region_max_x = ((rx << 9) + 511).min(xzbbox.max_x());
+                let region_min_z = (rz << 9).max(xzbbox.min_z());
+                let region_max_z = ((rz << 9) + 511).min(xzbbox.max_z());
+
+                for z in region_min_z..=region_max_z {
+                    for x in region_min_x..=region_max_x {
+                        if let Some(&h) = dem_override.get(&(x, z)) {
+                            bare_cache.insert((x, z), h);
+                        }
+                    }
+                }
+            }
+
             // 🚨 TWEAK O(1): Injeção Direta do Fallback de Biomas
             // Se o usuário não providenciou um MapBiomas (Raster), `options.biome_grid`
             // é `None` e a Scanline não quebra: o motor usa o ground_level e o bioma
@@ -543,15 +687,20 @@ pub fn generate_world_with_options(
                 Ground::new_enabled(
                     args.ground_level,
                     Arc::new(bare_cache),
-                    Arc::new(canopy_cache),
+                    canopy_cache,
                     biome_cache,
                 )
             } else {
                 Ground::new_flat(args.ground_level)
             };
 
-            // Injeta o chão local no editor para que as árvores saibam onde nascer
-            editor.set_ground(Arc::new(local_ground));
+            // Injeta o chão local no editor para que as árvores saibam onde nascer.
+            // Mantemos um segundo Arc (barato: só incrementa o refcount) para uso
+            // fora do `editor` — ex.: `advertising::generate_advertising`, que precisa
+            // de `&Ground` e `&mut WorldEditor` simultaneamente, o que um
+            // `editor.get_ground()` emprestado do próprio `editor` não permitiria.
+            let region_ground = Arc::new(local_ground);
+            editor.set_ground(Arc::clone(&region_ground));
 
             // 2. GERAÇÃO FÍSICA DO CHÃO NA REGIÃO
             let chunk_min_x = rx * 32;
@@ -702,6 +851,36 @@ pub fn generate_world_with_options(
 
                     if is_caesb_infrastructure_feature {
                         man_made::generate_from_provider_feature(&mut editor, feature, args);
+                        continue;
+                    }
+
+                    // 🚨 BESM-6 RECONEXÃO: mesma lógica acima, mas para voxels de
+                    // fotogrametria (`MeshProvider`, `--local-mesh`). Chegam aqui como
+                    // `SemanticGroup::TerrainDetail` com as tags `color`/`elevation`/
+                    // `material=photogrammetry` — nenhuma reconhecida pelo dispatcher
+                    // genérico de `ProcessedElement::Node` logo abaixo, que descartaria
+                    // o voxel silenciosamente mesmo após `MeshProvider` já tê-lo
+                    // decimado e posicionado corretamente.
+                    if feature.semantic_group == crate::providers::SemanticGroup::TerrainDetail
+                        && feature.source.contains("Photogrammetry_Mesh")
+                    {
+                        man_made::generate_from_provider_feature(&mut editor, feature, args);
+                        continue;
+                    }
+
+                    // 🚨 RECONEXÃO: Mobiliário urbano/outdoors (MUB JCDecaux, totens,
+                    // painéis rodoviários). `advertising::generate_advertising` é
+                    // agnóstica de provedor (aceita `Feature` de CSV/GeoJSON/PostGIS/
+                    // OSM/3D Tiles) e precisa do `Ground` real (`is_volume_obstructed`
+                    // consulta `surface_level` para não cravar um totem debaixo de
+                    // marquise/telhado) — daí o `region_ground` separado acima.
+                    if feature.semantic_group == crate::providers::SemanticGroup::Advertising {
+                        advertising::generate_advertising(
+                            &mut editor,
+                            feature,
+                            args,
+                            &region_ground,
+                        );
                         continue;
                     }
 

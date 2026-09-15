@@ -1,7 +1,9 @@
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer; // BESM-6: Motor ECEF
-use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
+use crate::providers::{
+    DataProvider, Feature, GeometryType, NodeTagsSideChannel, SemanticGroup, NODE_TAGS_ATTR,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -93,7 +95,7 @@ impl DataProvider for PbfProvider {
             self.file_path.display()
         );
 
-        let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
+        let (transformer, xzbbox) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
             .map_err(|e| format!("Falha ao inicializar o transformador de coordenadas: {}", e))?;
 
         // BBox Expandida (Buffer Topológico Inicial)
@@ -127,12 +129,12 @@ impl DataProvider for PbfProvider {
                     }
                     required_ways.insert(way.id());
                 }
-                Element::Relation(rel) => {
-                    if rel.tags().any(|(k, v)| k == "type" && v == "multipolygon") {
-                        for member in rel.members() {
-                            if member.member_type == RelMemberType::Way {
-                                required_ways.insert(member.member_id);
-                            }
+                Element::Relation(rel)
+                    if rel.tags().any(|(k, v)| k == "type" && v == "multipolygon") =>
+                {
+                    for member in rel.members() {
+                        if member.member_type == RelMemberType::Way {
+                            required_ways.insert(member.member_id);
                         }
                     }
                 }
@@ -150,6 +152,19 @@ impl DataProvider for PbfProvider {
             .map_err(|e| format!("Falha ao abrir arquivo PBF (Pass 2): {}", e))?;
 
         let mut node_cache: FxHashMap<i64, XZPoint> = FxHashMap::default();
+        // 🚨 RECONEXÃO (NODE_TAGS_ATTR): antes, ao montar `coords` para uma Way a
+        // partir de `way.refs()`, só as COORDENADAS de cada nó eram preservadas —
+        // nós com tag própria (entrance=yes, door=yes, highway=crossing) DENTRO da
+        // bbox já viravam Features de `GeometryType::Point` independentes (abaixo,
+        // nos ramos `DenseNode`/`Node`), desconectadas da via-mãe. Isso significa
+        // que `place_entrance_doors`/`carve_and_place_door` (buildings.rs), que
+        // iteram sobre `element.nodes` do PRÉDIO, e a detecção de faixa de
+        // pedestres (highways.rs), nunca encontravam essas tags — mesmo elas
+        // existindo soltas em algum lugar do pipeline. Este cache paralelo ao
+        // `node_cache` de coordenadas guarda as tags de cada nó (só os que têm
+        // tags, pra não inchar a Heap) para que a Way consiga puxá-las de volta
+        // e serializá-las sob `NODE_TAGS_ATTR`, igual ao `OSMProvider`.
+        let mut node_tag_cache: FxHashMap<i64, HashMap<String, String>> = FxHashMap::default();
         let mut way_cache: FxHashMap<i64, Vec<XZPoint>> = FxHashMap::default();
         let mut features = Vec::new();
 
@@ -163,17 +178,23 @@ impl DataProvider for PbfProvider {
 
                     // Se a coordenada está estritamente dentro da BBox Expandida
                     // OU se ela é uma âncora distante de uma via (vetor) que cruza a BBox.
-                    let in_bbox = lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng;
+                    let in_bbox =
+                        lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng;
 
                     if in_bbox || required_nodes.contains(&id) {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             let xz = transformer.transform_point(llpoint);
                             node_cache.insert(id, xz);
 
-                            // Extração de Pontos (Semáforos, Árvores Isoladas, Lixeiras)
-                            if in_bbox {
-                                let tags = Self::clean_tags(dense_node.tags());
-                                if !tags.is_empty() {
+                            // Ver comentário de `node_tag_cache`: cacheia ANTES de saber se
+                            // este nó vai virar um Point Feature avulso ou só um vértice
+                            // referenciado por uma Way (lida mais abaixo, no mesmo Pass 2).
+                            let tags = Self::clean_tags(dense_node.tags());
+                            if !tags.is_empty() {
+                                node_tag_cache.insert(id, tags.clone());
+
+                                // Extração de Pontos (Semáforos, Árvores Isoladas, Lixeiras)
+                                if in_bbox {
                                     let semantic_group = Self::get_semantic_group(&tags);
                                     if semantic_group != SemanticGroup::Other {
                                         features.push(Feature::new(
@@ -196,16 +217,19 @@ impl DataProvider for PbfProvider {
                     let lon = node.lon();
                     let id = node.id();
 
-                    let in_bbox = lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng;
+                    let in_bbox =
+                        lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng;
 
                     if in_bbox || required_nodes.contains(&id) {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
                             let xz = transformer.transform_point(llpoint);
                             node_cache.insert(id, xz);
 
-                            if in_bbox {
-                                let tags = Self::clean_tags(node.tags());
-                                if !tags.is_empty() {
+                            let tags = Self::clean_tags(node.tags());
+                            if !tags.is_empty() {
+                                node_tag_cache.insert(id, tags.clone());
+
+                                if in_bbox {
                                     let semantic_group = Self::get_semantic_group(&tags);
                                     if semantic_group != SemanticGroup::Other {
                                         features.push(Feature::new(
@@ -223,17 +247,38 @@ impl DataProvider for PbfProvider {
                     }
                 }
                 Element::Way(way) => {
-                    if !required_ways.contains(&way.id()) { return; }
+                    if !required_ways.contains(&way.id()) {
+                        return;
+                    }
 
                     let mut coords = Vec::with_capacity(way.refs().count());
+                    // Ver comentário de `node_tag_cache`: colecionado em paralelo a
+                    // `coords`, mesmo índice/ordem — `None` para nós sem tags, pra
+                    // manter o JSON pequeno (mesmo formato do `OSMProvider`).
+                    let mut node_tags: NodeTagsSideChannel = Vec::with_capacity(way.refs().count());
+                    let mut any_node_tags = false;
                     let mut is_completely_outside = true;
 
                     for node_id in way.refs() {
                         if let Some(&xz) = node_cache.get(&node_id) {
                             coords.push(xz);
-                            // Verificamos a BBox nativa (X, Z Minecraft)
-                            if xz.x >= 0 && xz.z >= 0 {
+                            // Verificamos a BBox nativa (X, Z Minecraft). CORREÇÃO: a
+                            // origem do grid Minecraft é o Marco Zero fixo de Brasília
+                            // (`DF_ORIGIN_LAT/LON` em `transformation.rs`), não o canto
+                            // da bbox pedida — então X é sistematicamente negativo para
+                            // qualquer bbox a OESTE do marco (Guará, Ceilândia,
+                            // Taguatinga, ...). O antigo `xz.x >= 0 && xz.z >= 0`
+                            // descartava SEMPRE todas as vias nessas regiões, por mais
+                            // perto que estivessem do centro da bbox pedida.
+                            if xzbbox.contains(&xz) {
                                 is_completely_outside = false;
+                            }
+                            match node_tag_cache.get(&node_id) {
+                                Some(t) => {
+                                    any_node_tags = true;
+                                    node_tags.push(Some(t.clone()));
+                                }
+                                None => node_tags.push(None),
                             }
                         }
                     }
@@ -242,19 +287,25 @@ impl DataProvider for PbfProvider {
                         return; // Via fora do mapa ou incompleta
                     }
 
-                    let tags = Self::clean_tags(way.tags());
+                    let mut tags = Self::clean_tags(way.tags());
                     let is_closed = coords.first() == coords.last() && coords.len() >= 4;
 
                     // Armazena a geometria no cache de Vias para as Relations
                     way_cache.insert(way.id(), coords.clone());
+
+                    if any_node_tags {
+                        if let Ok(json) = serde_json::to_string(&node_tags) {
+                            tags.insert(NODE_TAGS_ATTR.to_string(), json);
+                        }
+                    }
 
                     if !tags.is_empty() {
                         let semantic_group = Self::get_semantic_group(&tags);
                         if semantic_group != SemanticGroup::Other {
                             let geometry = if is_closed
                                 && (semantic_group == SemanticGroup::Building
-                                || semantic_group == SemanticGroup::Landuse
-                                || semantic_group == SemanticGroup::Terrain)
+                                    || semantic_group == SemanticGroup::Landuse
+                                    || semantic_group == SemanticGroup::Terrain)
                             {
                                 GeometryType::Polygon(coords)
                             } else {

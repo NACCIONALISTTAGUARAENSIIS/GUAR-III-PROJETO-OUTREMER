@@ -4,6 +4,16 @@ use crate::osm_parser::ProcessedWay;
 use crate::world_editor::WorldEditor;
 
 // Processa elementos marcados como ponte (Ex: Viadutos da EPIA, Ponte JK, Pontes do Lago)
+//
+// 🚨 STATUS DE CONEXÃO: `dispatch_element` roteia `way.tags.contains_key("bridge")`
+// para dentro de `highways::generate_highways` (que já tem lógica própria e
+// sofisticada de ponte elevada com pilares, linhas ~588-888), não para cá — esta
+// função nunca é chamada. A única coisa que ela faz e o caminho de highways.rs
+// NÃO replica é a checagem `landmarks::generate_unique_landmark` (pontes-monumento
+// nomeadas, tipo a Ponte JK, ganhariam um modelo único em vez do genérico). Não
+// portei essa chamada para dentro de highways.rs sem entender se colidiria com a
+// extrusão elevada que já existe lá — ver tarefa de acompanhamento.
+#[allow(dead_code)]
 pub fn generate_bridges(editor: &mut WorldEditor, element: &ProcessedWay) {
     if let Some(_bridge_type) = element.tags.get("bridge") {
         // =================================================================
@@ -209,7 +219,7 @@ pub fn generate_bridges(editor: &mut WorldEditor, element: &ProcessedWay) {
                 }
 
                 // 3. PILARES EM LÂMINA ADAPTATIVOS (Somente no vão livre)
-                if overall_idx % 32 == 0 && ramp_offset >= 7 {
+                if overall_idx.is_multiple_of(32) && ramp_offset >= 7 {
                     let mut min_ground = bridge_y;
                     // Amostragem transversal para pilar não flutuar
                     for w in -5i32..=5i32 {

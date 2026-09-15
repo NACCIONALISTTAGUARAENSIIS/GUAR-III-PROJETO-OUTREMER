@@ -10,8 +10,8 @@ use rustc_hash::FxHashMap; // BESM-6: Hash O(1) de extrema performance
 use tobj;
 
 // 🚨 BESM-6: Utilizado para gerar um offset de ID único por malha
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Provedor de Malhas 3D de Fotogrametria (Wavefront .obj).
 /// Projetado para ler escaneamentos de drones (Monumentos, Estátuas, Pontes complexas).
@@ -30,6 +30,7 @@ pub struct MeshProvider {
 }
 
 impl MeshProvider {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         file_path: PathBuf,
         scale_h: f64,
@@ -77,27 +78,58 @@ impl DataProvider for MeshProvider {
             self.file_path.display()
         );
 
-        // 1. Carregar a malha 3D e materiais via TOBJ
-        let load_options = tobj::LoadOptions {
-            single_index: true,
-            triangulate: true,
-            ignore_points: false,
-            ignore_lines: true,
+        // 🚨 RECONEXÃO: `--local-mesh` é documentado (args.rs/--help) como "Path to
+        // local Photogrammetry Meshes (.obj, .gltf) directory" — mas o código
+        // sempre chamou `tobj::load_obj(&self.file_path, ...)` direto, tratando
+        // `self.file_path` como se já fosse o .obj em si. Passar a PASTA
+        // documentada (o uso normal, quando o scan de drone tem múltiplos
+        // arquivos/texturas) sempre falhava com "Falha ao decodificar a malha
+        // OBJ: read error" — silenciosamente, sem nenhum bloco gerado. Agora,
+        // se `file_path` for uma pasta, varremos por `*.obj` (ordem
+        // determinística) e processamos cada um; se for um arquivo, mantemos o
+        // comportamento direto de antes. `.gltf` continua não suportado (só
+        // `tobj`/Wavefront está de fato implementado) — não fingimos suporte
+        // que não existe.
+        let obj_paths: Vec<std::path::PathBuf> = if self.file_path.is_dir() {
+            let mut paths: Vec<_> = std::fs::read_dir(&self.file_path)
+                .map_err(|e| {
+                    format!(
+                        "Falha ao ler diretório de malhas {}: {}",
+                        self.file_path.display(),
+                        e
+                    )
+                })?
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|p| {
+                    p.extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("obj"))
+                })
+                .collect();
+            paths.sort();
+            if paths.is_empty() {
+                return Err(format!(
+                    "Nenhum arquivo .obj encontrado em {}",
+                    self.file_path.display()
+                ));
+            }
+            paths
+        } else {
+            vec![self.file_path.clone()]
         };
-
-        let (models, materials_result) = tobj::load_obj(&self.file_path, &load_options)
-            .map_err(|e| format!("Falha ao decodificar a malha OBJ: {}", e))?;
-
-        // 🚨 Suporte a Texturas/Cores (Mapeia o arquivo .mtl associado)
-        let materials = materials_result.unwrap_or_default();
 
         // 🚨 Pipeline Geodésico Opcional Dinâmico
         // Se a malha já vem em coordenadas reais (UTM), projetamos para WGS84.
         // Se crs_source for None, assumimos Plano Tangente Local (Centro = 0,0,0).
         let proj = if let Some(crs) = &self.crs_source {
-            Some(Proj::new_known_crs(crs, "EPSG:4326", None)
-                .ok()
-                .ok_or(format!("Falha ao inicializar PROJ para CRS {} -> 4326", crs))?)
+            Some(
+                Proj::new_known_crs(crs, "EPSG:4326", None)
+                    .ok()
+                    .ok_or(format!(
+                        "Falha ao inicializar PROJ para CRS {} -> 4326",
+                        crs
+                    ))?,
+            )
         } else {
             None
         };
@@ -110,58 +142,81 @@ impl DataProvider for MeshProvider {
         // Chave: (X, Y, Z) exatos no Minecraft. Valor: Cor RGB em HEX extraída da textura.
         let mut voxel_grid: FxHashMap<(i32, i32, i32), String> = FxHashMap::default();
 
-        for model in models {
-            let mesh = &model.mesh;
-            let positions = &mesh.positions; // [x1, y1, z1, x2, y2, z2, ...]
+        let load_options = tobj::LoadOptions {
+            single_index: true,
+            triangulate: true,
+            ignore_points: false,
+            ignore_lines: true,
+        };
 
-            // Extração de Cor do Material baseada na face/grupo
-            let mut hex_color = String::from("#888888"); // Concreto Brutalista (Fallback)
-            if let Some(mat_id) = mesh.material_id {
-                if let Some(mat) = materials.get(mat_id) {
-                    if let Some(diffuse) = mat.diffuse {
-                        let r = (diffuse[0] * 255.0) as u8;
-                        let g = (diffuse[1] * 255.0) as u8;
-                        let b = (diffuse[2] * 255.0) as u8;
-                        hex_color = format!("#{:02X}{:02X}{:02X}", r, g, b);
+        for obj_path in &obj_paths {
+            let (models, materials_result) = match tobj::load_obj(obj_path, &load_options) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!(
+                        "[AVISO] Falha ao decodificar a malha OBJ {}: {} — pulando este arquivo.",
+                        obj_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            // 🚨 Suporte a Texturas/Cores (Mapeia o arquivo .mtl associado)
+            let materials = materials_result.unwrap_or_default();
+
+            for model in models {
+                let mesh = &model.mesh;
+                let positions = &mesh.positions; // [x1, y1, z1, x2, y2, z2, ...]
+
+                // Extração de Cor do Material baseada na face/grupo
+                let mut hex_color = String::from("#888888"); // Concreto Brutalista (Fallback)
+                if let Some(mat_id) = mesh.material_id {
+                    if let Some(mat) = materials.get(mat_id) {
+                        if let Some(diffuse) = mat.diffuse {
+                            let r = (diffuse[0] * 255.0) as u8;
+                            let g = (diffuse[1] * 255.0) as u8;
+                            let b = (diffuse[2] * 255.0) as u8;
+                            hex_color = format!("#{:02X}{:02X}{:02X}", r, g, b);
+                        }
                     }
                 }
-            }
 
-            // O Wavefront OBJ usa coordenadas locais.
-            // O laço não pula mais vértices destrutivamente. Processamos todos e a grade 1x1x1 absorve a redundância.
-            for i in (0..positions.len()).step_by(3) {
-                let raw_x = positions[i] as f64 + self.offset_x;
-                let raw_y = positions[i + 1] as f64 + self.offset_y;
-                let raw_z = positions[i + 2] as f64 + self.offset_z;
+                // O Wavefront OBJ usa coordenadas locais.
+                // O laço não pula mais vértices destrutivamente. Processamos todos e a grade 1x1x1 absorve a redundância.
+                for i in (0..positions.len()).step_by(3) {
+                    let raw_x = positions[i] as f64 + self.offset_x;
+                    let raw_y = positions[i + 1] as f64 + self.offset_y;
+                    let raw_z = positions[i + 2] as f64 + self.offset_z;
 
-                let (mc_x, mc_z) = if let Some(ref p) = proj {
-                    // Trata X e Z como Coordenadas Georreferenciadas (Ex: UTM)
-                    if let Ok((lon, lat)) = p.convert((raw_x, raw_z)) {
-                        if let Ok(llpoint) = LLPoint::new(lat, lon) {
-                            // Early-Z Culling Espacial
-                            if !bbox.contains(&llpoint) {
+                    let (mc_x, mc_z) = if let Some(ref p) = proj {
+                        // Trata X e Z como Coordenadas Georreferenciadas (Ex: UTM)
+                        if let Ok((lon, lat)) = p.convert((raw_x, raw_z)) {
+                            if let Ok(llpoint) = LLPoint::new(lat, lon) {
+                                // Early-Z Culling Espacial
+                                if !bbox.contains(&llpoint) {
+                                    continue;
+                                }
+                                let xz = transformer.transform_point(llpoint);
+                                (xz.x, xz.z)
+                            } else {
                                 continue;
                             }
-                            let xz = transformer.transform_point(llpoint);
-                            (xz.x, xz.z)
                         } else {
                             continue;
                         }
                     } else {
-                        continue;
-                    }
-                } else {
-                    // Trata como Plano Cartesiano Local (Origem no Centro do Modelo)
-                    let mc_x = (raw_x * self.scale_h).round() as i32;
-                    let mc_z = (raw_z * self.scale_h).round() as i32;
-                    (mc_x, mc_z)
-                };
+                        // Trata como Plano Cartesiano Local (Origem no Centro do Modelo)
+                        let mc_x = (raw_x * self.scale_h).round() as i32;
+                        let mc_z = (raw_z * self.scale_h).round() as i32;
+                        (mc_x, mc_z)
+                    };
 
-                let mc_y = (raw_y * self.scale_v).round() as i32;
+                    let mc_y = (raw_y * self.scale_v).round() as i32;
 
-                // Insere na Grade 3D
-                // Múltiplos vértices no mesmo metro cúbico colidem na mesma chave (Decimação Topológica Natural)
-                voxel_grid.insert((mc_x, mc_y, mc_z), hex_color.clone());
+                    // Insere na Grade 3D
+                    // Múltiplos vértices no mesmo metro cúbico colidem na mesma chave (Decimação Topológica Natural)
+                    voxel_grid.insert((mc_x, mc_y, mc_z), hex_color.clone());
+                }
             }
         }
 
@@ -172,11 +227,11 @@ impl DataProvider for MeshProvider {
 
         let mut features = Vec::with_capacity(voxel_grid.len());
 
-        // 🚨 O ID dinâmico e seguro gerado pela hash do filepath
-        let mut next_id = self.generate_base_id();
-
         // 3. Converter os Voxels em Features Pontuais (Pulando extrusão 2.5D)
-        for ((mc_x, mc_y, mc_z), color_hex) in voxel_grid {
+        // 🚨 O ID dinâmico e seguro gerado pela hash do filepath, incrementado por voxel
+        for (next_id, ((mc_x, mc_y, mc_z), color_hex)) in
+            (self.generate_base_id()..).zip(voxel_grid)
+        {
             let mut tags = HashMap::new();
             tags.insert("source".to_string(), "GDF_Mesh_Voxel3D".to_string());
 
@@ -196,7 +251,6 @@ impl DataProvider for MeshProvider {
             );
 
             features.push(feature);
-            next_id += 1;
         }
 
         features.shrink_to_fit();

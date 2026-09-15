@@ -22,6 +22,13 @@ pub struct RasterProvider {
 }
 
 impl RasterProvider {
+    /// 🚨 STATUS DE CONEXÃO: nenhum chamador hoje. Classifica raster genérico
+    /// (NDVI/NDWI) em Natural/Waterway/Terrain — sobrepõe em parte o que
+    /// `VegetationProvider` (já conectado, MapBiomas-específico) cobre para
+    /// vegetação; não conectei para não arriscar dupla-classificação sem
+    /// entender se este é complementar ou um provider anterior superado por
+    /// aquele. Ver tarefa de acompanhamento sugerida nesta sessão.
+    #[allow(dead_code)]
     pub fn new(
         file_path: PathBuf,
         scale_h: f64,
