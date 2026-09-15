@@ -300,7 +300,7 @@ fn generate_advertising_flag(
         ORANGE_WOOL,
         WHITE_WOOL,
     ];
-    let flag_block = flag_colors[rng.gen_range(0..flag_colors.len())];
+    let flag_block = flag_colors[rng.random_range(0..flag_colors.len())];
 
     // 🚨 BESM-6: Consulta à Corrente de Vento Global
     let (dir_x, dir_z) = get_wind_vector(x, z);
@@ -378,7 +378,7 @@ fn generate_poster_box(
             .and_then(|a| a.parse::<f64>().ok())
             .unwrap_or_else(|| {
                 let mut rng = coord_rng(pt.x, ground_y, pt.z, feature.id);
-                if rng.gen_bool(0.5) {
+                if rng.random_bool(0.5) {
                     0.0
                 } else {
                     90.0
@@ -451,7 +451,7 @@ fn generate_billboard(
             .and_then(|a| a.parse::<f64>().ok())
             .unwrap_or_else(|| {
                 let mut rng = coord_rng(p1.x, ground_y, p1.z, feature.id);
-                if rng.gen_bool(0.5) {
+                if rng.random_bool(0.5) {
                     0.0
                 } else {
                     90.0

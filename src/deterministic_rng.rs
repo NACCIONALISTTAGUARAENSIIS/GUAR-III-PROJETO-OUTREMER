@@ -18,7 +18,7 @@ const MIX_CONST_2: u64 = 0x94D049BB133111EB;
 // ============================================================================
 // 🚨 BESM-6 NEWTYPE PATTERN (O Isolador de Dependências)
 // Pub struct simples e direta.
-// A trait Rng (que provê gen_bool, gen_range, etc.) é implementada
+// A trait Rng (que provê random_bool, random_range, etc.) é implementada
 // automaticamente pelo Rust em qualquer struct que implemente RngCore.
 // Logo, quem importar PincelRng só precisa fazer `use rand::Rng;` localmente.
 // ============================================================================
@@ -39,11 +39,6 @@ impl RngCore for PincelRng {
     #[inline(always)]
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         self.0.fill_bytes(dest)
-    }
-
-    #[inline(always)]
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.0.try_fill_bytes(dest)
     }
 }
 
@@ -140,7 +135,7 @@ mod tests {
         let mut rng2 = element_rng(12345);
 
         for _ in 0..100 {
-            assert_eq!(rng1.gen::<u64>(), rng2.gen::<u64>());
+            assert_eq!(rng1.random::<u64>(), rng2.random::<u64>());
         }
     }
 
@@ -149,8 +144,8 @@ mod tests {
         let mut rng1 = element_rng(12345);
         let mut rng2 = element_rng(12346);
 
-        let v1: u64 = rng1.gen();
-        let v2: u64 = rng2.gen();
+        let v1: u64 = rng1.random();
+        let v2: u64 = rng2.random();
         assert_ne!(v1, v2);
     }
 
@@ -159,8 +154,8 @@ mod tests {
         let mut rng1 = element_rng(12345);
         let mut rng2 = element_rng_salted(12345, 1);
 
-        let v1: u64 = rng1.gen();
-        let v2: u64 = rng2.gen();
+        let v1: u64 = rng1.random();
+        let v2: u64 = rng2.random();
         assert_ne!(v1, v2);
     }
 
@@ -169,7 +164,7 @@ mod tests {
         let mut rng1 = coord_rng(100, 64, 200, 12345);
         let mut rng2 = coord_rng(100, 64, 200, 12345);
 
-        assert_eq!(rng1.gen::<u64>(), rng2.gen::<u64>());
+        assert_eq!(rng1.random::<u64>(), rng2.random::<u64>());
     }
 
     #[test]
@@ -177,12 +172,12 @@ mod tests {
         let mut rng1 = coord_rng(-100, 10, -200, 12345);
         let mut rng2 = coord_rng(-100, 10, -200, 12345);
 
-        assert_eq!(rng1.gen::<u64>(), rng2.gen::<u64>());
+        assert_eq!(rng1.random::<u64>(), rng2.random::<u64>());
 
         let mut rng3 = coord_rng(-100, 10, -200, 12345);
         let mut rng4 = coord_rng(-101, 10, -200, 12345);
 
-        assert_ne!(rng3.gen::<u64>(), rng4.gen::<u64>());
+        assert_ne!(rng3.random::<u64>(), rng4.random::<u64>());
     }
 
     #[test]
@@ -190,8 +185,8 @@ mod tests {
         // 🚨 O Teste Mestre: Coord (0,0,0) com ID 0.
         // O gerador agora deve cuspir entropia caótica verdadeira em vez de colapsar.
         let mut rng_zero = coord_rng(0, 0, 0, 0);
-        let v1: u64 = rng_zero.gen();
-        let v2: u64 = rng_zero.gen();
+        let v1: u64 = rng_zero.random();
+        let v2: u64 = rng_zero.random();
 
         assert_ne!(v1, 0);
         assert_ne!(v2, 0);
@@ -204,6 +199,6 @@ mod tests {
         let mut rng1 = coord_rng(10, 0, 20, 999);
         let mut rng2 = coord_rng(20, 0, 10, 999);
 
-        assert_ne!(rng1.gen::<u64>(), rng2.gen::<u64>());
+        assert_ne!(rng1.random::<u64>(), rng2.random::<u64>());
     }
 }

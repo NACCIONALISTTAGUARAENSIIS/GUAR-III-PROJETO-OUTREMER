@@ -1,4 +1,5 @@
 use crate::block_definitions::*;
+use crate::osm_parser::ProcessedNode;
 use crate::world_editor::WorldEditor;
 use fastnbt::Value;
 use std::collections::HashMap;
@@ -50,7 +51,13 @@ use std::collections::HashMap;
 // ============================================================================
 
 /// Enumeração de Direções Cardeais para assentamento correto dos Block States (NBT)
+///
+/// North/East/West só serão construídas quando os "Injection Points" documentados
+/// acima (Buildings/IFC/CityGML/...) forem implementados e calcularem o facing real
+/// pela normal da parede; hoje o único chamador (`generate_doors`, fallback para nós
+/// soltos) sempre usa `South` por falta desse contexto.
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[allow(dead_code)]
 pub enum DoorFacing {
     North,
     South,
@@ -80,6 +87,36 @@ impl DoorFacing {
 /// detectando nós `entrance=*`/`door=*` do próprio way do prédio. Os demais
 /// chamadores documentados acima (`ifc_provider.rs`, `citygml_provider.rs`, Indoor
 /// Utility/GeoPackage/PostGIS/GeoJSON providers) ainda não invocam esta função.
+///
+/// 🚨 STATUS DE CONEXÃO (revisado): uma versão anterior deste módulo cogitou ligar
+/// esta função ao dispatcher genérico de `ProcessedElement::Node` em
+/// `data_processing.rs`, para `door=*`/`entrance=*` "soltos" (nós sem via-mãe). Na
+/// prática isso não faz sentido geometricamente: uma porta exige uma PAREDE para
+/// carvar o vão (`carve_and_place_door` recebe `facing`/`width`/`height` calculados
+/// a partir da parede real), e em dados OSM reais `entrance=*`/`door=*` quase sempre
+/// aparecem em nós que JÁ são vértices do way do prédio — exatamente o caso que
+/// `place_entrance_doors` (buildings.rs) já cobre. `data_processing.rs` documenta essa
+/// decisão explicitamente (ver o comentário no branch `ProcessedElement::Node`) e não
+/// chama esta função de propósito, para não desenhar uma porta "flutuante" voltada
+/// sempre ao Sul sem parede nenhuma ao redor. Mantida aqui (não removida) caso um
+/// provedor futuro (IFC/CityGML/Indoor) precise de um fallback mínimo com contexto
+/// de parede real — ver os "Injection Points" documentados acima, nenhum implementado
+/// ainda.
+#[allow(dead_code)]
+pub fn generate_doors(editor: &mut WorldEditor, node: &ProcessedNode) {
+    let ground_y = editor.get_ground_level(node.x, node.z);
+    carve_and_place_door(
+        editor,
+        node.x,
+        ground_y,
+        node.z,
+        1,
+        2,
+        DoorFacing::South,
+        &node.tags,
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn carve_and_place_door(
     editor: &mut WorldEditor,

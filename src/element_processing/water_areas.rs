@@ -80,8 +80,8 @@ pub fn generate_water_areas_from_relation(
         // exata via `coord_rng` — determinístico, mas nunca uniforme de ponta a
         // ponta do lago.
         let mut rng = coord_rng(x, ground_y, z, rel.id);
-        let profundidade = rng.gen_range(2..=4);
-        let leito = if rng.gen_bool(0.75) { SAND } else { GRAVEL };
+        let profundidade = rng.random_range(2..=4);
+        let leito = if rng.random_bool(0.75) { SAND } else { GRAVEL };
 
         for dy in 0..profundidade {
             let y = ground_y - dy;

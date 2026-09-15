@@ -15,8 +15,19 @@
 //! Verificado de verdade com `cargo check --no-default-features`: compila e é
 //! o ponto de entrada real desse build. Só aparece "morto" para o
 //! `cargo clippy --all-features` do CI porque essa checagem sempre liga `gui`,
-//! nunca visitando este ramo — daí o `allow` do módulo inteiro abaixo.
-#![allow(dead_code)]
+//! nunca visitando este ramo — daí o `allow` condicional abaixo (só quando `gui`
+//! está ativa, para não mascarar dead-code real no build `--no-default-features`,
+//! onde este é o único ponto de entrada).
+
+// 🚨 RECONEXÃO: Este módulo (exceto `BesmSignal`, usado pelo canal de telemetria em
+// qualquer build) só é chamado a partir de `main.rs` quando a feature `gui` está
+// DESLIGADA (`#[cfg(not(feature = "gui"))]`) — é o dashboard TUI interativo do modo
+// sem GUI. Como o default do crate é `default = ["gui"]`, um `cargo check`/`clippy`
+// comum enxerga `MasterControl`, `MacroRegion`, `dispatch_generation` etc. como
+// morto (nunca chamado nesse feature-set) — o que é verdade PARA ESSE build, não em
+// geral. `allow(dead_code)` só quando `gui` está ativa preserva o lint real no build
+// `--no-default-features`, onde este código é o único ponto de entrada sem CLI args.
+#![cfg_attr(feature = "gui", allow(dead_code))]
 
 use colored::Colorize;
 use crossterm::{
@@ -647,6 +658,11 @@ impl MasterControl {
             WorldFormat::JavaAnvil
         };
 
+        // 🚨 Um único `WorldEditor` persiste por toda a varredura (não um por região):
+        // é o que permite o Halo Cache real — blocos que vazam de uma região para a
+        // vizinha (ainda não processada) ficam retidos aqui entre chamadas de
+        // `set_active_region`, em vez de se perderem se cada região recriasse o editor
+        // do zero.
         let mut editor = WorldEditor::new_with_format_and_name(
             world_dir,
             xzbbox,
@@ -702,9 +718,12 @@ impl MasterControl {
                     _ => continue,
                 };
 
-                // 🚨 Os dois cantos calculados acima não são necessariamente (SW, NE) —
-                // dependendo do hemisfério/orientação, "rz_min_z" pode corresponder à
-                // maior latitude. Construímos o bbox local a partir do min/max real.
+                // 🚨 Os dois cantos calculados acima não são necessariamente (SW, NE):
+                // `inverse_transform` faz Z -> Norte (ver o comentário do método), então o
+                // ponto "min" em blocos (rx_min_x, rz_min_z, canto Sudoeste/inferior) vira o
+                // LLPoint de MAIOR latitude — min/max de lat ficam trocados. Em vez de
+                // assumir a direção fixa da troca, usamos `.min()`/`.max()` reais, o que
+                // funciona independente de hemisfério/orientação.
                 let local_bbox = match LLBBox::new(
                     local_ll_min.lat().min(local_ll_max.lat()),
                     local_ll_min.lng().min(local_ll_max.lng()),
@@ -777,7 +796,10 @@ impl MasterControl {
             }
 
             if !abort_clone.load(Ordering::Relaxed) {
-                // Fecha metadados finais (level.dat / equivalente) uma única vez, no fim da varredura.
+                // Fecha metadados finais (level.dat / equivalente) uma única vez, no fim da
+                // varredura. `WorldEditor::save` não retorna `Result` (é `fn save(&mut self)`,
+                // sempre "sucesso" do ponto de vista do compilador) — não há branch de erro
+                // de I/O aqui para reportar.
                 editor.save();
                 let _ = tx.send(BesmSignal::Log(format!(
                     "{} MAPA MATERIALIZADO NO DISCO.",

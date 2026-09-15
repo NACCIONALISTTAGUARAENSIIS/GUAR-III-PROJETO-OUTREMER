@@ -28,7 +28,7 @@ fn pe_direito_blocos() -> i32 {
 /// xadrez perceptível.
 fn parede_organica(x: i32, y: i32, z: i32, id: u64) -> Block {
     let mut rng = coord_rng(x, y, z, id);
-    let roll: f64 = rng.gen();
+    let roll: f64 = rng.random();
     if roll < 0.06 {
         WHITE_TERRACOTTA
     } else if roll < 0.12 {
@@ -44,7 +44,7 @@ fn parede_organica(x: i32, y: i32, z: i32, id: u64) -> Block {
 /// após sala, prédio após prédio.
 fn particao_organica(x: i32, y: i32, z: i32, id: u64) -> Block {
     let mut rng = coord_rng(x, y, z, id);
-    if rng.gen_bool(0.1) {
+    if rng.random_bool(0.1) {
         GRAY_TERRACOTTA
     } else {
         LIGHT_GRAY_TERRACOTTA
@@ -1337,7 +1337,7 @@ fn generate_banco_sede_layout(
                     editor.set_block_absolute(IRON_BARS, x, y + 2 + offset, z, None, None);
                 }
             }
-            if rng.gen_bool(0.3) && meio_z + 2 < max_z - 1 {
+            if rng.random_bool(0.3) && meio_z + 2 < max_z - 1 {
                 editor.set_block_absolute(IRON_DOOR, x, y + 1 + offset, meio_z + 2, None, None);
             }
         }
@@ -1424,7 +1424,7 @@ fn gerar_banheiro(
     editor.set_block_absolute(CAULDRON, x + 1, y + 1 + offset, z + 1, None, None);
 
     let mut rng = element_rng(id);
-    if rng.gen_bool(0.5) {
+    if rng.random_bool(0.5) {
         // Espelho/armarinho sobre a pia — variação orgânica, nem todo banheiro tem.
         editor.set_block_absolute(IRON_TRAPDOOR, x, y + 2 + offset, z + 1, None, None);
     }
@@ -1535,7 +1535,7 @@ fn gerar_terreo_condominio(
                         None,
                         None,
                     );
-                    let cadeira = if rng.gen_bool(0.5) {
+                    let cadeira = if rng.random_bool(0.5) {
                         OAK_STAIRS
                     } else {
                         STONE_BRICK_STAIRS
@@ -1678,7 +1678,7 @@ fn generate_residential_layout(
         // comprovada, pra nunca arriscar sobrepor a cabeceira da cama. Direção
         // (cabeceira pro fundo ou pra entrada do quarto) varia por unidade —
         // nenhum apartamento vizinho decide igual.
-        let cama_dir = if element_rng(id).gen_bool(0.5) {
+        let cama_dir = if element_rng(id).random_bool(0.5) {
             Direcao::Sul
         } else {
             Direcao::Norte
@@ -1751,7 +1751,7 @@ fn generate_residential_layout(
         // (cabem sempre — a suíte tem dimensão fixa, não escala com a unidade),
         // cama no quarto do meio, e sofá na sala só com folga extra de
         // profundidade comprovada (evita sobrepor o canto do banheiro de entrada).
-        let (suite_cama_x, suite_cama_dir) = if element_rng(id.wrapping_add(3)).gen_bool(0.5) {
+        let (suite_cama_x, suite_cama_dir) = if element_rng(id.wrapping_add(3)).random_bool(0.5) {
             (suite_x + 1, Direcao::Leste)
         } else {
             (suite_x + 2, Direcao::Oeste)
@@ -1767,7 +1767,7 @@ fn generate_residential_layout(
             Direcao::Leste,
         );
         if prof_m > 6.0 {
-            let sofa_carpet = if element_rng(id).gen_bool(0.5) {
+            let sofa_carpet = if element_rng(id).random_bool(0.5) {
                 RED_CARPET
             } else {
                 WHITE_CARPET
@@ -1979,7 +1979,7 @@ fn generate_office_layout(
             }
         } else if rel % modulo == modulo / 2 {
             let mut rng = element_rng(id.wrapping_add(x as u64));
-            let cadeira = if rng.gen_bool(0.5) {
+            let cadeira = if rng.random_bool(0.5) {
                 OAK_STAIRS
             } else {
                 STONE_BRICK_STAIRS

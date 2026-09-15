@@ -665,6 +665,14 @@ fn parse_duration(arg: &str) -> Result<std::time::Duration, std::num::ParseIntEr
 mod tests {
     use super::*;
 
+    // 🚨 RECONEXÃO: O bbox de teste era "1,2,3,4" — 2° x 2°, ~49.500 km², bem acima do
+    // `max_area_km2` padrão (10000 km²). `validate_args` checa área ANTES das
+    // validações que cada teste realmente quer exercitar (offline/WFS, spawn point,
+    // etc.), então testes que esperavam `is_ok()` ou uma mensagem de erro específica
+    // sempre quebravam nesse check de área primeiro — só nunca foi percebido porque a
+    // crate inteira não compilava (o `cargo test` nunca chegou a rodar de fato).
+    // Encolhido para "1,2,1.01,2.01" (~1.2 km², bem dentro do limite) em todo o
+    // módulo, mantendo o mesmo formato/canto para não mudar a intenção de cada teste.
     #[test]
     fn test_flags() {
         let tmpdir = tempfile::tempdir().unwrap();
@@ -675,7 +683,7 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
             "--terrain",
             "--debug",
         ];
@@ -683,7 +691,7 @@ mod tests {
         assert!(args.debug);
         assert!(args.terrain);
 
-        let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,2,3,4"];
+        let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,2,1.01,2.01"];
         let args = Args::parse_from(cmd.iter());
         assert!(!args.debug);
         assert!(!args.terrain);
@@ -703,7 +711,7 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
             "--interior=false",
             "--roof=false",
             "--city-boundaries=false",
@@ -718,7 +726,7 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
             "--interior",
             "--roof",
             "--city-boundaries",
@@ -731,14 +739,7 @@ mod tests {
 
     #[test]
     fn test_bedrock_flag() {
-        let cmd = [
-            "arnis",
-            "--bedrock",
-            "--bbox",
-            "1,2,1.01,2.01",
-            "--max-area-km2",
-            "1000000",
-        ];
+        let cmd = ["arnis", "--bedrock", "--bbox", "1,2,1.01,2.01"];
         let mut args = Args::parse_from(cmd.iter());
         assert!(args.bedrock);
         assert!(args.path.is_none());
@@ -747,7 +748,7 @@ mod tests {
 
     #[test]
     fn test_java_requires_path() {
-        let cmd = ["arnis", "--bbox", "1,2,3,4"];
+        let cmd = ["arnis", "--bbox", "1,2,1.01,2.01"];
         let mut args = Args::parse_from(cmd.iter());
         assert!(!args.bedrock);
         assert!(args.path.is_none());
@@ -761,7 +762,7 @@ mod tests {
             "--output-dir",
             "/nonexistent/path",
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
         ];
         let mut args = Args::parse_from(cmd.iter());
         let result = validate_args(&mut args);
@@ -777,7 +778,7 @@ mod tests {
             "--output-dir",
             "/nonexistent/path",
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
         ];
         let mut args = Args::parse_from(cmd.iter());
         let result = validate_args(&mut args);
@@ -796,11 +797,6 @@ mod tests {
             tmp_path,
             "--bbox",
             "1,2,1.01,2.01",
-            // 🚨 BESM-6: "1,2,3,4" cobre uma área real (~500km x 500km) maior que o
-            // teto padrão de --max-area-km2 (10000 km²); este teste quer testar a
-            // regra do WFS, não a de área, então a desabilitamos explicitamente.
-            "--max-area-km2",
-            "1000000",
             "--enable-underground-wfs",
         ];
         let mut args = Args::parse_from(cmd.iter());
@@ -822,8 +818,6 @@ mod tests {
             tmp_path,
             "--bbox",
             "1,2,1.01,2.01",
-            "--max-area-km2",
-            "1000000",
             "--file",
             "dummy.json",
             "--offline",
@@ -842,11 +836,13 @@ mod tests {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmp_path = tmpdir.path().to_str().unwrap();
 
-        // 🚨 BESM-6: A validação de bbox degenerada (min == max) já acontece dentro
-        // do `value_parser` (`LLBBox::from_str` -> `LLBBox::new`) durante o próprio
-        // parsing do clap — antes mesmo de `validate_args` rodar. `parse_from`
-        // chamaria `process::exit()` num valor inválido (matando o processo de
-        // testes inteiro); `try_parse_from` devolve o erro de forma testável.
+        // 🚨 RECONEXÃO: `LLBBox::new` (usado como `value_parser` do clap em `bbox`)
+        // passou a validar min<max ela mesma, então um bbox degenerado agora é
+        // rejeitado NA hora do parse do clap, antes de `validate_args` sequer rodar.
+        // `Args::parse_from` chama `error.exit()` (process::exit real) num valor
+        // inválido — o que antes matava o binário de testes inteiro, derrubando
+        // testes concorrentes não relacionados (ver `test_required_options`, que já
+        // usava `try_parse_from` corretamente para este mesmo tipo de caso).
         let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,1,1,1"];
         let result = Args::try_parse_from(cmd.iter());
         assert!(result.is_err());
@@ -861,27 +857,11 @@ mod tests {
         let cmd = ["arnis"];
         assert!(Args::try_parse_from(cmd.iter()).is_err());
 
-        let cmd = [
-            "arnis",
-            "--output-dir",
-            tmp_path,
-            "--bbox",
-            "1,2,1.01,2.01",
-            "--max-area-km2",
-            "1000000",
-        ];
+        let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,2,1.01,2.01"];
         let mut args = Args::try_parse_from(cmd.iter()).unwrap();
         assert!(validate_args(&mut args).is_ok());
 
-        let cmd = [
-            "arnis",
-            "--path",
-            tmp_path,
-            "--bbox",
-            "1,2,1.01,2.01",
-            "--max-area-km2",
-            "1000000",
-        ];
+        let cmd = ["arnis", "--path", tmp_path, "--bbox", "1,2,1.01,2.01"];
         let mut args = Args::try_parse_from(cmd.iter()).unwrap();
         assert!(validate_args(&mut args).is_ok());
 
@@ -899,7 +879,7 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
             "--spawn-lat",
             "2.0",
         ];
@@ -911,21 +891,24 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
             "--spawn-lng",
             "3.0",
         ];
         let mut args = Args::parse_from(cmd.iter());
         assert!(validate_args(&mut args).is_err());
 
+        // Ponto de spawn precisa cair DENTRO do bbox (ver o check em `validate_args`) —
+        // com o bbox encolhido para não estourar `max_area_km2` (ver comentário no
+        // topo deste `mod tests`), o spawn também precisa ficar dentro de [1,1.01] x
+        // [2,2.01], não mais nos valores antigos (2.0, 3.0) que só cabiam no bbox
+        // gigante original.
         let cmd = [
             "arnis",
             "--output-dir",
             tmp_path,
             "--bbox",
             "1,2,1.01,2.01",
-            "--max-area-km2",
-            "1000000",
             "--spawn-lat",
             "1.005",
             "--spawn-lng",
@@ -939,7 +922,7 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
             "--spawn-lat",
             "5.0",
             "--spawn-lng",

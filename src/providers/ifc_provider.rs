@@ -85,7 +85,11 @@ impl IfcProvider {
             if let Some(end) = line.rfind(')') {
                 let inner = &line[start + 1..end];
                 for part in inner.split(',') {
-                    if let Ok(val) = part.trim().parse::<f64>() {
+                    // IFCCARTESIANPOINT real usa lista aninhada — NAME((x,y,z)) —
+                    // então o primeiro/último token ainda carregam o parêntese
+                    // interno; sem isso, só a coordenada do meio parseava.
+                    let trimmed = part.trim().trim_start_matches('(').trim_end_matches(')');
+                    if let Ok(val) = trimmed.parse::<f64>() {
                         coords.push(val);
                     }
                 }

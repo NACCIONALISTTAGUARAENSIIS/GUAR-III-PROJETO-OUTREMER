@@ -593,8 +593,8 @@ impl Tree<'_> {
                         let force_split = path_blocked;
                         if force_split || rng.gen_bool(0.5) {
                             let sub_angle = angle
-                                + (rng.gen_range(30..60) as f64 * PI / 180.0)
-                                    * if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
+                                + (rng.random_range(30..60) as f64 * PI / 180.0)
+                                    * if rng.random_bool(0.5) { 1.0 } else { -1.0 };
                             for sub_step in 1i32..=2i32 {
                                 let sbx = bx
                                     + (sub_angle.cos() * sub_step as f64 * GOV_H_SCALE).round()

@@ -27,6 +27,7 @@ pub(crate) struct SessionLock {
     path: PathBuf,
 }
 
+#[allow(dead_code)]
 impl SessionLock {
     /// Creates and locks a session.lock file in the specified world directory
     pub(crate) fn acquire(world_path: &Path) -> Result<Self, String> {
@@ -56,7 +57,14 @@ impl SessionLock {
 impl Drop for SessionLock {
     fn drop(&mut self) {
         // Release the lock and remove the session.lock file
-        let _ = self.file.unlock();
+        //
+        // Chamada qualificada (`fs2::FileExt::unlock`, não `self.file.unlock()`): a
+        // partir do Rust 1.89 `std::fs::File` ganhou um `unlock()` inerente próprio,
+        // que teria prioridade de resolução sobre o trait do `fs2` em toolchains mais
+        // novas — mas o MSRV declarado no Cargo.toml (1.75) é anterior a isso. Chamar
+        // o trait explicitamente garante o mesmo método em qualquer toolchain
+        // suportada, e resolve o lint `incompatible_msrv` do clippy.
+        let _ = fs2::FileExt::unlock(&self.file);
         let _ = fs::remove_file(&self.path);
     }
 }
@@ -651,6 +659,12 @@ fn gui_start_generation(
         local_citygml: None,
         local_ifc: None,
         local_mesh: None,
+        // 🚨 RECONEXÃO: A GUI ainda não expõe os campos de dados governamentais
+        // adicionados depois (IFC BIM, IBGE/SICAR, MapBiomas, DSM, CAESB/CSV/KML,
+        // 3D Tiles) — `Args` passou a exigi-los no initializer, mas nenhum control de
+        // UI foi criado para eles ainda. `None`/`false` preserva o comportamento de
+        // sempre (fallback matemático do motor, sem esses dados extras), até a GUI
+        // ganhar os campos.
         local_caesb_geojson: None,
         local_csv: None,
         local_kml: None,

@@ -10,6 +10,8 @@ use once_cell::sync::Lazy;
 use rand::Rng;
 // 🚨 BESM-6: Integração com Indoor Utility Provider (CAESB Infrastructure)
 use crate::providers::{Feature, GeometryType, SemanticGroup};
+// 🚨 BESM-6: Reconexão do MeshProvider (Fotogrametria) — mapeia a cor HEX do voxel para o bloco mais próximo
+use crate::colors::color_text_to_rgb_tuple;
 
 const V_SCALE: f64 = 1.15;
 
@@ -689,8 +691,49 @@ pub fn generate_from_provider_feature(editor: &mut WorldEditor, feature: &Featur
         SemanticGroup::Indoor => {
             generate_indoor_structure(editor, feature, args);
         }
+        SemanticGroup::TerrainDetail => {
+            generate_photogrammetry_voxel(editor, feature);
+        }
         _ => {} // Outros grupos semânticos são ignorados neste módulo
     }
+}
+
+/// Desenha um único voxel 3D produzido pelo `MeshProvider` (fotogrametria via
+/// `--local-mesh`, OBJ/glTF de escaneamentos de drone).
+///
+/// Cada `Feature` que chega aqui representa um voxel isolado da nuvem
+/// decimada: `GeometryType::Point(x, z)` mais a tag `elevation` (Y) — as três
+/// coordenadas já saíram de `MeshProvider::fetch_features` pela mesma fórmula
+/// `(coordenada_local * escala) + offset`, portanto já são posições absolutas
+/// no mundo Minecraft, exatamente como X/Z. Por isso o Y é escrito via
+/// `set_block_absolute` direto, sem somar `get_ground_level`: somar a altura
+/// do terreno de novo desalinharia o voxel do resto da malha, que o usuário já
+/// calibrou como um bloco só através de `offset_y`.
+///
+/// A tag `color` (hex do material `diffuse` do `.mtl`, ex.: `#8899AA`) é
+/// convertida para RGB e casada com o bloco de lã/terracota/concreto mais
+/// próximo via `get_building_wall_block_for_color` — a mesma tabela de
+/// distância de cor (`colors::rgb_distance`) usada para pintar paredes de
+/// prédios a partir da tag OSM `building:colour`.
+fn generate_photogrammetry_voxel(editor: &mut WorldEditor, feature: &Feature) {
+    let GeometryType::Point(pt) = &feature.geometry else {
+        return;
+    };
+
+    let Some(mc_y) = feature
+        .get_tag("elevation")
+        .and_then(|e| e.parse::<i32>().ok())
+    else {
+        return;
+    };
+
+    let block = feature
+        .get_tag("color")
+        .and_then(|hex| color_text_to_rgb_tuple(hex))
+        .map(get_building_wall_block_for_color)
+        .unwrap_or_else(get_fallback_building_block);
+
+    editor.set_block_absolute(block, pt.x, mc_y, pt.z, None, None);
 }
 
 /// Gera tubulações subterrâneas (água, esgoto, drenagem) da CAESB.

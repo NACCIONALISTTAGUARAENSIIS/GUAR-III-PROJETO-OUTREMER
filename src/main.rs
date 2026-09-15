@@ -48,6 +48,7 @@ mod gui;
 mod progress {
     pub fn emit_gui_error(_message: &str) {}
     pub fn emit_gui_progress_update(_progress: f64, _message: &str) {}
+    // Stub sem chamador no build sem GUI (nada em `!gui` invoca preview de mapa).
     #[allow(dead_code)]
     pub fn emit_map_preview_ready() {}
     pub fn emit_open_mcworld_file(_path: &str) {}
@@ -163,7 +164,7 @@ pub fn run_generation_pipeline(
         // visita com escada e `IRON_TRAPDOOR`, musgo e teias de aranha. Toda a
         // infraestrutura subterrânea real e ao vivo do DF era desenhada pelo caminho
         // genérico, perdendo esse detalhamento.
-        let is_provider_specific = matches!(
+        let is_infrastructure_feature = matches!(
             feature.semantic_group,
             providers::SemanticGroup::Sanitation
                 | providers::SemanticGroup::Sewage
@@ -176,6 +177,36 @@ pub fn run_generation_pipeline(
             || feature.source.contains("IFC")
             || feature.source.contains("Indoor")
             || feature.source.contains("WFS"));
+
+        // 🚨 BESM-6 RECONEXÃO: `TerrainDetail` (voxels de fotogrametria do
+        // `MeshProvider`) entra aqui pela mesma razão que Sanitation/Power/etc:
+        // preservar as tags `color`/`elevation`/`material` que só a Feature
+        // original carrega. Sem isso, ela cairia em `osm_convertible_features`
+        // → `into_processed_element()` → `ProcessedElement::Node` — e o branch
+        // `Node` de `dispatch_element` (data_processing.rs) não reconhece
+        // nenhuma dessas tags, descartando a Feature silenciosamente mesmo após
+        // o voxel ser processado com sucesso pelo provedor.
+        let is_photogrammetry_voxel = feature.semantic_group
+            == providers::SemanticGroup::TerrainDetail
+            && feature.source.contains("Photogrammetry_Mesh");
+
+        // 🚨 RECONEXÃO (Advertising): `SemanticGroup::Advertising` sempre caiu no `else`
+        // acima como `false` — a condição de `source` só reconhecia "CAESB"/"CityGML"/
+        // "IFC"/"Indoor"/"WFS", e o `source` de um outdoor/totem do OSM é sempre "osm".
+        // Isso jogava toda feature de propaganda para `osm_convertible_features`, que
+        // vira `ProcessedElement` via `into_processed_element()` — mas
+        // `advertising::generate_advertising` (element_processing/advertising.rs) foi
+        // escrito para consumir a `Feature` original (geometria + atributos brutos,
+        // para o PCA de orientação do painel), não o `ProcessedNode`/`ProcessedWay`
+        // traduzido. Diferente de Sanitation/Power/Telecom/Indoor, Advertising é
+        // agnóstico de provedor por design (aceita OSM, CSV, GeoJSON, PostGIS, 3D
+        // Tiles — ver o doc-comment do módulo), então não depende do `source` conter
+        // um nome de provedor governamental específico.
+        let is_advertising_feature =
+            feature.semantic_group == providers::SemanticGroup::Advertising;
+
+        let is_provider_specific =
+            is_infrastructure_feature || is_photogrammetry_voxel || is_advertising_feature;
 
         if is_provider_specific {
             provider_specific_features.push(feature);
@@ -220,34 +251,41 @@ pub fn run_generation_pipeline(
     // Busca UMA vez para o bbox inteiro (função já existente em
     // elevation_data.rs, só nunca chamada); desativada em --offline porque
     // a busca SRTM faz requisições HTTP.
-    let elevation_data: Option<elevation_data::ElevationData> = if args.terrain && !args.offline {
-        println!(
-            "{} Fetching real elevation data (SRTM/LiDAR)...",
-            "[3.5/7]".bold()
-        );
-        match elevation_data::fetch_elevation_data(
-            &args.bbox,
-            args.scale_h,
-            args.scale_v,
-            args.ground_level,
-            args.local_lidar.as_ref(),
-        ) {
-            Ok(data) => Some(data),
-            Err(e) => {
-                let msg = format!(
-                    "Falha ao buscar elevação real: {}. Terreno ficará plano nesta execução.",
-                    e
-                );
-                if let Some(ref tx) = telemetry_tx {
-                    let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+    //
+    // CORREÇÃO: `--local-lidar` não precisa de rede (só o fallback SRTM
+    // precisa — ver `elevation_data::fetch_elevation_data`, que pula o
+    // download de tiles inteiramente quando o LiDAR local é lido com
+    // sucesso). Bloquear isso atrás de `!args.offline` descartava SEMPRE o
+    // LiDAR local em modo offline, mesmo com o arquivo fornecido.
+    let elevation_data: Option<elevation_data::ElevationData> =
+        if args.terrain && (!args.offline || args.local_lidar.is_some()) {
+            println!(
+                "{} Fetching real elevation data (SRTM/LiDAR)...",
+                "[3.5/7]".bold()
+            );
+            match elevation_data::fetch_elevation_data(
+                &args.bbox,
+                args.scale_h,
+                args.scale_v,
+                args.ground_level,
+                args.local_lidar.as_ref(),
+            ) {
+                Ok(data) => Some(data),
+                Err(e) => {
+                    let msg = format!(
+                        "Falha ao buscar elevação real: {}. Terreno ficará plano nesta execução.",
+                        e
+                    );
+                    if let Some(ref tx) = telemetry_tx {
+                        let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
+                    }
+                    eprintln!("{} {}", "Aviso:".yellow().bold(), msg);
+                    None
                 }
-                eprintln!("{} {}", "Aviso:".yellow().bold(), msg);
-                None
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     // Bioma real (MapBiomas + fitofisionomia IBGE + APP SICAR). Só produz dados
     // reais se os caminhos forem passados via CLI (--mapbiomas-tiff etc.);
@@ -530,6 +568,211 @@ fn register_providers(provider_manager: &mut providers::ProviderManager, args: &
                 providers::wfs_provider::WFSProvider::new(wfs_url.clone(), args.scale_h, 2),
             ));
         }
+    } else {
+        None
+    };
+
+    if let Some(ref shp_path) = args.local_shp {
+        provider_manager.register_provider(Box::new(providers::gdf_provider::GDFProvider::new(
+            shp_path.clone(),
+            args.scale_h,
+            1,
+            None,
+        )));
+    }
+    if let Some(ref geojson_path) = args.local_geojson {
+        provider_manager.register_provider(Box::new(
+            providers::geojson_provider::GeoJsonProvider::new(
+                geojson_path.clone(),
+                args.scale_h,
+                1,
+                None,
+            ),
+        ));
+    }
+    if let Some(ref gpkg_path) = args.local_gpkg {
+        provider_manager.register_provider(Box::new(providers::gpkg_provider::GpkgProvider::new(
+            gpkg_path.clone(),
+            args.scale_h,
+            1,
+            None,
+        )));
+    }
+    if let Some(ref citygml_path) = args.local_citygml {
+        provider_manager.register_provider(Box::new(
+            providers::citygml_provider::CityGmlProvider::new(
+                citygml_path.clone(),
+                args.scale_h,
+                1,
+            ),
+        ));
+    }
+
+    // 🚨 BESM-6: Registo do Provedor IFC BIM (LOD4/LOD5)
+    if let Some(ref ifc_path) = args.local_ifc {
+        // Assume Prioridade 1 (Governativa/Absoluta) e requer âncora geodésica.
+        // Para testes, estamos hardcoding a Praça dos Três Poderes como âncora (Lat, Lon, Rotação).
+        provider_manager.register_provider(Box::new(providers::ifc_provider::IfcProvider::new(
+            ifc_path.clone(),
+            args.scale_h,
+            1.15, // scale_v rigorosa
+            1,    // prioridade máxima
+            -15.8000,
+            -47.8600,
+            0.0,
+        )));
+    }
+
+    // 🚨 BESM-6 RECONEXÃO: IndoorUtilityProvider — o pipeline CAESB/CEB
+    // (interiores, plantas baixas, saneamento) existia pronto desde outra rodada
+    // de reconexão (ver `data_processing.rs`'s `is_caesb_infrastructure_feature`,
+    // que já sabe rotear features de Sanitation/Utility/Sewage/Indoor/Power/
+    // Telecom para o motor especializado), mas nada nunca instanciava o
+    // provedor em si — o roteador estava pronto, a fonte nunca era ligada.
+    if let Some(ref caesb_path) = args.local_caesb_geojson {
+        provider_manager.register_provider(Box::new(
+            providers::indoor_utility_provider::IndoorUtilityProvider::new(
+                caesb_path.clone(),
+                args.scale_h,
+                1,
+            ),
+        ));
+    }
+
+    // 🚨 BESM-6 RECONEXÃO: CsvProvider — listagens tabulares do dados.df.gov.br
+    // (postes, árvores da NOVACAP, paragens de ônibus). `semantic_override: None`
+    // deixa o provedor inferir o grupo semântico a partir das próprias colunas/tags.
+    if let Some(ref csv_path) = args.local_csv {
+        provider_manager.register_provider(Box::new(providers::csv_provider::CsvProvider::new(
+            csv_path.clone(),
+            args.scale_h,
+            5,
+            None,
+        )));
+    }
+
+    // 🚨 BESM-6 RECONEXÃO: KmlProvider — tombamento IPHAN, bacias ADASA, Metrô-DF.
+    if let Some(ref kml_path) = args.local_kml {
+        provider_manager.register_provider(Box::new(providers::kml_provider::KmlProvider::new(
+            kml_path.clone(),
+            args.scale_h,
+            2,
+            None,
+        )));
+    }
+
+    // 🚨 BESM-6 RECONEXÃO: Tiles3DProvider — streaming de malhas 3D texturizadas
+    // (OGC 3D Tiles/Cesium) com culling espacial HLOD.
+    if let Some(ref tiles3d_url) = args.tiles3d_endpoint {
+        provider_manager.register_provider(Box::new(
+            providers::tiles3d_provider::Tiles3DProvider::new(
+                tiles3d_url.clone(),
+                args.scale_h,
+                args.scale_v,
+                2,
+            ),
+        ));
+    }
+
+    // 🚨 BESM-6 RECONEXÃO: LidarProvider — o mesmo arquivo .las/.laz de --local-lidar
+    // já alimenta o heightmap (`elevation_data::fetch_elevation_data`, acima); aqui ele
+    // TAMBÉM alimenta o pipeline de Features vetoriais (prédios/vegetação extraídos por
+    // classificação de pontos), que antes nunca era chamado.
+    if let Some(ref lidar_path) = args.local_lidar {
+        provider_manager.register_provider(Box::new(
+            providers::lidar_provider::LidarProvider::new(
+                lidar_path.clone(),
+                args.scale_h,
+                args.scale_v,
+                1,
+                &format!("EPSG:{}", args.epsg),
+            ),
+        ));
+    }
+
+    // 🚨 BESM-6 RECONEXÃO: MeshProvider — malhas de fotogrametria (.obj/.gltf) de
+    // monumentos/estátuas. `crs_source: None` e offset zero assumem que a malha já
+    // veio pré-alinhada ao sistema local do motor (caso comum para scans de drone
+    // recortados manualmente); um CRS/offset explícito pode ser adicionado via nova
+    // flag de CLI caso surja a necessidade real de malhas em CRS bruto.
+    if let Some(ref mesh_path) = args.local_mesh {
+        provider_manager.register_provider(Box::new(providers::mesh_provider::MeshProvider::new(
+            mesh_path.clone(),
+            args.scale_h,
+            args.scale_v,
+            1,
+            None,
+            0.0,
+            0.0,
+            0.0,
+        )));
+    }
+
+    // 🚨 BESM-6 RECONEXÃO: PostGisProvider — consulta espacial direta ao SISDIA/GDF
+    // via PostgreSQL+PostGIS. `postgis_table`/`postgis_geom_column` são necessários
+    // porque não existe um nome de tabela/coluna universal a assumir por padrão.
+    if let (Some(ref pg_url), Some(ref pg_table)) = (&args.postgis_url, &args.postgis_table) {
+        let geom_column = args.postgis_geom_column.as_deref().unwrap_or("geom");
+        provider_manager.register_provider(Box::new(
+            providers::postgis_provider::PostGisProvider::new(
+                pg_url.clone(),
+                pg_table,
+                geom_column,
+                args.scale_h,
+                1,
+            ),
+        ));
+    }
+
+    // 🚨 BESM-6 RECONEXÃO: MvtProvider — streaming de Mapbox Vector Tiles. A
+    // decodificação MVT em si ainda é um placeholder (ver o aviso que o próprio
+    // provedor imprime em `fetch_features`); registrá-lo aqui já é o ponto de conexão
+    // correto para quando a decodificação for implementada, e por ora é inofensivo
+    // (retorna zero features com um aviso claro em vez de a flag ser silenciosamente
+    // ignorada, que era o comportamento antes desta reconexão).
+    if let Some(ref mvt_url) = args.mvt_endpoint {
+        provider_manager.register_provider(Box::new(providers::mvt_provider::MvtProvider::new(
+            mvt_url.clone(),
+            None,
+            14,
+            args.scale_h,
+            5,
+            None,
+        )));
+    }
+}
+
+/// Registra todos os provedores de dados (OSM + governamentais) num `ProviderManager`,
+/// cada um condicionado à flag de CLI correspondente estar presente.
+///
+/// 🚨 BESM-6 RECONEXÃO: extraído de `run_generation_pipeline` para que o dashboard
+/// `MasterControl` (modo Tile Streaming, ver `main()` abaixo) possa montar o MESMO
+/// conjunto de provedores que o pipeline de um único lote — antes, o dashboard nunca
+/// recebia um `ProviderManager` de verdade (a chamada `MasterControl::new()` nem
+/// compilava: o construtor exige `Arc<ProviderManager>` + `Arc<Args>`).
+fn register_providers(provider_manager: &mut providers::ProviderManager, args: &Args) {
+    // Prioridade 10 (Base)
+    provider_manager.register_provider(Box::new(providers::osm_provider::OSMProvider::new(
+        args.scale_h,
+        args.file.clone(),
+        args.offline,
+        args.downloader.as_str().to_string(),
+    )));
+
+    if let Some(ref pbf_path) = args.local_pbf {
+        provider_manager.register_provider(Box::new(providers::pbf_provider::PbfProvider::new(
+            pbf_path.clone(),
+            args.scale_h,
+            10,
+        )));
+    }
+
+    if args.enable_underground_wfs {
+        if let Some(ref wfs_url) = args.wfs_endpoint {
+            provider_manager.register_provider(Box::new(
+                providers::wfs_provider::WFSProvider::new(wfs_url.clone(), args.scale_h, 2),
+            ));
+        }
     }
 
     if let Some(ref shp_path) = args.local_shp {
@@ -773,7 +1016,9 @@ fn main() {
             // preset de `MacroRegion` escolhido interativamente, ver
             // `master_control::dispatch_generation`), então usamos um placeholder
             // geograficamente válido só para satisfazer o parser do clap; todo o
-            // resto usa os mesmos defaults do caminho de CLI (`run_cli`).
+            // resto usa os mesmos defaults do caminho de CLI (`run_cli`) — via
+            // `Args::parse_from` + `register_providers`, em vez de listar cada campo
+            // manualmente (frágil: quebra a cada novo campo adicionado a `Args`).
             let mut args = Args::parse_from(["pincelism", "--bbox", "-16.0,-48.0,-15.5,-47.5"]);
             if let Err(e) = args::validate_args(&mut args) {
                 eprintln!("{} {}", "Aviso:".yellow().bold(), e);

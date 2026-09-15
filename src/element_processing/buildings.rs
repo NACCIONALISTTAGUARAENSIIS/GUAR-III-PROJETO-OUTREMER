@@ -1256,6 +1256,19 @@ fn get_wall_block_for_category(category: BuildingCategory, rng: &mut impl Rng) -
             ];
             MALL_WALL_OPTIONS[rng.gen_range(0..MALL_WALL_OPTIONS.len())]
         }
+        BuildingCategory::Mall => {
+            // Tons claros de revestimento/concreto — a "caixa" bege/branca real dos
+            // shoppings do DF (Conjunto Nacional, ParkShopping, Pátio Brasil), distinta
+            // da paleta de loja de rua comum.
+            const MALL_WALL_OPTIONS: [Block; 5] = [
+                WHITE_CONCRETE,
+                LIGHT_GRAY_CONCRETE,
+                SMOOTH_QUARTZ,
+                SMOOTH_SANDSTONE,
+                WHITE_TERRACOTTA,
+            ];
+            MALL_WALL_OPTIONS[rng.random_range(0..MALL_WALL_OPTIONS.len())]
+        }
         BuildingCategory::Industrial | BuildingCategory::Warehouse => {
             INDUSTRIAL_WALL_OPTIONS[rng.gen_range(0..INDUSTRIAL_WALL_OPTIONS.len())]
         }
@@ -2422,7 +2435,7 @@ fn generate_residential_window_decorations(
                     let centre_sum = if mod6 == 3 { bx + bz - 2 } else { bx + bz + 2 };
                     let shutter_roll =
                         coord_rng(centre_sum, config.start_y_offset, centre_sum, element.id)
-                            .gen_range(0u32..100);
+                            .random_range(0u32..100);
                     if shutter_roll < 25 {
                         for h in (config.start_y_offset + 1)
                             ..=(config.start_y_offset + config.building_height)
@@ -2469,7 +2482,7 @@ fn generate_residential_window_decorations(
                                 centre_sum.wrapping_add(floor_idx * 5),
                                 element.id,
                             )
-                            .gen_range(0u32..100);
+                            .random_range(0u32..100);
 
                             let abs_y = h + config.abs_terrain_offset;
 
