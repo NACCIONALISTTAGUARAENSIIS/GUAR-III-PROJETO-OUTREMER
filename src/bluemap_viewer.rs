@@ -170,6 +170,20 @@ fn compute_start_pos(world_dir: &Path) -> (i32, i32) {
     }
 }
 
+/// Monta o conteúdo de `maps/<id>.conf`. Extraída de `ensure_config` como
+/// função pura só pra poder ser testada sem precisar de um `config_dir` real
+/// em disco — ver o comentário em `ensure_config` sobre por que
+/// `remove-caves-below-y` precisa ser desligado para este motor.
+fn build_map_conf(world_dir: &Path, map_id: &str, start_pos: (i32, i32)) -> String {
+    format!(
+        "world: \"{}\"\ndimension: \"minecraft:overworld\"\nname: \"{}\"\nstart-pos: {{ x: {}, z: {} }}\nremove-caves-below-y: -10000\n",
+        world_dir.display(),
+        map_id,
+        start_pos.0,
+        start_pos.1,
+    )
+}
+
 /// Garante que `config_dir` tem uma configuração BlueMap válida com um mapa
 /// apontando para `world_dir`. Gera a configuração padrão do zero na
 /// primeira vez (e só na primeira vez — chamadas seguintes reaproveitam o
@@ -232,19 +246,27 @@ fn ensure_config(
     // só a câmera longe de qualquer coisa. Ver `compute_start_pos`.
     let start_pos = compute_start_pos(world_dir);
 
+    // 🚨 CORREÇÃO (achado real, decodificando os tiles gerados contra o
+    // Guará I+II): o default do BlueMap pra `remove-caves-below-y` é 55 —
+    // calibrado pro nível do mar do Minecraft vanilla (~63) — e remove todo
+    // bloco abaixo desse Y que não recebe luz do céu, pra esconder cavernas.
+    // O relevo gerado por este motor usa um datum de altura completamente
+    // diferente: o Guará I+II inteiro fica entre Y=-63 e Y=30, sempre abaixo
+    // de 55. Com o default, o BlueMap classificava a CIDADE INTEIRA como
+    // "caverna" e apagava ela do render — confirmado abrindo um tile "vazio"
+    // (81 bytes, geometria zerada) numa área onde o heightfield do próprio
+    // motor mostra relevo real e variado (263 cores distintas, nada plano).
+    // `-10000` é o valor que a própria documentação do BlueMap recomenda pra
+    // desligar essa remoção por completo. Exige um re-render pra ter efeito
+    // (não basta reescrever a config de um mapa já renderizado).
+    //
     // Config mínima confirmada suficiente nesta sessão: `world`/`dimension`/
-    // `name`/`start-pos` bastam, o resto assume os defaults do próprio
-    // BlueMap. Reescrita toda vez (idempotente) para sempre refletir o
-    // `world_dir` pedido nesta chamada, mesmo que a config já existisse de
-    // uma chamada anterior com outro mundo.
+    // `name`/`start-pos`/`remove-caves-below-y` bastam, o resto assume os
+    // defaults do próprio BlueMap. Reescrita toda vez (idempotente) para
+    // sempre refletir o `world_dir` pedido nesta chamada, mesmo que a config
+    // já existisse de uma chamada anterior com outro mundo.
     let map_conf_path = config_dir.join("maps").join(format!("{map_id}.conf"));
-    let map_conf = format!(
-        "world: \"{}\"\ndimension: \"minecraft:overworld\"\nname: \"{}\"\nstart-pos: {{ x: {}, z: {} }}\n",
-        world_dir.display(),
-        map_id,
-        start_pos.0,
-        start_pos.1,
-    );
+    let map_conf = build_map_conf(world_dir, map_id, start_pos);
     std::fs::write(&map_conf_path, map_conf)
         .map_err(|e| format!("Falha ao escrever {map_conf_path:?}: {e}"))?;
 
@@ -416,6 +438,23 @@ mod tests {
         assert_eq!((x, z), (-15673, 4419));
         // O bug real: a posição default do BlueMap fica bem fora do mundo.
         assert_ne!((x, z), (0, 0));
+    }
+
+    /// Regressão do achado real: sem `remove-caves-below-y: -10000`, o
+    /// default do BlueMap (55) classifica qualquer mundo cujo relevo fique
+    /// abaixo de Y=55 (como o Guará I+II, entre -63 e 30) inteiro como
+    /// "caverna" e apaga a geometria do render — confirmado decodificando
+    /// tiles vazios de 81 bytes numa área com relevo real. Ver o comentário
+    /// de `ensure_config`/`build_map_conf` para o achado completo.
+    #[test]
+    fn build_map_conf_disables_cave_removal() {
+        let conf = build_map_conf(Path::new("/tmp/algum_mundo"), "guara_full", (-15673, 4419));
+        assert!(
+            conf.contains("remove-caves-below-y: -10000"),
+            "config gerada precisa desligar a remoção de cavernas do BlueMap, \
+             senão mundos com relevo abaixo de Y=55 (ex.: Guará I+II, Y -63..30) \
+             são apagados do render inteiros: {conf:?}"
+        );
     }
 
     #[test]

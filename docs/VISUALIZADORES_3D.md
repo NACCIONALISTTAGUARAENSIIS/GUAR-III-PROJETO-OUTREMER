@@ -215,6 +215,55 @@ câmera "se perder" (zoom/pan excessivo), a forma confiável de recomeçar é
 apagar tudo após a porta na barra de endereço e recarregar — não usar o
 botão "voltar", que reaproveita o hash salvo no histórico.
 
+### Achado #7 (a causa raiz real): `remove-caves-below-y` apaga o mundo inteiro quando o relevo fica abaixo de Y=55
+
+Depois dos Achados #5/#6 (posição da câmera e hash da URL) não resolverem o
+sintoma reportado pelo usuário — mapa preto, só um "quadradinho" borrado
+visível de longe que **desaparece** ao se aproximar — a hipótese de câmera
+foi descartada com evidência concreta: a posição confirmada (`-15670:4419`)
+está numa área onde nosso próprio heightfield (`map_renderer::compute_heightfield`)
+mostra relevo real e variado (263 cores distintas, altura entre Y=-63 e
+Y=30, nada plano). O problema não era posição — era o que o BlueMap
+realmente desenha ali.
+
+Decodificando um tile hi-res "vazio" (formato `.prbm.gz`, o formato binário
+próprio do BlueMap para geometria de tile) dessa mesma área:
+
+```
+$ gunzip -c tiles/0/x-4/9/0/z1/3/1.prbm.gz | xxd
+00000000: 0107 0000 0000 0000 706f 7369 7469 6f6e  ........position
+00000010: 0021 0000 6e6f 726d 616c 0063 636f 6c6f  .!..normal.ccolo
+...
+```
+
+— só os nomes dos atributos (`position`, `normal`, `color`, `uv`, `ao`,
+`blocklight`, `sunlight`), **sem nenhum vértice real**: geometria
+zerada. Medindo o tamanho de todos os tiles hi-res numa amostra de 2870
+arquivos na área central do Guará I+II: **62% tinham exatamente esse
+tamanho mínimo (~81 bytes)** — vazios — apesar do heightfield confirmar
+relevo real ali.
+
+A causa: `maps/<id>.conf` do BlueMap tem uma opção
+[`remove-caves-below-y`](https://bluemap.bluecolored.de/wiki/customization/Map-Settings.html)
+com **default 55** — calibrada para o nível do mar do Minecraft vanilla
+(~63), pensada para esconder cavernas escondendo todo bloco abaixo desse Y
+que não recebe luz do céu. O relevo que este motor gera usa um datum de
+altura completamente diferente do vanilla: o Guará I+II inteiro fica entre
+Y=-63 e Y=30 — **sempre abaixo de 55**. Com o default, o BlueMap classifica
+a CIDADE INTEIRA como "caverna" (por estar abaixo do limiar, mesmo exposta
+ao céu) e remove a geometria do render — não é falha de dado nem de posição
+de câmera, é uma opção de renderização do BlueMap calibrada para um mundo
+com outro referencial de altura.
+
+**Correção:** `ensure_config` agora escreve `remove-caves-below-y: -10000`
+(o valor que a própria documentação do BlueMap recomenda para desligar essa
+remoção por completo) em todo `maps/<id>.conf` gerado — extraído para uma
+função pura (`build_map_conf`), testada
+(`build_map_conf_disables_cave_removal`). Como a própria doc do BlueMap
+avisa ("Changing this value requires a re-render of the map"), **um mapa já
+renderizado com o valor antigo precisa ser re-renderizado do zero** — só
+reescrever a config não corrige tiles já gravados.
+
 ### Por que o `.jar` do BlueMap não é baixado automaticamente
 
 `bluemap_viewer.rs` exige que o usuário baixe o `.jar` manualmente (a
