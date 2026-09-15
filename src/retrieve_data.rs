@@ -4,7 +4,7 @@ use crate::progress::{emit_gui_error, emit_gui_progress_update, is_running_with_
 #[cfg(feature = "gui")]
 use crate::telemetry::{send_log, LogLevel};
 use colored::Colorize;
-use rand::prelude::SliceRandom;
+use rand::prelude::IndexedRandom;
 use reqwest::blocking::Client;
 use reqwest::blocking::ClientBuilder;
 use serde_json::Value;
@@ -231,7 +231,7 @@ pub fn fetch_data_from_overpass(
     ];
     let fallback_api_servers: Vec<&str> =
         vec!["https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
-    let mut url: &&str = api_servers.choose(&mut rand::thread_rng()).unwrap();
+    let mut url: &&str = api_servers.choose(&mut rand::rng()).unwrap();
 
     // 🚨 BESM-6: Subdivisão do BBox
     let sub_boxes = split_bbox_if_needed(&bbox);
@@ -278,9 +278,7 @@ pub fn fetch_data_from_overpass(
                     }
 
                     println!("Request failed. Switching to fallback url...");
-                    url = fallback_api_servers
-                        .choose(&mut rand::thread_rng())
-                        .unwrap();
+                    url = fallback_api_servers.choose(&mut rand::rng()).unwrap();
                     attempt += 1;
                 }
             }

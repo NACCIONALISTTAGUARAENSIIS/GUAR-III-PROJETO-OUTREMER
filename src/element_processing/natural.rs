@@ -17,7 +17,7 @@ use crate::providers::vegetation_provider::{
     BIOME_MATA_GALERIA, BIOME_NONE, BIOME_VEREDA, MASK_APP_SICAR,
 };
 
-use rand::{prelude::SliceRandom, Rng};
+use rand::{prelude::IndexedRandom, Rng};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -128,7 +128,7 @@ fn is_app_protected(x: i32, z: i32, editor: &WorldEditor) -> bool {
 
 #[inline]
 fn termite_mound_block(rng: &mut impl Rng) -> Block {
-    match rng.gen_range(0..10) {
+    match rng.random_range(0..10) {
         0..=4 => RED_TERRACOTTA,
         5..=7 => BROWN_TERRACOTTA,
         8 => TERRACOTTA,
@@ -145,8 +145,8 @@ fn generate_termite_mound(
     z: i32,
     rng: &mut impl Rng,
 ) {
-    let radius: i32 = rng.gen_range(1..=2);
-    let height: i32 = rng.gen_range(2..=4);
+    let radius: i32 = rng.random_range(1..=2);
+    let height: i32 = rng.random_range(2..=4);
 
     for h in 0..height {
         let layer_radius = (radius - (h / 2)).max(0);
@@ -184,7 +184,7 @@ fn generate_termite_mound(
 /// Murundu: micro-relevo típico de campos úmidos e veredas — montículo raso de terra
 /// coberto pela própria touceira de vegetação, formando os campos de murundus reais.
 fn generate_murundu(editor: &mut WorldEditor, x: i32, ground_y: i32, z: i32, rng: &mut impl Rng) {
-    let radius: i32 = rng.gen_range(1..=3);
+    let radius: i32 = rng.random_range(1..=3);
     for dx in -radius..=radius {
         for dz in -radius..=radius {
             if dx * dx + dz * dz > radius * radius {
@@ -198,12 +198,12 @@ fn generate_murundu(editor: &mut WorldEditor, x: i32, ground_y: i32, z: i32, rng
                 Some(&[GRASS_BLOCK, DIRT, MUD, PODZOL, SHORT_GRASS]),
                 None,
             );
-            if rng.gen_bool(0.7) {
+            if rng.random_bool(0.7) {
                 editor.set_block_if_absent_absolute(SHORT_GRASS, x + dx, ground_y + 1, z + dz);
             }
         }
     }
-    if rng.gen_bool(0.5) {
+    if rng.random_bool(0.5) {
         editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
     }
 }
@@ -217,7 +217,7 @@ fn generate_canela_de_ema(
     z: i32,
     rng: &mut impl Rng,
 ) {
-    let stem_h: i32 = rng.gen_range(1..=2);
+    let stem_h: i32 = rng.random_range(1..=2);
     for h in 1..=stem_h {
         editor.set_block_if_absent_absolute(GRAY_TERRACOTTA, x, ground_y + h, z);
     }
@@ -395,22 +395,23 @@ pub fn generate_natural(
 
                 // Pedras e terras áridas nos morros (Campo Rupestre): canga ferruginosa real,
                 // não apenas cascalho/pedra genéricos — usa tons avermelhados de quartzito/laterita.
-                let final_block = if biome_class == "campo_rupestre" && rng.gen_range(0..100) < 55 {
-                    match rng.gen_range(0..10) {
-                        0..=2 => GRANITE,
-                        3..=4 => SMOOTH_RED_SANDSTONE,
-                        5..=7 => COARSE_DIRT,
-                        _ => GRAVEL,
-                    }
-                } else if block_type == ANDESITE && rng.gen_range(0..100) < 30 {
-                    if rng.gen_bool(0.5) {
-                        STONE
+                let final_block =
+                    if biome_class == "campo_rupestre" && rng.random_range(0..100) < 55 {
+                        match rng.random_range(0..10) {
+                            0..=2 => GRANITE,
+                            3..=4 => SMOOTH_RED_SANDSTONE,
+                            5..=7 => COARSE_DIRT,
+                            _ => GRAVEL,
+                        }
+                    } else if block_type == ANDESITE && rng.random_range(0..100) < 30 {
+                        if rng.random_bool(0.5) {
+                            STONE
+                        } else {
+                            GRAVEL
+                        }
                     } else {
-                        GRAVEL
-                    }
-                } else {
-                    block_type
-                };
+                        block_type
+                    };
 
                 editor.set_block_absolute(
                     final_block,
@@ -438,7 +439,7 @@ pub fn generate_natural(
                 // 🚨 Cupinzeiros: elemento onipresente e icônico do Cerrado real, ausente
                 // do gerador até agora. Raríssimos, espalhados pelas fisionomias abertas/semi-abertas.
                 if matches!(biome_class, "cerrado_ss" | "campo_sujo" | "cerradao")
-                    && rng.gen_range(0..10_000) < 6
+                    && rng.random_range(0..10_000) < 6
                 {
                     generate_termite_mound(editor, x, ground_y, z, &mut rng);
                     continue;
@@ -447,7 +448,7 @@ pub fn generate_natural(
                 // 🚨 Murundus: micro-relevo caracterísitico de campos úmidos/veredas,
                 // montículos de terra com sua própria touceira de vegetação.
                 if (biome_class == "vereda" || natural_type == "wetland")
-                    && rng.gen_range(0..1_000) < 4
+                    && rng.random_range(0..1_000) < 4
                 {
                     generate_murundu(editor, x, ground_y, z, &mut rng);
                     continue;
@@ -465,23 +466,23 @@ pub fn generate_natural(
                         if biome_class == "campo_limpo" {
                             // 🚨 Campo Limpo real: só gramíneas, tapete quase uniforme,
                             // praticamente sem arbustos secos ou solo exposto.
-                            if rng.gen_range(0..100) < 75 {
+                            if rng.random_range(0..100) < 75 {
                                 editor.set_block_if_absent_absolute(
                                     SHORT_GRASS,
                                     x,
                                     ground_y + 1,
                                     z,
                                 );
-                            } else if rng.gen_range(0..100) < 5 {
+                            } else if rng.random_range(0..100) < 5 {
                                 editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
                             }
                         } else if biome_class == "campo_rupestre" {
                             // 🚨 Sempre-vivas: rosetas endêmicas que marcam o Campo Rupestre real
-                            if rng.gen_range(0..100) < 12 {
+                            if rng.random_range(0..100) < 12 {
                                 editor.set_block_if_absent_absolute(ALLIUM, x, ground_y + 1, z);
-                            } else if rng.gen_range(0..100) < 40 {
+                            } else if rng.random_range(0..100) < 40 {
                                 editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
-                            } else if rng.gen_range(0..100) < 60 {
+                            } else if rng.random_range(0..100) < 60 {
                                 editor.set_block_if_absent_absolute(
                                     SHORT_GRASS,
                                     x,
@@ -500,14 +501,14 @@ pub fn generate_natural(
                                     None,
                                 );
                             }
-                            if rng.gen_range(0..100) < 40 {
+                            if rng.random_range(0..100) < 40 {
                                 editor.set_block_if_absent_absolute(
                                     SHORT_GRASS,
                                     x,
                                     ground_y + 1,
                                     z,
                                 );
-                            } else if rng.gen_range(0..100) < 55 {
+                            } else if rng.random_range(0..100) < 55 {
                                 editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
                                 // Seca do Cerrado
                             }
@@ -517,7 +518,7 @@ pub fn generate_natural(
                         if biome_class == "campo_limpo" {
                             // Campo Limpo não tem arbustos: se o OSM marcou "scrub" aqui,
                             // a grade real de vegetação tem prioridade.
-                            if rng.gen_range(0..100) < 70 {
+                            if rng.random_range(0..100) < 70 {
                                 editor.set_block_if_absent_absolute(
                                     SHORT_GRASS,
                                     x,
@@ -526,14 +527,14 @@ pub fn generate_natural(
                                 );
                             }
                         } else if biome_class == "campo_rupestre" {
-                            if rng.gen_range(0..100) < 15 {
+                            if rng.random_range(0..100) < 15 {
                                 generate_canela_de_ema(editor, x, ground_y, z, &mut rng);
-                            } else if rng.gen_range(0..100) < 30 {
+                            } else if rng.random_range(0..100) < 30 {
                                 editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
                             }
                         } else if biome_class == "campo_sujo" {
                             // 🚨 Reage à grade real (Mato baixo misturado com terra exposta)
-                            if rng.gen_range(0..100) < 15 {
+                            if rng.random_range(0..100) < 15 {
                                 editor.set_block_absolute(
                                     COARSE_DIRT,
                                     x,
@@ -542,9 +543,9 @@ pub fn generate_natural(
                                     Some(&[GRASS_BLOCK]),
                                     None,
                                 );
-                            } else if rng.gen_range(0..100) < 35 {
+                            } else if rng.random_range(0..100) < 35 {
                                 editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
-                            } else if rng.gen_range(0..100) < 65 {
+                            } else if rng.random_range(0..100) < 65 {
                                 editor.set_block_if_absent_absolute(
                                     SHORT_GRASS,
                                     x,
@@ -553,7 +554,7 @@ pub fn generate_natural(
                                 );
                             }
                         } else {
-                            if rng.gen_range(0..100) < 8 {
+                            if rng.random_range(0..100) < 8 {
                                 editor.set_block_absolute(
                                     COARSE_DIRT,
                                     x,
@@ -562,16 +563,16 @@ pub fn generate_natural(
                                     Some(&[GRASS_BLOCK]),
                                     None,
                                 );
-                            } else if rng.gen_range(0..100) < 25 {
+                            } else if rng.random_range(0..100) < 25 {
                                 editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
-                            } else if rng.gen_range(0..100) < 40 {
+                            } else if rng.random_range(0..100) < 40 {
                                 editor.set_block_if_absent_absolute(
                                     ACACIA_LEAVES,
                                     x,
                                     ground_y + 1,
                                     z,
                                 );
-                            } else if rng.gen_range(0..100) < 70 {
+                            } else if rng.random_range(0..100) < 70 {
                                 editor.set_block_if_absent_absolute(
                                     SHORT_GRASS,
                                     x,
@@ -597,10 +598,10 @@ pub fn generate_natural(
                             }
                         } else if biome_class == "mata_galeria" || biome_class == "vereda" {
                             if bio_noise > 0.2
-                                && rng.gen_range(0..100)
+                                && rng.random_range(0..100)
                                     < (base_tree_chance * 3 * app_density_bonus)
                             {
-                                let tree_type = match rng.gen_range(0..10) {
+                                let tree_type = match rng.random_range(0..10) {
                                     0..=2 => TreeType::Buriti,
                                     3..=6 => TreeType::Copaiba,
                                     // Gameleira é rara e majestosa: reforça a mata de galeria real
@@ -617,10 +618,10 @@ pub fn generate_natural(
                         } else if biome_class == "cerradao" {
                             // 🚨 Reage à grade real (Mata de dossel mais denso e escuro)
                             if bio_noise > 0.3
-                                && rng.gen_range(0..100)
+                                && rng.random_range(0..100)
                                     < (base_tree_chance * 4 * app_density_bonus)
                             {
-                                let tree_type = match rng.gen_range(0..10) {
+                                let tree_type = match rng.random_range(0..10) {
                                     0..=3 => TreeType::DarkOak,
                                     4..=6 => TreeType::Sucupira,
                                     _ => TreeType::Jatoba,
@@ -634,7 +635,7 @@ pub fn generate_natural(
                             }
                         } else {
                             if bio_noise > 0.4
-                                && rng.gen_range(0..100)
+                                && rng.random_range(0..100)
                                     < (base_tree_chance * 2 * app_density_bonus)
                             {
                                 let tree_type = *trees_ok_to_generate
@@ -652,12 +653,16 @@ pub fn generate_natural(
                         }
                     }
                     "sand" | "shoal" => {
-                        if rng.gen_range(0..100) < 8 {
+                        if rng.random_range(0..100) < 8 {
                             editor.set_block_if_absent_absolute(DEAD_BUSH, x, ground_y + 1, z);
                         }
                     }
                     "wetland" => {
-                        let base_block = if rng.gen_bool(0.4) { MOSS_BLOCK } else { MUD };
+                        let base_block = if rng.random_bool(0.4) {
+                            MOSS_BLOCK
+                        } else {
+                            MUD
+                        };
                         editor.set_block_absolute(
                             base_block,
                             x,
@@ -666,7 +671,7 @@ pub fn generate_natural(
                             Some(&[GRASS_BLOCK, MUD]),
                             None,
                         );
-                        if rng.gen_bool(0.3) {
+                        if rng.random_bool(0.3) {
                             editor.set_block_absolute(
                                 WATER,
                                 x,
@@ -675,7 +680,7 @@ pub fn generate_natural(
                                 Some(&[MUD, MOSS_BLOCK]),
                                 None,
                             );
-                        } else if rng.gen_bool(0.6) {
+                        } else if rng.random_bool(0.6) {
                             editor.set_block_if_absent_absolute(SHORT_GRASS, x, ground_y + 1, z);
                         }
                     }

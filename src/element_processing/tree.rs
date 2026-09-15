@@ -228,7 +228,7 @@ impl Tree<'_> {
             TreeType::Gameleira
         } else {
             let mut rng = coord_rng(x, y, z, 0);
-            match rng.gen_range(1..=20) {
+            match rng.random_range(1..=20) {
                 1..=6 => TreeType::Oak,
                 7..=11 => TreeType::DarkOak,
                 12..=15 => TreeType::Acacia,
@@ -257,7 +257,7 @@ impl Tree<'_> {
         building_footprints: Option<&BuildingFootprintBitmap>,
     ) {
         let mut rng = coord_rng(x, y, z, 0);
-        let tree_type = match rng.gen_range(1..=20) {
+        let tree_type = match rng.random_range(1..=20) {
             1..=6 => TreeType::Oak,
             7..=11 => TreeType::DarkOak,
             12..=15 => TreeType::Acacia,
@@ -321,7 +321,7 @@ impl Tree<'_> {
             tree.log_height = (h * GOV_V_SCALE).round() as i32;
         } else {
             tree.log_height = (tree.log_height as f64 * GOV_V_SCALE).round() as i32;
-            tree.log_height += rng.gen_range(-2..=2);
+            tree.log_height += rng.random_range(-2..=2);
         }
 
         let is_old_tree = tree.log_height > 10;
@@ -377,7 +377,7 @@ impl Tree<'_> {
             for dx in -3i32..=3i32 {
                 for dz in -3i32..=3i32 {
                     let dist = dx.abs() + dz.abs();
-                    if (2..=4).contains(&dist) && rng.gen_bool(0.35) {
+                    if (2..=4).contains(&dist) && rng.random_bool(0.35) {
                         let fx = x + dx;
                         let fz = z + dz;
                         let fy = ground_y + tree.log_height - 3;
@@ -427,12 +427,12 @@ impl Tree<'_> {
 
                     let radius_check = if dy < 0 { root_radius + 1 } else { root_radius };
 
-                    if dist <= radius_check && rng.gen_bool(0.65) {
+                    if dist <= radius_check && rng.random_bool(0.65) {
                         let rx = x + dx;
                         let rz = z + dz;
                         let ry = ground_y + dy;
 
-                        let root_block = if dy >= 0 && rng.gen_bool(0.3) {
+                        let root_block = if dy >= 0 && rng.random_bool(0.3) {
                             POLISHED_BASALT
                         } else {
                             tree.log_block
@@ -487,7 +487,7 @@ impl Tree<'_> {
                 current_z += drift_offset_z;
             }
 
-            let bark_block = if is_old_tree && ty < 4 && rng.gen_bool(0.2) {
+            let bark_block = if is_old_tree && ty < 4 && rng.random_bool(0.2) {
                 STRIPPED_DARK_OAK_LOG
             } else {
                 tree.log_block
@@ -495,12 +495,12 @@ impl Tree<'_> {
             editor.set_block_if_absent_absolute(bark_block, current_x, wy, current_z);
 
             if is_old_tree && ty < 3 {
-                let support_b = if rng.gen_bool(0.3) {
+                let support_b = if rng.random_bool(0.3) {
                     POLISHED_BASALT
                 } else {
                     tree.log_block
                 };
-                if rng.gen_bool(0.5)
+                if rng.random_bool(0.5)
                     && !editor.check_for_block_absolute(
                         current_x + 1,
                         wy,
@@ -511,7 +511,7 @@ impl Tree<'_> {
                 {
                     editor.set_block_if_absent_absolute(support_b, current_x + 1, wy, current_z);
                 }
-                if rng.gen_bool(0.5)
+                if rng.random_bool(0.5)
                     && !editor.check_for_block_absolute(
                         current_x - 1,
                         wy,
@@ -522,7 +522,7 @@ impl Tree<'_> {
                 {
                     editor.set_block_if_absent_absolute(support_b, current_x - 1, wy, current_z);
                 }
-                if rng.gen_bool(0.5)
+                if rng.random_bool(0.5)
                     && !editor.check_for_block_absolute(
                         current_x,
                         wy,
@@ -533,7 +533,7 @@ impl Tree<'_> {
                 {
                     editor.set_block_if_absent_absolute(support_b, current_x, wy, current_z + 1);
                 }
-                if rng.gen_bool(0.5)
+                if rng.random_bool(0.5)
                     && !editor.check_for_block_absolute(
                         current_x,
                         wy,
@@ -549,11 +549,12 @@ impl Tree<'_> {
 
         // --- 🚨 BESM-6: L-SYSTEM COM RAYCASTING LOCAL DE OCLUSÃO ---
         if tree.log_height > 6 {
-            let branch_count = rng.gen_range(2..=5);
+            let branch_count = rng.random_range(2..=5);
             for _ in 0..branch_count {
-                let branch_y = ground_y + rng.gen_range((tree.log_height / 3)..tree.log_height - 1);
-                let mut angle = rng.gen_range(0..360) as f64 * PI / 180.0;
-                let branch_len = rng.gen_range(2..=5);
+                let branch_y =
+                    ground_y + rng.random_range((tree.log_height / 3)..tree.log_height - 1);
+                let mut angle = rng.random_range(0..360) as f64 * PI / 180.0;
+                let branch_len = rng.random_range(2..=5);
 
                 let mut bx = current_x;
                 let mut bz = current_z;
@@ -591,10 +592,10 @@ impl Tree<'_> {
                     // Bifurcação secundária
                     if step >= branch_len - 1 || path_blocked {
                         let force_split = path_blocked;
-                        if force_split || rng.gen_bool(0.5) {
+                        if force_split || rng.random_bool(0.5) {
                             let sub_angle = angle
-                                + (rng.gen_range(30..60) as f64 * PI / 180.0)
-                                    * if rng.gen_bool(0.5) { 1.0 } else { -1.0 };
+                                + (rng.random_range(30..60) as f64 * PI / 180.0)
+                                    * if rng.random_bool(0.5) { 1.0 } else { -1.0 };
                             for sub_step in 1i32..=2i32 {
                                 let sbx = bx
                                     + (sub_angle.cos() * sub_step as f64 * GOV_H_SCALE).round()
@@ -628,9 +629,9 @@ impl Tree<'_> {
 
         // 🚨 Ninho de João-de-barro: elemento cultural/visual comum em áreas rurais do
         // Cerrado, raro e discreto, preso ao tronco a meia-altura.
-        if tree_type != TreeType::Buriti && tree.log_height > 4 && rng.gen_bool(0.03) {
-            let nest_y = ground_y + rng.gen_range(3..tree.log_height);
-            let (nest_x, nest_z) = if rng.gen_bool(0.5) {
+        if tree_type != TreeType::Buriti && tree.log_height > 4 && rng.random_bool(0.03) {
+            let nest_y = ground_y + rng.random_range(3..tree.log_height);
+            let (nest_x, nest_z) = if rng.random_bool(0.5) {
                 (current_x + 1, current_z)
             } else {
                 (current_x - 1, current_z)
@@ -651,7 +652,7 @@ impl Tree<'_> {
             let end_y = (*j2 as f64 * GOV_V_SCALE).round() as i32;
 
             for ly in start_y..=end_y {
-                let leaf_b = if is_ipe && rng.gen_bool(0.85) {
+                let leaf_b = if is_ipe && rng.random_bool(0.85) {
                     tree.leaves_block
                 } else if is_ipe {
                     AIR
@@ -677,7 +678,7 @@ impl Tree<'_> {
         for (round_range, round_pattern) in tree.round_ranges.iter().zip(patterns) {
             for offset in round_range {
                 let y_scaled = (*offset as f64 * GOV_V_SCALE).round() as i32;
-                let leaf_b = if is_ipe && rng.gen_bool(0.85) {
+                let leaf_b = if is_ipe && rng.random_bool(0.85) {
                     tree.leaves_block
                 } else if is_ipe {
                     AIR
@@ -698,13 +699,13 @@ impl Tree<'_> {
         }
 
         // --- EFEITOS DE CHÃO (FOLHAS CAÍDAS DE IPÊ) ---
-        if tree_type == TreeType::IpeAmarelo && rng.gen_bool(0.6) {
+        if tree_type == TreeType::IpeAmarelo && rng.random_bool(0.6) {
             for lx in -4i32..=4i32 {
                 for lz in -3i32..=3i32 {
                     // 🚨 Tipagem estrita
                     let lx_i: i32 = lx;
                     let lz_i: i32 = lz;
-                    if lx_i.abs() + lz_i.abs() <= 5 && rng.gen_bool(0.4) {
+                    if lx_i.abs() + lz_i.abs() <= 5 && rng.random_bool(0.4) {
                         let fx = current_x + lx;
                         let fz = current_z + lz;
                         let fy = if editor.get_ground().is_some() {
@@ -1043,7 +1044,7 @@ pub fn generate_chunk(
     let mut chunk_rng = SmallRng::seed_from_u64(chunk_seed);
 
     // Tronco Caído Gigante (Dead Log do Cerrado)
-    if chunk_rng.gen_bool(0.02) {
+    if chunk_rng.random_bool(0.02) {
         generate_fallen_log(
             chunk_x,
             chunk_z,
@@ -1195,8 +1196,8 @@ fn generate_fallen_log(
     rng: &mut SmallRng,
     building_footprints: Option<&BuildingFootprintBitmap>,
 ) {
-    let tx = chunk_x * 16 + rng.gen_range(4..12);
-    let tz = chunk_z * 16 + rng.gen_range(4..12);
+    let tx = chunk_x * 16 + rng.random_range(4..12);
+    let tz = chunk_z * 16 + rng.random_range(4..12);
 
     if let Some(footprints) = building_footprints {
         if footprints.contains(tx, tz) {
@@ -1228,10 +1229,10 @@ fn generate_fallen_log(
         return;
     }
 
-    let len = rng.gen_range(5..=12);
-    let angle = rng.gen_range(0..360) as f64 * PI / 180.0;
+    let len = rng.random_range(5..=12);
+    let angle = rng.random_range(0..360) as f64 * PI / 180.0;
 
-    let is_dark_oak = rng.gen_bool(0.5);
+    let is_dark_oak = rng.random_bool(0.5);
     let log_type = if is_dark_oak { DARK_OAK_LOG } else { OAK_LOG };
 
     for step in 0..len {
@@ -1250,7 +1251,7 @@ fn generate_fallen_log(
         }
 
         // Casca podre na base / textura
-        let final_block = if rng.gen_bool(0.2) {
+        let final_block = if rng.random_bool(0.2) {
             POLISHED_BASALT
         } else {
             log_type
@@ -1258,9 +1259,9 @@ fn generate_fallen_log(
         editor.set_block_if_absent_absolute(final_block, lx, ly, lz);
 
         // Musgo ou cogumelos espalhados pelo tronco
-        if rng.gen_bool(0.4) {
+        if rng.random_bool(0.4) {
             editor.set_block_absolute(MOSS_CARPET, lx, ly + 1, lz, Some(&[AIR]), None);
-        } else if rng.gen_bool(0.15) {
+        } else if rng.random_bool(0.15) {
             editor.set_block_absolute(BROWN_MUSHROOM_BLOCK, lx, ly + 1, lz, Some(&[AIR]), None);
         }
     }
@@ -1271,18 +1272,18 @@ fn generate_undergrowth(x: i32, y: i32, z: i32, moisture: f64, editor: &mut Worl
     let wy = y + 1;
 
     if moisture < 0.4 {
-        if rng.gen_bool(0.15) {
+        if rng.random_bool(0.15) {
             editor.set_block_if_absent_absolute(SHORT_GRASS, x, wy, z);
         }
-        if rng.gen_bool(0.1) {
+        if rng.random_bool(0.1) {
             editor.set_block_if_absent_absolute(MOSS_CARPET, x, wy, z);
         }
     } else {
-        if rng.gen_bool(0.12) {
+        if rng.random_bool(0.12) {
             editor.set_block_if_absent_absolute(FLOWERING_AZALEA, x, wy, z);
         }
         // Pequenos arbustos e mato seco
-        if moisture > 0.6 && rng.gen_bool(0.3) {
+        if moisture > 0.6 && rng.random_bool(0.3) {
             editor.set_block_if_absent_absolute(DEAD_BUSH, x, wy, z);
         }
     }

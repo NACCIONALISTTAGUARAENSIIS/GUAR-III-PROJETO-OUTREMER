@@ -706,7 +706,7 @@ fn generate_highways_internal(
                                     as i32;
 
                                 let mut tree_rng = coord_rng(tx, 0, tz, way.id);
-                                if tree_rng.gen_bool(0.6) {
+                                if tree_rng.random_bool(0.6) {
                                     let tree_type =
                                         street_tree_type_for(&df_road_type, &mut tree_rng);
                                     let tree_ground_y = editor.get_ground_level(tx, tz);
@@ -1143,19 +1143,19 @@ fn paint_zebra_crossing(
 /// vias de superquadra recebem a mistura mais variada (a marca do dossel real).
 fn street_tree_type_for(df_road_type: &DFRoadType, rng: &mut impl Rng) -> TreeType {
     match df_road_type {
-        DFRoadType::ViaSuperquadra => match rng.gen_range(0..5) {
+        DFRoadType::ViaSuperquadra => match rng.random_range(0..5) {
             0 => TreeType::IpeAmarelo,
             1 => TreeType::Pequi,
             2 => TreeType::Copaiba,
             3 => TreeType::Angico,
             _ => TreeType::Sucupira,
         },
-        DFRoadType::Eixao | DFRoadType::Monumental => match rng.gen_range(0..3) {
+        DFRoadType::Eixao | DFRoadType::Monumental => match rng.random_range(0..3) {
             0 => TreeType::Pequi,
             1 => TreeType::Jatoba,
             _ => TreeType::Copaiba,
         },
-        _ => match rng.gen_range(0..4) {
+        _ => match rng.random_range(0..4) {
             0 => TreeType::Sucupira,
             1 => TreeType::Angico,
             2 => TreeType::Aroeira,

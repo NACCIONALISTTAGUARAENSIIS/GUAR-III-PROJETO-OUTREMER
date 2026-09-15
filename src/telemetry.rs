@@ -20,7 +20,7 @@ const TELEMETRY_URL: &str = "https://telemetry.pincelism.com/api/v1/report";
 static TELEMETRY_CONSENT: AtomicBool = AtomicBool::new(false);
 
 /// 🚨 BESM-6: Identificador de Sessão Único (UUID v4 Criptograficamente Seguro)
-/// Essencial para vincular os logs normais ao Crash Report final sem colisões de thread_rng().
+/// Essencial para vincular os logs normais ao Crash Report final sem colisões de rng().
 static SESSION_ID: Lazy<String> = Lazy::new(|| Uuid::new_v4().to_string());
 
 /// Caches de alocação estática para evitar reconstrução de strings a cada log

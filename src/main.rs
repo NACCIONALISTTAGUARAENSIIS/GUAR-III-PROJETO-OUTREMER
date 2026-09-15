@@ -48,6 +48,7 @@ mod gui;
 mod progress {
     pub fn emit_gui_error(_message: &str) {}
     pub fn emit_gui_progress_update(_progress: f64, _message: &str) {}
+    // Stub sem chamador no build sem GUI (nada em `!gui` invoca preview de mapa).
     #[allow(dead_code)]
     pub fn emit_map_preview_ready() {}
     pub fn emit_open_mcworld_file(_path: &str) {}
@@ -189,7 +190,23 @@ pub fn run_generation_pipeline(
             == providers::SemanticGroup::TerrainDetail
             && feature.source.contains("Photogrammetry_Mesh");
 
-        let is_provider_specific = is_infrastructure_feature || is_photogrammetry_voxel;
+        // 🚨 RECONEXÃO (Advertising): `SemanticGroup::Advertising` sempre caiu no `else`
+        // acima como `false` — a condição de `source` só reconhecia "CAESB"/"CityGML"/
+        // "IFC"/"Indoor"/"WFS", e o `source` de um outdoor/totem do OSM é sempre "osm".
+        // Isso jogava toda feature de propaganda para `osm_convertible_features`, que
+        // vira `ProcessedElement` via `into_processed_element()` — mas
+        // `advertising::generate_advertising` (element_processing/advertising.rs) foi
+        // escrito para consumir a `Feature` original (geometria + atributos brutos,
+        // para o PCA de orientação do painel), não o `ProcessedNode`/`ProcessedWay`
+        // traduzido. Diferente de Sanitation/Power/Telecom/Indoor, Advertising é
+        // agnóstico de provedor por design (aceita OSM, CSV, GeoJSON, PostGIS, 3D
+        // Tiles — ver o doc-comment do módulo), então não depende do `source` conter
+        // um nome de provedor governamental específico.
+        let is_advertising_feature =
+            feature.semantic_group == providers::SemanticGroup::Advertising;
+
+        let is_provider_specific =
+            is_infrastructure_feature || is_photogrammetry_voxel || is_advertising_feature;
 
         if is_provider_specific {
             provider_specific_features.push(feature);
@@ -787,7 +804,9 @@ fn main() {
             // preset de `MacroRegion` escolhido interativamente, ver
             // `master_control::dispatch_generation`), então usamos um placeholder
             // geograficamente válido só para satisfazer o parser do clap; todo o
-            // resto usa os mesmos defaults do caminho de CLI (`run_cli`).
+            // resto usa os mesmos defaults do caminho de CLI (`run_cli`) — via
+            // `Args::parse_from` + `register_providers`, em vez de listar cada campo
+            // manualmente (frágil: quebra a cada novo campo adicionado a `Args`).
             let mut args = Args::parse_from(["pincelism", "--bbox", "-16.0,-48.0,-15.5,-47.5"]);
             if let Err(e) = args::validate_args(&mut args) {
                 eprintln!("{} {}", "Aviso:".yellow().bold(), e);

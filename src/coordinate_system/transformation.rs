@@ -170,44 +170,44 @@ impl CoordTransformer {
         XZPoint::new(final_x.round() as i32, final_z.round() as i32)
     }
 
-    /// Inverso geodésico de `transform_point`: recebe um ponto no espaço local
-    /// Minecraft (XZ) e devolve a Lat/Lon correspondente.
+    /// 🚨 RECONEXÃO: Inverso aproximado de `transform_point`, usado pelo culling
+    /// poligonal grosseiro do Master Control HUD (`master_control.rs`) para saber se
+    /// uma região .mca cai fora do recorte macro antes de baixar dados dela.
     ///
-    /// 🚨 BESM-6: `transform_point` descarta o componente vertical (ENU "Up") ao
-    /// projetar — só usa as linhas East/North de `rot_matrix`. A inversa assume
-    /// portanto altura zero sobre o plano tangente (a mesma aproximação que o
-    /// forward já faz), o que é suficiente para culling de tiles: ECEF = origem +
-    /// R^T · (east, north, 0), e como `rot_matrix` é ortogonal, R^T = R^-1 é só
-    /// usar suas linhas como colunas. De ECEF para geodésico usamos o método
-    /// iterativo padrão (Hofmann-Wellenhof) para o elipsoide WGS84.
+    /// Assume altura elipsoidal 0 (mesma aproximação já embutida no forward, que
+    /// chama `ll_to_ecef(..., 0.0)`), então herda o mesmo erro residual de curvatura
+    /// do forward — aceitável para um corte grosseiro de tiles (o chamador já soma um
+    /// halo de 16 blocos de margem), não para geodésia de precisão.
     ///
-    /// Único chamador é `master_control::dispatch_generation`, alcançável apenas
-    /// no build sem a feature `gui` (ver o comentário no topo de `master_control.rs`).
-    #[allow(dead_code)]
+    /// Só é chamada quando a feature `gui` está desligada (único chamador é
+    /// `master_control.rs`, que só entra em cena via `#[cfg(not(feature = "gui"))]`
+    /// em `main.rs`) — daí o `allow(dead_code)` condicional.
+    #[inline(always)]
+    #[cfg_attr(feature = "gui", allow(dead_code))]
     pub fn inverse_transform(&self, xz: XZPoint) -> Result<LLPoint, String> {
         let enu_x = xz.x as f64 / self.scale;
         let enu_n = -(xz.z as f64) / self.scale;
 
+        // Rotação inversa = transposta (rot_matrix é ortonormal). Componente "Up"
+        // assumida 0, o mesmo plano tangente local usado no forward.
         let dx = self.rot_matrix[0][0] * enu_x + self.rot_matrix[1][0] * enu_n;
         let dy = self.rot_matrix[0][1] * enu_x + self.rot_matrix[1][1] * enu_n;
         let dz = self.rot_matrix[0][2] * enu_x + self.rot_matrix[1][2] * enu_n;
 
-        let x = self.origin_ecef.0 + dx;
-        let y = self.origin_ecef.1 + dy;
-        let z = self.origin_ecef.2 + dz;
+        let ecef_x = self.origin_ecef.0 + dx;
+        let ecef_y = self.origin_ecef.1 + dy;
+        let ecef_z = self.origin_ecef.2 + dz;
 
-        let lon = y.atan2(x);
-        let p = (x * x + y * y).sqrt();
+        // ECEF -> Geodésico (fórmula fechada de Bowring, 1976; ignora altura)
+        let b = WGS84_A * (1.0 - WGS84_E2).sqrt();
+        let ep2 = (WGS84_A * WGS84_A - b * b) / (b * b);
+        let p = (ecef_x * ecef_x + ecef_y * ecef_y).sqrt();
+        let theta = (ecef_z * WGS84_A).atan2(p * b);
+        let lat_rad = (ecef_z + ep2 * b * theta.sin().powi(3))
+            .atan2(p - WGS84_E2 * WGS84_A * theta.cos().powi(3));
+        let lon_rad = ecef_y.atan2(ecef_x);
 
-        // Chute inicial + refinamento iterativo (converge em poucas iterações)
-        let mut lat = z.atan2(p * (1.0 - WGS84_E2));
-        for _ in 0..5 {
-            let sin_lat = lat.sin();
-            let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
-            lat = (z + WGS84_E2 * n * sin_lat).atan2(p);
-        }
-
-        LLPoint::new(lat.to_degrees(), lon.to_degrees())
+        LLPoint::new(lat_rad.to_degrees(), lon_rad.to_degrees())
     }
 }
 

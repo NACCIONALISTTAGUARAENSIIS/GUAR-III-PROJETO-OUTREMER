@@ -242,7 +242,7 @@ fn generate_power_tower_impl(
             // `man_made.rs::generate_underground_pipeline`, ~1 em cada 6 blocos vira a
             // variante "oxidada"), em vez de todas saírem clonadas.
             let mut weather_rng = coord_rng(cx, absolute_y, cz, id);
-            let leg_block = if weather_rng.gen_bool(0.16) {
+            let leg_block = if weather_rng.random_bool(0.16) {
                 STONE
             } else {
                 ANDESITE
@@ -499,8 +499,8 @@ fn generate_power_pole_impl(
 
     // Estai/espia de ancoragem: cabo diagonal até uma âncora no chão, típico de postes
     // de esquina ou de fim de linha (tensão assimétrica no topo).
-    if rng.gen_bool(0.3) {
-        let (gx, gz) = if rng.gen_bool(0.5) { (2, 0) } else { (0, 2) };
+    if rng.random_bool(0.3) {
+        let (gx, gz) = if rng.random_bool(0.5) { (2, 0) } else { (0, 2) };
         let anchor_x = x + gx * 2;
         let anchor_z = z + gz * 2;
         let anchor_ground = if args.terrain {
@@ -523,15 +523,15 @@ fn generate_power_pole_impl(
     }
 
     // Transformador de poste (só em postes baixos de distribuição — não em subtransmissão alta)
-    if height <= 13 && rng.gen_bool(0.18) {
+    if height <= 13 && rng.random_bool(0.18) {
         let mount_y = ground_y + height - 3;
         generate_pole_mounted_transformer(editor, x + 1, mount_y, z, id);
     }
 
     // Braço de iluminação pública combinado (poste de rede + luminária de rua)
-    if rng.gen_bool(0.22) {
+    if rng.random_bool(0.22) {
         let arm_y = ground_y + height - 1;
-        let (lx, lz) = if rng.gen_bool(0.5) { (1, 0) } else { (0, 1) };
+        let (lx, lz) = if rng.random_bool(0.5) { (1, 0) } else { (0, 1) };
         editor.set_block_absolute(IRON_BARS, x + lx, arm_y, z + lz, None, None);
         editor.set_block_absolute(GLOWSTONE, x + lx * 2, arm_y, z + lz * 2, None, None);
     }
@@ -542,7 +542,7 @@ fn generate_pole_mounted_transformer(editor: &mut WorldEditor, x: i32, y: i32, z
     editor.set_block_absolute(IRON_BLOCK, x, y, z, None, None);
     editor.set_block_absolute(IRON_BLOCK, x, y + 1, z, None, None);
     let mut rng = coord_rng(x, y, z, id);
-    let cap_block = if rng.gen_bool(0.5) {
+    let cap_block = if rng.random_bool(0.5) {
         BARREL
     } else {
         IRON_BLOCK
@@ -656,7 +656,7 @@ fn generate_substation(editor: &mut WorldEditor, element: &ProcessedElement, arg
     for &(x, z) in &footprint {
         let ground_y = editor.get_ground_level(x, z);
         let mut yard_rng = coord_rng(x, ground_y, z, id);
-        let yard_block = if yard_rng.gen_bool(0.08) {
+        let yard_block = if yard_rng.random_bool(0.08) {
             COARSE_DIRT
         } else {
             GRAVEL
@@ -801,7 +801,7 @@ fn generate_transformer_unit(
     for y in 1..=body_height {
         let absolute_y = ground_y + y;
         let mut weather_rng = coord_rng(x, absolute_y, z, id);
-        let side_block = if weather_rng.gen_bool(0.2) {
+        let side_block = if weather_rng.random_bool(0.2) {
             OXIDIZED_COPPER
         } else {
             COPPER_BLOCK
@@ -820,7 +820,7 @@ fn generate_transformer_unit(
         editor.set_block_absolute(END_ROD, x - 1, ground_y + body_height + 1, z, None, None);
     }
 
-    if standalone && rng.gen_bool(0.7) {
+    if standalone && rng.random_bool(0.7) {
         // Cerquinha de proteção urbana (transformador de solo — comum em calçadas de Brasília)
         for dx in -2..=2 {
             for dz in [-2, 2] {
@@ -859,7 +859,7 @@ fn generate_switchgear_cabinet(editor: &mut WorldEditor, x: i32, z: i32, id: u64
     for y in 1..=2 {
         let absolute_y = ground_y + y;
         let mut weather_rng = coord_rng(x, absolute_y, z, id);
-        let body_block = if weather_rng.gen_bool(0.15) {
+        let body_block = if weather_rng.random_bool(0.15) {
             LIGHT_GRAY_CONCRETE
         } else {
             GRAY_CONCRETE
@@ -867,7 +867,7 @@ fn generate_switchgear_cabinet(editor: &mut WorldEditor, x: i32, z: i32, id: u64
         editor.set_block_absolute(body_block, x, absolute_y, z, None, None);
     }
 
-    if rng.gen_bool(0.6) {
+    if rng.random_bool(0.6) {
         editor.set_sign(
             "CEB".to_string(),
             "QUADRO DE".to_string(),
@@ -912,7 +912,7 @@ fn generate_solar_panel_module(editor: &mut WorldEditor, x: i32, ground_y: i32, 
     editor.set_block_absolute(IRON_BLOCK, x, ground_y + 1, z, None, None);
 
     let mut rng = coord_rng(x, ground_y, z, id);
-    let panel_block = if rng.gen_bool(0.5) {
+    let panel_block = if rng.random_bool(0.5) {
         BLACK_STAINED_GLASS
     } else {
         TINTED_GLASS
@@ -927,7 +927,7 @@ fn generate_solar_panel_module(editor: &mut WorldEditor, x: i32, ground_y: i32, 
 /// visual leve, sem geometria rotativa real).
 fn generate_wind_turbine(editor: &mut WorldEditor, x: i32, ground_y: i32, z: i32, id: u64) {
     let mut rng = element_rng(id);
-    let height = 20 + rng.gen_range(-2..=2);
+    let height = 20 + rng.random_range(-2..=2);
 
     for y in 1..=height {
         editor.set_block_absolute(LIGHT_GRAY_CONCRETE, x, ground_y + y, z, None, None);
@@ -959,7 +959,7 @@ fn generate_generic_genset_shed(editor: &mut WorldEditor, x: i32, ground_y: i32,
                 if dx == 0 && dz == 0 && y < 3 {
                     continue; // interior oco
                 }
-                let block = if rng.gen_bool(0.12) {
+                let block = if rng.random_bool(0.12) {
                     LIGHT_GRAY_CONCRETE
                 } else {
                     GRAY_CONCRETE
@@ -989,7 +989,7 @@ fn generate_control_kiosk(editor: &mut WorldEditor, x: i32, z: i32, id: u64, arg
                 if dx == 0 && dz == 0 {
                     continue;
                 }
-                let block = if rng.gen_bool(0.1) {
+                let block = if rng.random_bool(0.1) {
                     LIGHT_GRAY_CONCRETE
                 } else {
                     GRAY_CONCRETE
@@ -1036,7 +1036,7 @@ fn generate_perimeter_fence(editor: &mut WorldEditor, ring: &[(i32, i32)], id: u
 
             if is_post {
                 let mut rng = coord_rng(px, ground_y, pz, id);
-                if rng.gen_bool(0.15) {
+                if rng.random_bool(0.15) {
                     editor.set_block_absolute(SEA_LANTERN, px, ground_y + 3, pz, None, None);
                 }
             }
@@ -1054,7 +1054,7 @@ fn generate_line_gantry(editor: &mut WorldEditor, x: i32, z: i32, id: u64, args:
     } else {
         0
     };
-    let height = 6 + element_rng(id).gen_range(-1..=1);
+    let height = 6 + element_rng(id).random_range(-1..=1);
 
     for offset in [-1, 1] {
         for y in 1..=height {

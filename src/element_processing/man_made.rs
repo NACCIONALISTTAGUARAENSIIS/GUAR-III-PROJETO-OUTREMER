@@ -816,7 +816,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
 
                             if is_shell {
                                 // ~18% da casca vira a variante desgastada.
-                                let block = if weather_rng.gen_bool(0.18) {
+                                let block = if weather_rng.random_bool(0.18) {
                                     weathered_block
                                 } else {
                                     shell_block
@@ -855,9 +855,9 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
             let chamber_y = base_y + depth_offset;
             let mut chamber_rng = coord_rng(pt.x, chamber_y, pt.z, feature.id);
 
-            let has_cobweb = chamber_rng.gen_bool(0.3);
-            let cobweb_dx = chamber_rng.gen_range(-1..=1);
-            let cobweb_dz = chamber_rng.gen_range(-1..=1);
+            let has_cobweb = chamber_rng.random_bool(0.3);
+            let cobweb_dx = chamber_rng.random_range(-1..=1);
+            let cobweb_dz = chamber_rng.random_range(-1..=1);
 
             for dx in -1i32..=1i32 {
                 for dy in -1i32..=1i32 {
@@ -867,9 +867,9 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                             AIR // Interior vazio (o vão real do poço)
                         } else if has_cobweb && dy == 1 && dx == cobweb_dx && dz == cobweb_dz {
                             COBWEB // Câmara pouco visitada: sensação de esquecida
-                        } else if is_wet && dy == -1 && chamber_rng.gen_bool(0.35) {
+                        } else if is_wet && dy == -1 && chamber_rng.random_bool(0.35) {
                             MOSS_BLOCK // Umidade acumulada no fundo
-                        } else if chamber_rng.gen_bool(0.2) {
+                        } else if chamber_rng.random_bool(0.2) {
                             weathered_block
                         } else {
                             shell_block
@@ -922,7 +922,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
 
                     // Paredes laterais, com desgaste orgânico intercalado.
                     for dy in 0..chamber_height {
-                        let block = if wall_rng.gen_bool(0.15) {
+                        let block = if wall_rng.random_bool(0.15) {
                             weathered_block
                         } else {
                             shell_block
@@ -930,7 +930,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                         editor.set_block_absolute(block, px, chamber_y + dy, pz, None, None);
                     }
                     // Piso — galerias de água/esgoto acumulam musgo no rodapé.
-                    let floor_block = if is_wet && wall_rng.gen_bool(0.25) {
+                    let floor_block = if is_wet && wall_rng.random_bool(0.25) {
                         MOSS_BLOCK
                     } else {
                         shell_block
@@ -1031,7 +1031,7 @@ fn generate_indoor_structure(editor: &mut WorldEditor, feature: &Feature, args: 
                 let mut room_rng = coord_rng(px, floor_y, pz, feature.id);
 
                 // Piso: musgo perto da parede em salas subterrâneas.
-                let floor_block = if is_underground && room_rng.gen_bool(0.2) {
+                let floor_block = if is_underground && room_rng.random_bool(0.2) {
                     MOSS_BLOCK
                 } else {
                     SMOOTH_STONE
@@ -1040,7 +1040,7 @@ fn generate_indoor_structure(editor: &mut WorldEditor, feature: &Feature, args: 
 
                 // Paredes: leve variação de tom, nunca perfeitamente uniforme.
                 for dy in 1..room_height {
-                    let wall_block = if room_rng.gen_bool(0.15) {
+                    let wall_block = if room_rng.random_bool(0.15) {
                         LIGHT_GRAY_CONCRETE
                     } else {
                         WHITE_CONCRETE
