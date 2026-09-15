@@ -74,7 +74,7 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
             editor.set_block_absolute(SMOOTH_QUARTZ, x, base_y + 2, z, None, None);
 
             // Material: Bronze ou Metal Nobre (Rigor Brasília)
-            let statue_block = if rng.gen_bool(0.6) {
+            let statue_block = if rng.random_bool(0.6) {
                 POLISHED_BASALT // Bronze Escuro / Pátina
             } else {
                 POLISHED_ANDESITE // Aço Escovado
@@ -117,7 +117,7 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
                 .and_then(|h: &String| h.parse::<f64>().ok())
                 .map(|h| (h * 1.15) as i32);
 
-            let obelisk_height = parsed_height.unwrap_or_else(|| rng.gen_range(20..35));
+            let obelisk_height = parsed_height.unwrap_or_else(|| rng.random_range(20..35));
 
             // Base estável 5x5 (Rigor Urbanístico)
             for dx in -2i32..=2i32 {

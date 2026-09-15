@@ -383,7 +383,7 @@ pub fn generate_leisure(
                     let micro_noise = organic_noise_layer(&NOISE_LEISURE_MICRO, x, z, 0.2); // Densidade fina (Flores/Árvores isoladas)
 
                     let mut tile_rng = coord_rng(x, ground_y, z, element.id);
-                    let random_roll = tile_rng.gen_range(0..1000);
+                    let random_roll = tile_rng.random_range(0..1000);
 
                     if is_cristais {
                         // Praça dos Cristais: Cactáceas, areia e lagos angulares
@@ -493,7 +493,7 @@ pub fn generate_leisure(
                     && !is_ana_lidia
                 {
                     let mut tile_rng = coord_rng(x, ground_y, z, element.id);
-                    let play_roll = tile_rng.gen_range(0..5000);
+                    let play_roll = tile_rng.random_range(0..5000);
 
                     // 🚨 CORREÇÃO DOS INTERVALOS (Exclusivos para Inclusivos)
                     match play_roll {

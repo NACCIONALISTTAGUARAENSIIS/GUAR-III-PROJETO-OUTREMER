@@ -307,7 +307,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     if is_institutional_fence {
                         if dy == 0 {
                             editor.set_block_absolute(STONE_BRICKS, bx, absolute_y, bz, None, None);
-                        } else if rng.gen_bool(0.2) {
+                        } else if rng.random_bool(0.2) {
                             // Espa�amento org�nico
                             editor.set_block_absolute(
                                 STONE_BRICK_WALL,
@@ -340,12 +340,12 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                         let mut final_mat = barrier_material;
 
                         if dy <= 1
-                            && rng.gen_bool(0.25)
+                            && rng.random_bool(0.25)
                             && (barrier_material == WHITE_CONCRETE
                                 || barrier_material == SMOOTH_QUARTZ)
                         {
                             final_mat = WHITE_TERRACOTTA;
-                        } else if dy > 0 && rng.gen_bool(0.12) {
+                        } else if dy > 0 && rng.random_bool(0.12) {
                             final_mat = match barrier_material {
                                 BRICK => BRICK_STAIRS,
                                 STONE_BRICKS => CRACKED_STONE_BRICKS,
@@ -417,7 +417,7 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     }
                     // 7. L�gica de CERCA VIVA ORG�NICA
                     else if is_hedge {
-                        let leaf_mat = if rng.gen_bool(0.15) {
+                        let leaf_mat = if rng.random_bool(0.15) {
                             FLOWERING_AZALEA
                         } else {
                             barrier_material
@@ -478,7 +478,11 @@ pub fn generate_barriers(editor: &mut WorldEditor, element: &ProcessedElement) {
                     // Clusteriza��o da Concertina (Hash Espacial: Forma aglomerados de 3-5 blocos e pula)
                     let cluster_noise = ((bx as f64 * 0.5).sin() + (bz as f64 * 0.5).cos()).abs();
                     if cluster_noise > 0.4 {
-                        let security_mat = if rng.gen_bool(0.4) { COBWEB } else { IRON_BARS }; // Mistura visual agressiva
+                        let security_mat = if rng.random_bool(0.4) {
+                            COBWEB
+                        } else {
+                            IRON_BARS
+                        }; // Mistura visual agressiva
                         editor.set_block_absolute(security_mat, bx, top_y, bz, None, None);
                     }
                 } else if is_chainlink && wall_height_blocks >= 3 {
