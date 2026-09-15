@@ -40,11 +40,6 @@ impl RngCore for PincelRng {
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         self.0.fill_bytes(dest)
     }
-
-    #[inline(always)]
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.0.try_fill_bytes(dest)
-    }
 }
 
 // ============================================================================
@@ -82,7 +77,9 @@ pub fn element_rng(element_id: u64) -> PincelRng {
     let h3 = avalanche_hash(h2);
     let h4 = avalanche_hash(h3);
 
-    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(h1, h2, h3, h4)))
+    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(
+        h1, h2, h3, h4,
+    )))
 }
 
 /// Creates a deterministic RNG seeded from an element ID with an additional salt.
@@ -96,7 +93,9 @@ pub fn element_rng_salted(element_id: u64, salt: u64) -> PincelRng {
     let h3 = avalanche_hash(h2);
     let h4 = avalanche_hash(h3);
 
-    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(h1, h2, h3, h4)))
+    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(
+        h1, h2, h3, h4,
+    )))
 }
 
 /// Creates a deterministic RNG seeded from 3D coordinates.
@@ -111,9 +110,7 @@ pub fn coord_rng(x: i32, y: i32, z: i32, element_id: u64) -> PincelRng {
     let uz = z as u32 as u64;
 
     // XOR assimétrico com rotações estritas para destruir a comutatividade e simetria dos eixos
-    let spatial_mix = ux
-        ^ uy.rotate_left(21)
-        ^ uz.rotate_left(42);
+    let spatial_mix = ux ^ uy.rotate_left(21) ^ uz.rotate_left(42);
 
     let initial_state = spatial_mix ^ element_id;
 
@@ -122,7 +119,9 @@ pub fn coord_rng(x: i32, y: i32, z: i32, element_id: u64) -> PincelRng {
     let h3 = avalanche_hash(h2);
     let h4 = avalanche_hash(h3);
 
-    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(h1, h2, h3, h4)))
+    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(
+        h1, h2, h3, h4,
+    )))
 }
 
 #[cfg(test)]
@@ -136,7 +135,7 @@ mod tests {
         let mut rng2 = element_rng(12345);
 
         for _ in 0..100 {
-            assert_eq!(rng1.gen::<u64>(), rng2.gen::<u64>());
+            assert_eq!(rng1.random::<u64>(), rng2.random::<u64>());
         }
     }
 
@@ -145,8 +144,8 @@ mod tests {
         let mut rng1 = element_rng(12345);
         let mut rng2 = element_rng(12346);
 
-        let v1: u64 = rng1.gen();
-        let v2: u64 = rng2.gen();
+        let v1: u64 = rng1.random();
+        let v2: u64 = rng2.random();
         assert_ne!(v1, v2);
     }
 
@@ -155,8 +154,8 @@ mod tests {
         let mut rng1 = element_rng(12345);
         let mut rng2 = element_rng_salted(12345, 1);
 
-        let v1: u64 = rng1.gen();
-        let v2: u64 = rng2.gen();
+        let v1: u64 = rng1.random();
+        let v2: u64 = rng2.random();
         assert_ne!(v1, v2);
     }
 
@@ -165,7 +164,7 @@ mod tests {
         let mut rng1 = coord_rng(100, 64, 200, 12345);
         let mut rng2 = coord_rng(100, 64, 200, 12345);
 
-        assert_eq!(rng1.gen::<u64>(), rng2.gen::<u64>());
+        assert_eq!(rng1.random::<u64>(), rng2.random::<u64>());
     }
 
     #[test]
@@ -173,12 +172,12 @@ mod tests {
         let mut rng1 = coord_rng(-100, 10, -200, 12345);
         let mut rng2 = coord_rng(-100, 10, -200, 12345);
 
-        assert_eq!(rng1.gen::<u64>(), rng2.gen::<u64>());
+        assert_eq!(rng1.random::<u64>(), rng2.random::<u64>());
 
         let mut rng3 = coord_rng(-100, 10, -200, 12345);
         let mut rng4 = coord_rng(-101, 10, -200, 12345);
 
-        assert_ne!(rng3.gen::<u64>(), rng4.gen::<u64>());
+        assert_ne!(rng3.random::<u64>(), rng4.random::<u64>());
     }
 
     #[test]
@@ -186,8 +185,8 @@ mod tests {
         // 🚨 O Teste Mestre: Coord (0,0,0) com ID 0.
         // O gerador agora deve cuspir entropia caótica verdadeira em vez de colapsar.
         let mut rng_zero = coord_rng(0, 0, 0, 0);
-        let v1: u64 = rng_zero.gen();
-        let v2: u64 = rng_zero.gen();
+        let v1: u64 = rng_zero.random();
+        let v2: u64 = rng_zero.random();
 
         assert_ne!(v1, 0);
         assert_ne!(v2, 0);
@@ -200,6 +199,6 @@ mod tests {
         let mut rng1 = coord_rng(10, 0, 20, 999);
         let mut rng2 = coord_rng(20, 0, 10, 999);
 
-        assert_ne!(rng1.gen::<u64>(), rng2.gen::<u64>());
+        assert_ne!(rng1.random::<u64>(), rng2.random::<u64>());
     }
 }

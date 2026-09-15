@@ -34,7 +34,7 @@ impl OSMProvider {
             || tags.contains_key("water")
             || tags
                 .get("natural")
-                .map_or(false, |v| v == "water" || v == "bay")
+                .is_some_and(|v| v == "water" || v == "bay")
         {
             return SemanticGroup::Waterway;
         }
@@ -43,6 +43,17 @@ impl OSMProvider {
             || tags.contains_key("natural")
         {
             return SemanticGroup::Landuse;
+        }
+        // 🚨 RECONEXÃO: `advertising=*` (totens, outdoors, painéis MUB) caía sempre no
+        // fallback `Other` — o mesmo grupo semântico genérico usado por QUALQUER outra
+        // tag não reconhecida. Isso fazia o Spatial Sweeper (`ProviderManager::resolve_collisions`
+        // em providers/mod.rs) tratar um outdoor real e qualquer outro elemento "Other"
+        // não relacionado como colisões do MESMO grupo sempre que os AABBs se tocassem,
+        // descartando o outdoor silenciosamente antes mesmo dele chegar em `main.rs`.
+        // `retrieve_data.rs` já baixa `nwr["advertising"]` da Overpass — o dado sempre
+        // chegou aqui, só nunca foi classificado corretamente.
+        if tags.contains_key("advertising") {
+            return SemanticGroup::Advertising;
         }
         if tags.contains_key("power")
             || tags.contains_key("amenity")

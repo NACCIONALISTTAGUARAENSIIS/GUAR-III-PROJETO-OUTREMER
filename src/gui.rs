@@ -13,16 +13,22 @@ use log::LevelFilter;
 use rfd::FileDialog;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::{env, fs, io::Write};
 use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind};
 
 /// Manages the session.lock file for a Minecraft world directory
+///
+/// 🚨 Pré-existente sem chamador atual (nenhum lugar da GUI invoca `SessionLock::acquire`
+/// hoje) — mantido por ora em vez de removido, já que apagar uma trava de sessão de
+/// arquivo é o tipo de coisa que não deveria ser uma decisão silenciosa de limpeza de
+/// lint. `allow(dead_code)` só documenta o estado atual.
+#[allow(dead_code)]
 struct SessionLock {
     file: fs::File,
     path: PathBuf,
 }
 
+#[allow(dead_code)]
 impl SessionLock {
     /// Creates and locks a session.lock file in the specified world directory
     fn acquire(world_path: &Path) -> Result<Self, String> {
@@ -52,7 +58,14 @@ impl SessionLock {
 impl Drop for SessionLock {
     fn drop(&mut self) {
         // Release the lock and remove the session.lock file
-        let _ = self.file.unlock();
+        //
+        // Chamada qualificada (`fs2::FileExt::unlock`, não `self.file.unlock()`): a
+        // partir do Rust 1.89 `std::fs::File` ganhou um `unlock()` inerente próprio,
+        // que teria prioridade de resolução sobre o trait do `fs2` em toolchains mais
+        // novas — mas o MSRV declarado no Cargo.toml (1.75) é anterior a isso. Chamar
+        // o trait explicitamente garante o mesmo método em qualquer toolchain
+        // suportada, e resolve o lint `incompatible_msrv` do clippy.
+        let _ = fs2::FileExt::unlock(&self.file);
         let _ = fs::remove_file(&self.path);
     }
 }
@@ -220,6 +233,9 @@ fn create_new_world(base_path: &Path) -> Result<String, String> {
 }
 
 /// Adds localized area name to the world name in level.dat
+///
+/// 🚨 Pré-existente sem chamador atual — mesma situação de `SessionLock` acima.
+#[allow(dead_code)]
 fn add_localized_world_name(world_path: PathBuf, bbox: &LLBBox) -> PathBuf {
     // Only proceed if the path exists
     if !world_path.exists() {
@@ -333,6 +349,9 @@ fn add_localized_world_name(world_path: PathBuf, bbox: &LLBBox) -> PathBuf {
 
 /// Calculates the default spawn point at X=1, Z=1 relative to the world origin.
 /// This is used when no spawn point is explicitly selected by the user.
+///
+/// 🚨 Pré-existente sem chamador atual — mesma situação de `SessionLock` acima.
+#[allow(dead_code)]
 fn calculate_default_spawn(xzbbox: &XZBBox) -> (i32, i32) {
     (xzbbox.min_x() + 1, xzbbox.min_z() + 1)
 }
@@ -340,6 +359,9 @@ fn calculate_default_spawn(xzbbox: &XZBBox) -> (i32, i32) {
 /// Sets the player spawn point in level.dat using Minecraft XZ coordinates.
 /// The Y coordinate is set to a temporary value (150) and will be updated
 /// after terrain generation by `update_player_spawn_y_after_generation`.
+///
+/// 🚨 Pré-existente sem chamador atual — mesma situação de `SessionLock` acima.
+#[allow(dead_code)]
 fn set_player_spawn_in_level_dat(
     world_path: &str,
     spawn_x: i32,
@@ -761,7 +783,20 @@ fn gui_start_generation(
         local_pbf: None,
         mvt_endpoint: None,
         local_citygml: None,
+        local_ifc: None,
         local_mesh: None,
+        // 🚨 RECONEXÃO: A GUI ainda não expõe os campos de dados governamentais
+        // adicionados depois (IFC BIM, IBGE/SICAR, MapBiomas) — `Args` passou a
+        // exigi-los no initializer, mas nenhum control de UI foi criado para eles
+        // ainda. `None`/`false` preserva o comportamento de sempre (fallback
+        // matemático do motor, sem esses dados extras), até a GUI ganhar os campos.
+        ibge_shapefile: None,
+        sicar_shapefile: None,
+        mapbiomas_tiff: None,
+        mapbiomas_top_left_lat: None,
+        mapbiomas_top_left_lon: None,
+        mapbiomas_pixel_size_deg: None,
+        no_ambient_forest: false,
         ground_level,
         terrain: terrain_enabled,
         interior: interior_enabled,

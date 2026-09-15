@@ -71,8 +71,15 @@ itertools = "0.14.0"
 jsonwebtoken = "10.3.0"
 log = "0.4.27"
 
-# 🚨 BESM-6: Rand fixado na versão 0.8 (Estabilidade Governamental)
-rand = { version = "0.8", features = ["std", "std_rng"] }
+# 🚨 RECONEXÃO: O pin em 0.8 ("Estabilidade Governamental") ficou dessincronizado do
+# código real — todo o motor (advertising.rs, tree.rs, natural.rs, buildings.rs,
+# amenities.rs, landuse.rs, retrieve_data.rs, block_definitions.rs...) já chama a API
+# renomeada do rand 0.9 (`rand::rng()`, `.random_range()`, `.random_bool()`,
+# `IndexedRandom`, `SmallRng`). Como o 0.9.2 já está no Cargo.lock via outra
+# dependência transitiva, o pin em 0.8 só forçava DOIS rands coexistindo e nada do
+# projeto compilava. `small_rng` habilitado pois `tree.rs` usa `rand::rngs::SmallRng`,
+# que na 0.9 fica atrás dessa feature.
+rand = { version = "0.9", features = ["std", "std_rng", "small_rng"] }
 rand_chacha = "0.3"
 
 reqwest = { version = "0.13.1", features = ["blocking", "json", "query"] }
@@ -98,7 +105,7 @@ version_check = "0.9.5"
 mvt = "0.8"
 bytes = "1.11.1"
 dxf = "0.5"
-rand_xoshiro = "0.6"
+rand_xoshiro = "0.7"
 rand_core = "0.6"
 rand_pcg = "0.3"
 rand_distr = "0.4"

@@ -163,7 +163,8 @@ impl DataProvider for PbfProvider {
 
                     // Se a coordenada está estritamente dentro da BBox Expandida
                     // OU se ela é uma âncora distante de uma via (vetor) que cruza a BBox.
-                    let in_bbox = lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng;
+                    let in_bbox =
+                        lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng;
 
                     if in_bbox || required_nodes.contains(&id) {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
@@ -196,7 +197,8 @@ impl DataProvider for PbfProvider {
                     let lon = node.lon();
                     let id = node.id();
 
-                    let in_bbox = lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng;
+                    let in_bbox =
+                        lat >= min_lat && lat <= max_lat && lon >= min_lng && lon <= max_lng;
 
                     if in_bbox || required_nodes.contains(&id) {
                         if let Ok(llpoint) = LLPoint::new(lat, lon) {
@@ -223,7 +225,9 @@ impl DataProvider for PbfProvider {
                     }
                 }
                 Element::Way(way) => {
-                    if !required_ways.contains(&way.id()) { return; }
+                    if !required_ways.contains(&way.id()) {
+                        return;
+                    }
 
                     let mut coords = Vec::with_capacity(way.refs().count());
                     let mut is_completely_outside = true;
@@ -253,8 +257,8 @@ impl DataProvider for PbfProvider {
                         if semantic_group != SemanticGroup::Other {
                             let geometry = if is_closed
                                 && (semantic_group == SemanticGroup::Building
-                                || semantic_group == SemanticGroup::Landuse
-                                || semantic_group == SemanticGroup::Terrain)
+                                    || semantic_group == SemanticGroup::Landuse
+                                    || semantic_group == SemanticGroup::Terrain)
                             {
                                 GeometryType::Polygon(coords)
                             } else {

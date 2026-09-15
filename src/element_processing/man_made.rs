@@ -137,7 +137,7 @@ fn generate_antenna(editor: &mut WorldEditor, element: &ProcessedElement, args: 
             Some(h) => (h.parse::<f64>().unwrap_or(30.0) * V_SCALE) as i32,
             None => 40,
         }
-            .min(80);
+        .min(80);
 
         editor.set_block_absolute(IRON_BLOCK, x, ground_y + 1, z, None, None);
         for y in 2..height {
@@ -718,8 +718,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
 
     // Material principal, variante envelhecida (desgaste orgânico) e líquido
     // interno (se houver) — determinados uma única vez pelo tipo de utilidade.
-    let (shell_block, weathered_block, fluid_block): (Block, Block, Option<Block>) = if is_sewage
-    {
+    let (shell_block, weathered_block, fluid_block): (Block, Block, Option<Block>) = if is_sewage {
         (STONE_BRICKS, CRACKED_STONE_BRICKS, Some(WATER)) // Esgoto: tijolo de pedra rachado
     } else if is_water {
         (CYAN_TERRACOTTA, CRACKED_STONE_BRICKS, Some(WATER)) // Água: terracota ciano
@@ -759,7 +758,8 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                             let set_x = px + dx;
                             let set_y = pipe_y + dy;
 
-                            let is_shell = pipe_radius <= 1 || dist_sq > inner_radius * inner_radius;
+                            let is_shell =
+                                pipe_radius <= 1 || dist_sq > inner_radius * inner_radius;
 
                             if is_shell {
                                 // ~18% da casca vira a variante desgastada.
@@ -781,9 +781,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                                     Some(fluid) if dy <= 0 => fluid, // líquido só embaixo
                                     _ => AIR,
                                 };
-                                editor.set_block_absolute(
-                                    core_block, set_x, set_y, pz, None, None,
-                                );
+                                editor.set_block_absolute(core_block, set_x, set_y, pz, None, None);
                             }
                         }
                     }

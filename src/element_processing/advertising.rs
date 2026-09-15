@@ -19,6 +19,7 @@ use crate::ground::Ground;
 use crate::providers::{Feature, GeometryType};
 use crate::world_editor::WorldEditor;
 use fastnbt::Value;
+use rand::Rng;
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
@@ -84,8 +85,12 @@ fn extract_geometry_data(geom: &GeometryType) -> Option<(XZPoint, XZPoint)> {
             let mut max_proj = f64::MIN;
             for p in pts {
                 let proj = (p.x as f64 - mean_x) * dir_x + (p.z as f64 - mean_z) * dir_z;
-                if proj < min_proj { min_proj = proj; }
-                if proj > max_proj { max_proj = proj; }
+                if proj < min_proj {
+                    min_proj = proj;
+                }
+                if proj > max_proj {
+                    max_proj = proj;
+                }
             }
 
             let p1 = XZPoint::new(
@@ -114,7 +119,11 @@ fn get_wind_vector(x: i32, z: i32) -> (i32, i32) {
     let angle = ((x as f64 * scale).sin() + (z as f64 * scale).cos()) * PI;
     let dx = angle.cos().round() as i32;
     let dz = angle.sin().round() as i32;
-    if dx == 0 && dz == 0 { (1, 0) } else { (dx, dz) }
+    if dx == 0 && dz == 0 {
+        (1, 0)
+    } else {
+        (dx, dz)
+    }
 }
 
 /// 🚨 CULLING VOLUMÉTRICO O(1): Consulta Híbrida de Terreno e Asfalto
@@ -124,6 +133,7 @@ fn is_volume_obstructed(
     editor: &mut WorldEditor,
     ground: &Ground,
     x: i32,
+    z: i32,
     ground_y: i32,
     radius_x: i32,
     radius_z: i32,
@@ -168,10 +178,14 @@ pub fn generate_advertising(
 ) {
     if let Some(advertising_type) = feature.attributes.get("advertising") {
         if let Some(layer) = feature.attributes.get("layer") {
-            if layer.parse::<i32>().unwrap_or(0) < 0 { return; }
+            if layer.parse::<i32>().unwrap_or(0) < 0 {
+                return;
+            }
         }
         if let Some(level) = feature.attributes.get("level") {
-            if level.parse::<i32>().unwrap_or(0) < 0 { return; }
+            if level.parse::<i32>().unwrap_or(0) < 0 {
+                return;
+            }
         }
 
         if let Some((p1, p2)) = extract_geometry_data(&feature.geometry) {
@@ -182,9 +196,15 @@ pub fn generate_advertising(
             let ground_y = ground.surface_level(center_pt);
 
             match advertising_type.as_str() {
-                "column" | "totem" => generate_advertising_column(editor, feature, center_pt, args, ground_y, ground),
-                "flag" => generate_advertising_flag(editor, feature, center_pt, args, ground_y, ground),
-                "poster_box" => generate_poster_box(editor, feature, center_pt, p1, p2, ground_y, ground),
+                "column" | "totem" => {
+                    generate_advertising_column(editor, feature, center_pt, args, ground_y, ground)
+                }
+                "flag" => {
+                    generate_advertising_flag(editor, feature, center_pt, args, ground_y, ground)
+                }
+                "poster_box" => {
+                    generate_poster_box(editor, feature, center_pt, p1, p2, ground_y, ground)
+                }
                 "board" | "billboard" | "screen" | "wall_profile" => {
                     generate_billboard(editor, feature, p1, p2, args, ground_y, ground)
                 }
@@ -214,7 +234,7 @@ fn generate_advertising_column(
 
     let height_blocks = (height_real * args.scale_v).round().max(2.0) as i32;
 
-    if is_volume_obstructed(editor, ground, x, ground_y, 0, 0) {
+    if is_volume_obstructed(editor, ground, x, z, ground_y, 0, 0) {
         return;
     }
 
@@ -224,7 +244,14 @@ fn generate_advertising_column(
         editor.set_block_absolute(SEA_LANTERN, x, ground_y + dy, z, None, None);
     }
 
-    editor.set_block_absolute(SMOOTH_STONE_SLAB, x, ground_y + height_blocks, z, None, None);
+    editor.set_block_absolute(
+        SMOOTH_STONE_SLAB,
+        x,
+        ground_y + height_blocks,
+        z,
+        None,
+        None,
+    );
 }
 
 /// Advertising Flag (Mastros de Concessionárias / SIA / EPIA)
@@ -247,7 +274,7 @@ fn generate_advertising_flag(
 
     let height_blocks = (height_real * args.scale_v).clamp(8.0, 30.0).round() as i32;
 
-    if is_volume_obstructed(editor, ground, x, ground_y, 1, 1) {
+    if is_volume_obstructed(editor, ground, x, z, ground_y, 1, 1) {
         return;
     }
 
@@ -265,7 +292,14 @@ fn generate_advertising_flag(
         }
     }
 
-    let flag_colors = [RED_WOOL, YELLOW_WOOL, BLUE_WOOL, GREEN_WOOL, ORANGE_WOOL, WHITE_WOOL];
+    let flag_colors = [
+        RED_WOOL,
+        YELLOW_WOOL,
+        BLUE_WOOL,
+        GREEN_WOOL,
+        ORANGE_WOOL,
+        WHITE_WOOL,
+    ];
     let flag_block = flag_colors[rng.random_range(0..flag_colors.len())];
 
     // 🚨 BESM-6: Consulta à Corrente de Vento Global
@@ -279,13 +313,34 @@ fn generate_advertising_flag(
         let pz = z + (dir_z * step);
 
         for fy in 0..flag_height {
-            editor.set_block_absolute(flag_block, px, ground_y + height_blocks - fy, pz, None, None);
+            editor.set_block_absolute(
+                flag_block,
+                px,
+                ground_y + height_blocks - fy,
+                pz,
+                None,
+                None,
+            );
 
             // Engrossamento para visibilidade à distância
             if dir_x != 0 {
-                editor.set_block_absolute(flag_block, px, ground_y + height_blocks - fy, pz + 1, None, None);
+                editor.set_block_absolute(
+                    flag_block,
+                    px,
+                    ground_y + height_blocks - fy,
+                    pz + 1,
+                    None,
+                    None,
+                );
             } else {
-                editor.set_block_absolute(flag_block, px + 1, ground_y + height_blocks - fy, pz, None, None);
+                editor.set_block_absolute(
+                    flag_block,
+                    px + 1,
+                    ground_y + height_blocks - fy,
+                    pz,
+                    None,
+                    None,
+                );
             }
         }
     }
@@ -307,12 +362,14 @@ fn generate_poster_box(
     let x = pt.x;
     let z = pt.z;
 
-    if is_volume_obstructed(editor, ground, x, ground_y, 0, 0) {
+    if is_volume_obstructed(editor, ground, x, z, ground_y, 0, 0) {
         return;
     }
 
     let angle_deg = if p1.x != p2.x || p1.z != p2.z {
-        ((p2.x - p1.x) as f64).atan2((p2.z - p1.z) as f64).to_degrees()
+        ((p2.x - p1.x) as f64)
+            .atan2((p2.z - p1.z) as f64)
+            .to_degrees()
     } else {
         feature
             .attributes
@@ -321,7 +378,11 @@ fn generate_poster_box(
             .and_then(|a| a.parse::<f64>().ok())
             .unwrap_or_else(|| {
                 let mut rng = coord_rng(pt.x, ground_y, pt.z, feature.id);
-                if rng.random_bool(0.5) { 0.0 } else { 90.0 }
+                if rng.random_bool(0.5) {
+                    0.0
+                } else {
+                    90.0
+                }
             })
     };
 
@@ -333,24 +394,36 @@ fn generate_poster_box(
 
     // State do bloco (Tela iluminada)
     let mut block_state = HashMap::new();
-    block_state.insert("Name".to_string(), Value::String("minecraft:sea_lantern".to_string()));
+    block_state.insert(
+        "Name".to_string(),
+        Value::String("minecraft:sea_lantern".to_string()),
+    );
     nbt.insert("block_state".to_string(), Value::Compound(block_state));
 
     // Matriz Afim de Transformação e Escala (Column-Major)
     // Scale X (Largura): 1.2, Scale Y (Altura): 2.0, Scale Z (Espessura Exata): 0.15
     let transform = vec![
-        Value::Float(1.2), Value::Float(0.0), Value::Float(0.0), Value::Float(0.0),
-        Value::Float(0.0), Value::Float(2.0), Value::Float(0.0), Value::Float(0.0),
-        Value::Float(0.0), Value::Float(0.0), Value::Float(0.15), Value::Float(0.0),
-        Value::Float(0.0), Value::Float(0.0), Value::Float(0.0), Value::Float(1.0),
+        Value::Float(1.2),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(2.0),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(0.15),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(0.0),
+        Value::Float(1.0),
     ];
     nbt.insert("transformation".to_string(), Value::List(transform));
 
     // Rotação Exata do Vetor Eigen (Sem Snap na Grade de 90 graus)
-    let rotation = vec![
-        Value::Float(angle_deg as f32),
-        Value::Float(0.0)
-    ];
+    let rotation = vec![Value::Float(angle_deg as f32), Value::Float(0.0)];
     nbt.insert("Rotation".to_string(), Value::List(rotation));
 
     // Pousa o display entity exatamente em cima da haste
@@ -378,7 +451,11 @@ fn generate_billboard(
             .and_then(|a| a.parse::<f64>().ok())
             .unwrap_or_else(|| {
                 let mut rng = coord_rng(p1.x, ground_y, p1.z, feature.id);
-                if rng.random_bool(0.5) { 0.0 } else { 90.0 }
+                if rng.random_bool(0.5) {
+                    0.0
+                } else {
+                    90.0
+                }
             });
 
         let panel_width_radius = 4.5 * args.scale_h;
@@ -397,7 +474,7 @@ fn generate_billboard(
     let base_height = (3.0 * args.scale_v).round() as i32;
     let panel_height = (3.0 * args.scale_v).round() as i32;
 
-    if is_volume_obstructed(editor, ground, cx, ground_y, 1, 1) {
+    if is_volume_obstructed(editor, ground, cx, cz, ground_y, 1, 1) {
         return;
     }
 
@@ -414,7 +491,10 @@ fn generate_billboard(
         }
     }
 
-    let is_screen = feature.attributes.get("advertising").map_or(false, |v| v == "screen");
+    let is_screen = feature
+        .attributes
+        .get("advertising")
+        .is_some_and(|v| v == "screen");
     let board_material = if is_screen {
         SEA_LANTERN
     } else {
@@ -433,8 +513,16 @@ fn generate_billboard(
     let dx = (final_p2.x - final_p1.x) as f64;
     let dz = (final_p2.z - final_p1.z) as f64;
     let length = (dx * dx + dz * dz).sqrt();
-    let nx = if length != 0.0 { (-dz / length).round() as i32 } else { 0 };
-    let nz = if length != 0.0 { (dx / length).round() as i32 } else { 1 };
+    let nx = if length != 0.0 {
+        (-dz / length).round() as i32
+    } else {
+        0
+    };
+    let nz = if length != 0.0 {
+        (dx / length).round() as i32
+    } else {
+        1
+    };
 
     for dy in start_y..=end_y {
         for (bx, _, bz) in &bresenham_points {

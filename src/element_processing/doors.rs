@@ -1,4 +1,5 @@
 use crate::block_definitions::*;
+use crate::osm_parser::ProcessedNode;
 use crate::world_editor::WorldEditor;
 use fastnbt::Value;
 use std::collections::HashMap;
@@ -50,7 +51,13 @@ use std::collections::HashMap;
 // ============================================================================
 
 /// Enumeração de Direções Cardeais para assentamento correto dos Block States (NBT)
+///
+/// North/East/West só serão construídas quando os "Injection Points" documentados
+/// acima (Buildings/IFC/CityGML/...) forem implementados e calcularem o facing real
+/// pela normal da parede; hoje o único chamador (`generate_doors`, fallback para nós
+/// soltos) sempre usa `South` por falta desse contexto.
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[allow(dead_code)]
 pub enum DoorFacing {
     North,
     South,
@@ -75,6 +82,32 @@ impl DoorFacing {
 ///
 /// O gerador de paredes passa as coordenadas exatas, a orientação da parede e as dimensões.
 /// O algoritmo `carve_and_place_door` abre o vão (void) na parede já existente e insere a porta com NBT perfeito.
+///
+/// 🚨 RECONEXÃO (fallback mínimo): `data_processing.rs` chamava `doors::generate_doors(editor, node)`
+/// para `door=*`/`entrance=*` soltos — uma função que nunca existiu aqui (só
+/// `carve_and_place_door`, com assinatura incompatível), então nem compilava. Os
+/// "Injection Points" documentados acima (Buildings/IFC/CityGML/Indoor/GeoPackage/
+/// PostGIS/GeoJSON) — que calculariam o `facing` real a partir da normal da parede —
+/// não estão implementados; nenhum deles chama `carve_and_place_door` hoje. Fazer essa
+/// integração completa (detectar `entrance=*` na parede mais próxima em cada provedor)
+/// é um trabalho à parte, bem maior que esta reconexão pontual. `generate_doors` abaixo
+/// é só o mínimo para o dispatcher genérico compilar e desenhar algo visível: vão
+/// padrão 1×2 documentado acima, orientação fixa (Sul) por falta de contexto de parede.
+pub fn generate_doors(editor: &mut WorldEditor, node: &ProcessedNode) {
+    let ground_y = editor.get_ground_level(node.x, node.z);
+    carve_and_place_door(
+        editor,
+        node.x,
+        ground_y,
+        node.z,
+        1,
+        2,
+        DoorFacing::South,
+        &node.tags,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn carve_and_place_door(
     editor: &mut WorldEditor,
     x: i32,
@@ -99,10 +132,18 @@ pub fn carve_and_place_door(
     // HEURÍSTICA DE SELEÇÃO DE MATERIAL (Rigor GDF - Material Driven)
     if barrier_type == "gate" || entrance_type == "gate" {
         is_gate = true;
-    } else if material == "glass" || door_type == "glass" || door_type == "sliding" || door_type == "revolving" {
+    } else if material == "glass"
+        || door_type == "glass"
+        || door_type == "sliding"
+        || door_type == "revolving"
+    {
         // Blindex Modernista: Oscar Niemeyer detestava portas rústicas
         is_glass_pane = true;
-    } else if material == "iron" || material == "metal" || entrance_type == "service" || entrance_type == "garage" {
+    } else if material == "iron"
+        || material == "metal"
+        || entrance_type == "service"
+        || entrance_type == "garage"
+    {
         base_door_id = IRON_DOOR.id;
     } else if entrance_type == "main" || door_type == "double" || name_contains_royal(tags) {
         base_door_id = DARK_OAK_DOOR_LOWER.id;
@@ -132,7 +173,11 @@ pub fn carve_and_place_door(
 
     // O offset de correção lida com as portas pares (Ex: largura 2, vai de -1 a 0)
     // Se a largura for par, o loop iterará corretamente.
-    let end_offset = if width % 2 == 0 { width - half_w - 1 } else { width - half_w };
+    let end_offset = if width % 2 == 0 {
+        width - half_w - 1
+    } else {
+        width - half_w
+    };
 
     // 3. Execução da Escavação e Assentamento
     for w in -half_w..=end_offset.max(0) {
@@ -161,7 +206,8 @@ pub fn carve_and_place_door(
                 if h % 2 == 0 {
                     editor.set_block_absolute(IRON_BARS, px, y_base + h, pz, None, None);
                 } else {
-                    editor.set_block_absolute(AIR, px, y_base + h, pz, None, None); // Fluxo de ar
+                    editor.set_block_absolute(AIR, px, y_base + h, pz, None, None);
+                    // Fluxo de ar
                 }
             }
         } else {
@@ -179,32 +225,55 @@ pub fn carve_and_place_door(
 
             // Bloco Inferior (Lower Half)
             let mut lower_props = HashMap::new();
-            lower_props.insert("facing".to_string(), Value::String(facing.as_str().to_string()));
+            lower_props.insert(
+                "facing".to_string(),
+                Value::String(facing.as_str().to_string()),
+            );
             lower_props.insert("half".to_string(), Value::String("lower".to_string()));
             lower_props.insert("hinge".to_string(), Value::String(hinge_side.to_string()));
             lower_props.insert("open".to_string(), Value::String("false".to_string()));
 
             // 🚨 Correção da assinatura: Usar set_block_with_properties_absolute para blocos com NBT
-            let lower_door = BlockWithProperties::new(Block::new(base_door_id), Some(Value::Compound(lower_props)));
+            let lower_door = BlockWithProperties::new(
+                Block::new(base_door_id),
+                Some(Value::Compound(lower_props)),
+            );
             editor.set_block_with_properties_absolute(lower_door, px, y_base + 1, pz, None, None);
 
             if max_h == 2 {
                 // Bloco Superior (Upper Half)
                 let mut upper_props = HashMap::new();
-                upper_props.insert("facing".to_string(), Value::String(facing.as_str().to_string()));
+                upper_props.insert(
+                    "facing".to_string(),
+                    Value::String(facing.as_str().to_string()),
+                );
                 upper_props.insert("half".to_string(), Value::String("upper".to_string()));
                 upper_props.insert("hinge".to_string(), Value::String(hinge_side.to_string()));
                 upper_props.insert("open".to_string(), Value::String("false".to_string()));
 
-                let upper_door = BlockWithProperties::new(Block::new(base_door_id), Some(Value::Compound(upper_props)));
-                editor.set_block_with_properties_absolute(upper_door, px, y_base + 2, pz, None, None);
+                let upper_door = BlockWithProperties::new(
+                    Block::new(base_door_id),
+                    Some(Value::Compound(upper_props)),
+                );
+                editor.set_block_with_properties_absolute(
+                    upper_door,
+                    px,
+                    y_base + 2,
+                    pz,
+                    None,
+                    None,
+                );
             }
 
             // Bandeira (Transom Window) acima da porta se a altura do vão for maior que 2
             if height > 2 {
                 for h in 3..=height {
                     // O material da bandeira segue o material da porta
-                    let transom_block = if base_door_id == IRON_DOOR.id { IRON_BARS } else { GLASS_PANE };
+                    let transom_block = if base_door_id == IRON_DOOR.id {
+                        IRON_BARS
+                    } else {
+                        GLASS_PANE
+                    };
                     editor.set_block_absolute(transom_block, px, y_base + h, pz, None, None);
                 }
             }
@@ -222,11 +291,25 @@ pub fn carve_and_place_door(
             // A rampa só é criada se o degrau para o prédio for de exatos 1 bloco.
             if y_base == ramp_ground_y + 1 {
                 // Slab inferior na coordenada exata do chão à frente da porta
-                editor.set_block_absolute(SMOOTH_STONE_SLAB, rampa_x, ramp_ground_y, rampa_z, None, None);
+                editor.set_block_absolute(
+                    SMOOTH_STONE_SLAB,
+                    rampa_x,
+                    ramp_ground_y,
+                    rampa_z,
+                    None,
+                    None,
+                );
             } else if y_base == ramp_ground_y {
                 // Se a porta e o chão externo estão no mesmo nível, trocamos o chão externo
                 // por asfalto/concreto tátil (Acessibilidade) em frente à porta
-                editor.set_block_absolute(POLISHED_ANDESITE, rampa_x, ramp_ground_y, rampa_z, Some(&[GRASS_BLOCK, DIRT, SAND]), None);
+                editor.set_block_absolute(
+                    POLISHED_ANDESITE,
+                    rampa_x,
+                    ramp_ground_y,
+                    rampa_z,
+                    Some(&[GRASS_BLOCK, DIRT, SAND]),
+                    None,
+                );
             }
         }
     }

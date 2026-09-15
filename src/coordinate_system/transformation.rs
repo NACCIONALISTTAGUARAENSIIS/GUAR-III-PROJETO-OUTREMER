@@ -25,6 +25,7 @@ pub struct CoordTransformer {
 }
 
 impl CoordTransformer {
+    #[allow(dead_code)]
     pub fn scale(&self) -> f64 {
         self.scale
     }
@@ -52,7 +53,7 @@ impl CoordTransformer {
         if len_lat <= f64::EPSILON || len_lng <= f64::EPSILON {
             return Err(format!(
                 "{}: BBox covers zero area (min and max coordinates are identical).",
-                &err_header
+                err_header
             ));
         }
 
@@ -166,6 +167,46 @@ impl CoordTransformer {
 
         XZPoint::new(final_x.round() as i32, final_z.round() as i32)
     }
+
+    /// 🚨 RECONEXÃO: Inverso aproximado de `transform_point`, usado pelo culling
+    /// poligonal grosseiro do Master Control HUD (`master_control.rs`) para saber se
+    /// uma região .mca cai fora do recorte macro antes de baixar dados dela.
+    ///
+    /// Assume altura elipsoidal 0 (mesma aproximação já embutida no forward, que
+    /// chama `ll_to_ecef(..., 0.0)`), então herda o mesmo erro residual de curvatura
+    /// do forward — aceitável para um corte grosseiro de tiles (o chamador já soma um
+    /// halo de 16 blocos de margem), não para geodésia de precisão.
+    ///
+    /// Só é chamada quando a feature `gui` está desligada (único chamador é
+    /// `master_control.rs`, que só entra em cena via `#[cfg(not(feature = "gui"))]`
+    /// em `main.rs`) — daí o `allow(dead_code)` condicional.
+    #[inline(always)]
+    #[cfg_attr(feature = "gui", allow(dead_code))]
+    pub fn inverse_transform(&self, xz: XZPoint) -> Result<LLPoint, String> {
+        let enu_x = xz.x as f64 / self.scale;
+        let enu_n = -(xz.z as f64) / self.scale;
+
+        // Rotação inversa = transposta (rot_matrix é ortonormal). Componente "Up"
+        // assumida 0, o mesmo plano tangente local usado no forward.
+        let dx = self.rot_matrix[0][0] * enu_x + self.rot_matrix[1][0] * enu_n;
+        let dy = self.rot_matrix[0][1] * enu_x + self.rot_matrix[1][1] * enu_n;
+        let dz = self.rot_matrix[0][2] * enu_x + self.rot_matrix[1][2] * enu_n;
+
+        let ecef_x = self.origin_ecef.0 + dx;
+        let ecef_y = self.origin_ecef.1 + dy;
+        let ecef_z = self.origin_ecef.2 + dz;
+
+        // ECEF -> Geodésico (fórmula fechada de Bowring, 1976; ignora altura)
+        let b = WGS84_A * (1.0 - WGS84_E2).sqrt();
+        let ep2 = (WGS84_A * WGS84_A - b * b) / (b * b);
+        let p = (ecef_x * ecef_x + ecef_y * ecef_y).sqrt();
+        let theta = (ecef_z * WGS84_A).atan2(p * b);
+        let lat_rad = (ecef_z + ep2 * b * theta.sin().powi(3))
+            .atan2(p - WGS84_E2 * WGS84_A * theta.cos().powi(3));
+        let lon_rad = ecef_y.atan2(ecef_x);
+
+        LLPoint::new(lat_rad.to_degrees(), lon_rad.to_degrees())
+    }
 }
 
 // (lat meters, lon meters)
@@ -203,6 +244,7 @@ fn lat_distance(lat1: f64, lat2: f64) -> f64 {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn lat_lon_to_minecraft_coords(
     lat: f64,
     lon: f64,

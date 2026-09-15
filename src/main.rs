@@ -35,11 +35,18 @@ mod world_utils;
 use args::Args;
 use clap::Parser;
 use colored::*;
+// Só usados no dashboard TUI sem GUI (`#[cfg(not(feature = "gui"))]` abaixo) — sob
+// `--all-features`/default (`gui` ligada) esse bloco não compila, e o import ficaria
+// "não usado" sem o mesmo cfg aqui.
+#[cfg(not(feature = "gui"))]
+use coordinate_system::geographic::LLBBox;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc;
+#[cfg(not(feature = "gui"))]
+use std::sync::Arc;
 
 #[cfg(feature = "gui")]
 mod gui;
@@ -48,6 +55,8 @@ mod gui;
 mod progress {
     pub fn emit_gui_error(_message: &str) {}
     pub fn emit_gui_progress_update(_progress: f64, _message: &str) {}
+    // Stub sem chamador no build sem GUI (nada em `!gui` invoca preview de mapa).
+    #[allow(dead_code)]
     pub fn emit_map_preview_ready() {}
     pub fn emit_open_mcworld_file(_path: &str) {}
     pub fn is_running_with_gui() -> bool {
@@ -95,7 +104,7 @@ pub fn run_generation_pipeline(
             }
         };
 
-        let msg = format!("Created new world at: {}", world_path.display().to_string());
+        let msg = format!("Created new world at: {}", world_path.display());
         if let Some(ref tx) = telemetry_tx {
             let _ = tx.send(master_control::BesmSignal::Log(msg.clone()));
         }
@@ -174,7 +183,7 @@ pub fn run_generation_pipeline(
             1,    // prioridade máxima
             -15.8000,
             -47.8600,
-            0.0
+            0.0,
         )));
     }
 
@@ -199,7 +208,19 @@ pub fn run_generation_pipeline(
 
     for feature in optimized_features {
         // Features from government providers with specific semantic groups go direct
-        let is_provider_specific = matches!(
+        //
+        // 🚨 RECONEXÃO (Advertising): `SemanticGroup::Advertising` sempre caiu aqui como
+        // `false` — a condição de `source` só reconhecia "CAESB"/"CityGML"/"IFC"/"Indoor",
+        // e o `source` de um outdoor/totem do OSM é sempre "osm". Isso jogava toda
+        // feature de propaganda para `osm_convertible_features`, que vira
+        // `ProcessedElement` via `into_processed_element()` — mas `advertising::generate_advertising`
+        // (element_processing/advertising.rs) foi escrito para consumir a `Feature`
+        // original (geometria + atributos brutos, para o PCA de orientação do painel),
+        // não o `ProcessedNode`/`ProcessedWay` traduzido. Diferente de Sanitation/Power/
+        // Telecom/Indoor, Advertising é agnóstico de provedor por design (aceita OSM,
+        // CSV, GeoJSON, PostGIS, 3D Tiles — ver o doc-comment do módulo), então aqui ele
+        // não depende do `source` conter um nome de provedor governamental específico.
+        let is_provider_specific = (matches!(
             feature.semantic_group,
             providers::SemanticGroup::Sanitation
                 | providers::SemanticGroup::Sewage
@@ -210,7 +231,8 @@ pub fn run_generation_pipeline(
         ) && (feature.source.contains("CAESB")
             || feature.source.contains("CityGML")
             || feature.source.contains("IFC")
-            || feature.source.contains("Indoor"));
+            || feature.source.contains("Indoor")))
+            || feature.semantic_group == providers::SemanticGroup::Advertising;
 
         if is_provider_specific {
             provider_specific_features.push(feature);
@@ -235,8 +257,8 @@ pub fn run_generation_pipeline(
         &args.bbox,
         args.scale_h,
     )
-        .unwrap()
-        .1;
+    .unwrap()
+    .1;
 
     // ================================================================
     // 🚨 RECONEXÃO ESTRUTURAL (BESM-6): Elevação real e Bioma real
@@ -326,7 +348,7 @@ pub fn run_generation_pipeline(
                 element.kind(),
                 element.tags(), // Aqui é correto usar função em element, a feature foi resolvida no mod.rs
             )
-                .expect("Failed to write to output file");
+            .expect("Failed to write to output file");
         }
         let msg = "Arquivo de depuração gerado: parsed_osm_data.txt.".to_string();
         if let Some(ref tx) = telemetry_tx {
@@ -370,13 +392,13 @@ pub fn run_generation_pipeline(
         elevation_data: elevation_data.map(std::sync::Arc::new), // 🚨 Reconexão: elevação real
         biome_grid: biome_grid.map(std::sync::Arc::new), // 🚨 Reconexão: bioma real
         ambient_forest: args.terrain && !args.no_ambient_forest, // 🚨 Reconexão: floresta ambiente
-        telemetry_tx: telemetry_tx,
+        telemetry_tx,
     };
 
     match data_processing::generate_world_with_options(
         parsed_elements,
         xzbbox,
-        args.bbox.clone(),
+        args.bbox,
         &args,
         generation_options,
     ) {
@@ -472,7 +494,84 @@ fn main() {
     #[cfg(not(feature = "gui"))]
     {
         if args_count == 1 {
-            let mut dashboard = master_control::MasterControl::new();
+            // 🚨 RECONEXÃO: `MasterControl::new` passou a exigir `Arc<ProviderManager>`
+            // e `Arc<Args>` (para que `dispatch_generation`/`generate_region_from_global`
+            // tenham escala real e providers registrados), mas este chamador nunca foi
+            // atualizado — só compila builds com a feature `gui` (default), então o
+            // caminho `--no-default-features` (dashboard sem GUI) nunca compilou de
+            // fato. Não há CLI args neste ponto (o dashboard é lançado sem nenhum
+            // argumento), então montamos um `Args` mínimo com os mesmos defaults do
+            // clap e um bbox provisório (Praça dos Três Poderes) só para satisfazer o
+            // tipo — cada `MacroRegion` escolhido dentro do HUD define seu próprio
+            // bbox real em `dispatch_generation`, o `bbox` daqui nunca é usado para
+            // delimitar geração.
+            let default_args = Args {
+                bbox: LLBBox::new(-15.81, -47.87, -15.79, -47.85)
+                    .expect("bbox provisório do dashboard é inválido"),
+                file: None,
+                save_json_file: None,
+                path: None,
+                bedrock: false,
+                downloader: args::Downloader::Requests,
+                threads: 0,
+                offline: false,
+                scale_h: 1.33,
+                scale_v: 1.15,
+                scale: None,
+                local_shp: None,
+                local_geojson: None,
+                local_lidar: None,
+                wfs_endpoint: None,
+                epsg: 31983,
+                dem: args::DemSource::AwsSrtm,
+                local_dem: None,
+                cache_dir: PathBuf::from("./arnis_cache"),
+                max_area_km2: 10000.0,
+                max_dem_tiles: 200,
+                max_osm_features: 5_000_000,
+                priority_layer: vec![
+                    args::LayerPriority::Shp,
+                    args::LayerPriority::Lidar,
+                    args::LayerPriority::Wfs,
+                    args::LayerPriority::Geojson,
+                    args::LayerPriority::Osm,
+                ],
+                enable_underground_wfs: false,
+                postgis_url: None,
+                local_gpkg: None,
+                local_pbf: None,
+                mvt_endpoint: None,
+                local_citygml: None,
+                local_ifc: None,
+                local_mesh: None,
+                ibge_shapefile: None,
+                sicar_shapefile: None,
+                mapbiomas_tiff: None,
+                mapbiomas_top_left_lat: None,
+                mapbiomas_top_left_lon: None,
+                mapbiomas_pixel_size_deg: None,
+                no_ambient_forest: false,
+                ground_level: -62,
+                terrain: false,
+                interior: true,
+                roof: true,
+                fillground: false,
+                city_boundaries: true,
+                debug: false,
+                timeout: None,
+                spawn_lat: None,
+                spawn_lng: None,
+            };
+
+            let mut provider_manager = providers::ProviderManager::new();
+            provider_manager.register_provider(Box::new(
+                providers::osm_provider::OSMProvider::new(default_args.scale_h),
+            ));
+
+            let mut dashboard = master_control::MasterControl::new(
+                Arc::new(provider_manager),
+                Arc::new(default_args),
+            );
             dashboard.run_interactive_shell();
             return;
         }

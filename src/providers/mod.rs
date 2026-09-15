@@ -1,23 +1,23 @@
 pub mod citygml_provider;
 pub mod csv_provider;
-pub mod ifc_provider;
 pub mod dem_provider;
 pub mod dsm_provider;
 pub mod gdf_provider;
 pub mod geojson_provider;
 pub mod gpkg_provider;
+pub mod ifc_provider;
 pub mod indoor_utility_provider; // 🚨 Tornado público para que outros módulos possam usá-lo
+pub mod kml_provider;
 pub mod lidar_provider;
 pub mod mesh_provider;
+pub mod mvt_provider;
 pub mod osm_provider;
 pub mod pbf_provider;
-pub mod raster_provider;
-pub mod vegetation_provider;
-pub mod mvt_provider;
-pub mod wfs_provider;
-pub mod kml_provider;
 pub mod postgis_provider;
+pub mod raster_provider;
 mod tiles3d_provider;
+pub mod vegetation_provider;
+pub mod wfs_provider;
 
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::LLBBox;

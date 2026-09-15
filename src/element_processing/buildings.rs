@@ -3,7 +3,10 @@ use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::clipping::clip_way_to_bbox;
 // 🚨 BESM-6: Importações de cores e spatial_seed corrigidas
-use crate::colors::{ColorContext, apply_micro_variation, apply_weathering, color_text_to_rgb_tuple, resolve_roof_color, resolve_wall_color, spatial_seed};
+use crate::colors::{
+    apply_micro_variation, apply_weathering, color_text_to_rgb_tuple, resolve_roof_color,
+    resolve_wall_color, spatial_seed, ColorContext,
+};
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::historic;
@@ -832,8 +835,10 @@ impl BuildingStyle {
 
         // 🚨 TWEAK BESM-6: Injeta ColorContext para resolver blocos coloridos e de bioma
         // Calculate building center for ColorContext
-        let center_x = element.nodes.iter().map(|n| n.x).sum::<i32>() / element.nodes.len().max(1) as i32;
-        let center_z = element.nodes.iter().map(|n| n.z).sum::<i32>() / element.nodes.len().max(1) as i32;
+        let center_x =
+            element.nodes.iter().map(|n| n.x).sum::<i32>() / element.nodes.len().max(1) as i32;
+        let center_z =
+            element.nodes.iter().map(|n| n.z).sum::<i32>() / element.nodes.len().max(1) as i32;
 
         let ctx = ColorContext {
             raw_color_tag: element.tags.get("building:colour").map(|s| s.as_str()),
@@ -845,7 +850,8 @@ impl BuildingStyle {
             center_z,
             is_highway: false,
             is_pipeline: false,
-            is_landmark: element.tags.contains_key("heritage") || element.tags.contains_key("historic"),
+            is_landmark: element.tags.contains_key("heritage")
+                || element.tags.contains_key("historic"),
             building_area: Some(footprint_size as f64),
             district_seed: (element.id % 997) as u32,
             distance_to_center: 0.5,
@@ -989,7 +995,9 @@ impl BuildingStyle {
 
         // Roof block: specific material for roofs or resolve from COLORS.RS
         let roof_block_from_colors = resolve_roof_color(&ctx);
-        let roof_block = preset.roof_block.or(Some(Block::new(roof_block_from_colors.0 as u16)));
+        let roof_block = preset
+            .roof_block
+            .or(Some(Block::new(roof_block_from_colors.0 as u16)));
 
         // Windows: default to true unless explicitly disabled
         let has_windows = preset.has_windows.unwrap_or(true);
@@ -1042,7 +1050,7 @@ struct BuildingConfig {
     has_single_door: bool,
     category: BuildingCategory,
     facade_map: Option<Lod3FacadeMap>, // 🚨 BESM-6: Injeção da Matriz de Fachada
-    element_id: u64, // Usado para seeds do weathering
+    element_id: u64,                   // Usado para seeds do weathering
 }
 
 /// Building bounds calculated from nodes
@@ -1082,9 +1090,9 @@ fn should_skip_underground_building(element: &ProcessedWay) -> bool {
     // 🚨 BESM-6 Tweak: Infraestrutura e Galerias da CAESB DEVEM ser geradas embaixo da terra
     if element.tags.get("diameter").is_some()
         || element
-        .tags
-        .get("min_height")
-        .is_some_and(|v| v.starts_with("-"))
+            .tags
+            .get("min_height")
+            .is_some_and(|v| v.starts_with("-"))
     {
         return false;
     }
@@ -1550,10 +1558,10 @@ fn generate_roof_only_structure(
         GLASS
     } else if element.tags.get("colour").map(|s: &String| s.as_str()) == Some("white")
         || element
-        .tags
-        .get("building:colour")
-        .map(|s: &String| s.as_str())
-        == Some("white")
+            .tags
+            .get("building:colour")
+            .map(|s: &String| s.as_str())
+            == Some("white")
     {
         SMOOTH_QUARTZ
     } else {
@@ -1758,7 +1766,8 @@ fn build_wall_ring(
                         let is_west_facing = (bx % 2 == 0); // Aproximação de fachada exposta à chuva do cerrado
 
                         // Aplica o desgaste
-                        let weathered_rgb = apply_weathering(raw_rgb, seed, is_west_facing, h as f64);
+                        let weathered_rgb =
+                            apply_weathering(raw_rgb, seed, is_west_facing, h as f64);
 
                         // Aplica variação microscópica
                         let final_rgb = apply_micro_variation(weathered_rgb, seed + h as u32);
@@ -1949,7 +1958,11 @@ fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingC
     // o volume "flutuar" — só se aplica ao primeiro pavimento (abaixo do 1º piso real).
     if config.category == BuildingCategory::Government && h <= config.start_y_offset + 3 {
         let is_pilotis_pillar = (bx + bz) % 6 == 0;
-        return if is_pilotis_pillar { config.wall_block } else { AIR };
+        return if is_pilotis_pillar {
+            config.wall_block
+        } else {
+            AIR
+        };
     }
 
     if !config.has_windows {
@@ -2179,13 +2192,9 @@ fn generate_residential_window_decorations(
                 // Both sides share the same roll (seeded on window centre).
                 if mod6 == 3 || mod6 == 5 {
                     let centre_sum = if mod6 == 3 { bx + bz - 2 } else { bx + bz + 2 };
-                    let shutter_roll = coord_rng(
-                        centre_sum,
-                        config.start_y_offset,
-                        centre_sum,
-                        element.id,
-                    )
-                    .random_range(0u32..100);
+                    let shutter_roll =
+                        coord_rng(centre_sum, config.start_y_offset, centre_sum, element.id)
+                            .random_range(0u32..100);
                     if shutter_roll < 25 {
                         for h in (config.start_y_offset + 1)
                             ..=(config.start_y_offset + config.building_height)
@@ -2232,7 +2241,7 @@ fn generate_residential_window_decorations(
                                 centre_sum.wrapping_add(floor_idx * 5),
                                 element.id,
                             )
-                                .random_range(0u32..100);
+                            .random_range(0u32..100);
 
                             let abs_y = h + config.abs_terrain_offset;
 
@@ -2250,12 +2259,8 @@ fn generate_residential_window_decorations(
                                     None,
                                 );
 
-                                let mut pot_rng = coord_rng(
-                                    bx,
-                                    abs_y,
-                                    bz.wrapping_add(floor_idx),
-                                    element.id,
-                                );
+                                let mut pot_rng =
+                                    coord_rng(bx, abs_y, bz.wrapping_add(floor_idx), element.id);
                                 let pot_here = if mod6 == 1 {
                                     pot_rng.random_range(0u32..100) < 70
                                 } else {
@@ -2647,8 +2652,7 @@ pub fn generate_buildings(
     // (Congresso Nacional, Palácio do Planalto, STF, Itamaraty, Catedral etc.) usam seu
     // desenho artesanal específico em vez do gerador paramétrico genérico abaixo.
     if !element.nodes.is_empty() {
-        let landmark_ground_y =
-            editor.get_ground_level(element.nodes[0].x, element.nodes[0].z);
+        let landmark_ground_y = editor.get_ground_level(element.nodes[0].x, element.nodes[0].z);
         if landmarks::generate_unique_landmark(editor, element, landmark_ground_y) {
             return;
         }
@@ -2847,7 +2851,7 @@ pub fn generate_buildings(
         has_garage_door: style.has_garage_door,
         has_single_door: style.has_single_door,
         category,
-        facade_map, // Injeta a planta real no loop de desenho
+        facade_map,             // Injeta a planta real no loop de desenho
         element_id: element.id, // Injeta ID para weathering determinístico
     };
 
@@ -3578,7 +3582,7 @@ fn generate_gabled_roof(
             let slope_ratio = (distance_to_ridge as f64 / max_distance as f64).min(1.0);
             (roof_peak_height as f64 - (slope_ratio * roof_height_boost as f64)) as i32
         }
-            .max(config.base_height);
+        .max(config.base_height);
 
         roof_heights.insert((x, z), roof_height);
     }
@@ -4191,9 +4195,9 @@ pub fn generate_building_from_relation(
 ) {
     if relation.tags.get("diameter").is_none()
         && relation
-        .tags
-        .get("min_height")
-        .map_or(true, |v| !v.starts_with("-"))
+            .tags
+            .get("min_height")
+            .map_or(true, |v| !v.starts_with("-"))
     {
         if let Some(layer) = relation.tags.get("layer") {
             if layer.parse::<i32>().unwrap_or(0) < 0 {
@@ -4246,9 +4250,9 @@ pub fn generate_building_from_relation(
         relation.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
     let has_parts = is_building_type
         && relation
-        .members
-        .iter()
-        .any(|m| m.role == ProcessedMemberRole::Part);
+            .members
+            .iter()
+            .any(|m| m.role == ProcessedMemberRole::Part);
 
     if !has_parts {
         let mut outer_rings: Vec<Vec<ProcessedNode>> = relation

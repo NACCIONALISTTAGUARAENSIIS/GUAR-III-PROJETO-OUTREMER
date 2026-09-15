@@ -34,7 +34,8 @@ pub struct GenerationOptions {
     pub format: WorldFormat,
     pub level_name: Option<String>,
     pub spawn_point: Option<(i32, i32)>,
-    // 🚨 BESM-6: Features governamentais diretas (CAESB, CityGML, IFC)
+    // 🚨 BESM-6: Features governamentais diretas (CAESB, CityGML, IFC) + Advertising
+    // (agnóstica de provedor — ver `is_provider_specific` em main.rs)
     pub provider_features: Vec<crate::providers::Feature>,
     // 🚨 RECONEXÃO: Elevação real (SRTM/LiDAR), buscada uma vez para o bbox inteiro em
     // main.rs. O Scanline abaixo fatia esta grade densa em `bare_earth_cache` por região.
@@ -144,14 +145,16 @@ pub fn generate_underground_infrastructure(
                         let a = rx as f64 + 0.5;
                         let b = ry as f64 + 0.5;
 
-                        let val = (wx as f64 * wx as f64) / (a * a) + (wy as f64 * wy as f64) / (b * b);
+                        let val =
+                            (wx as f64 * wx as f64) / (a * a) + (wy as f64 * wy as f64) / (b * b);
 
                         if val <= 1.0 {
                             // Shell Thickness Check (Aproximação heurística de parede)
                             let inner_a = (rx - 1).max(0) as f64 + 0.5;
                             let inner_b = (ry - 1).max(0) as f64 + 0.5;
                             let inner_val = if inner_a > 0.5 && inner_b > 0.5 {
-                                (wx as f64 * wx as f64) / (inner_a * inner_a) + (wy as f64 * wy as f64) / (inner_b * inner_b)
+                                (wx as f64 * wx as f64) / (inner_a * inner_a)
+                                    + (wy as f64 * wy as f64) / (inner_b * inner_b)
                             } else {
                                 2.0 // Força ser parede se o tubo for muito pequeno
                             };
@@ -172,8 +175,8 @@ pub fn generate_underground_infrastructure(
                                     None,
                                 );
                             } else {
-                                let core_block = if fluid_block.is_some() && wy <= -ry + (ry / 2).max(1) {
-                                    fluid_block.unwrap() // Preenche água só na metade de baixo
+                                let core_block = if wy <= -ry + (ry / 2).max(1) {
+                                    fluid_block.unwrap_or(AIR) // Preenche água só na metade de baixo
                                 } else {
                                     AIR
                                 };
@@ -338,9 +341,18 @@ fn dispatch_element(
                 historic::generate_historic(editor, node);
             } else if node.tags.contains_key("emergency") {
                 emergency::generate_emergency(editor, node);
-            } else if node.tags.contains_key("advertising") {
-                advertising::generate_advertising(editor, node);
             }
+            // 🚨 RECONEXÃO (Advertising): NÃO há branch `advertising` aqui de propósito.
+            // Havia uma chamada `advertising::generate_advertising(editor, node)` neste
+            // ponto, mas com assinatura incompatível com a função real (que exige
+            // `&Feature` + `&Args` + `&Ground`, não um `&ProcessedNode` cru) — nunca
+            // compilava corretamente com o contrato atual do módulo. Como
+            // `SemanticGroup::Advertising` agora é roteado direto (ver `is_provider_specific`
+            // em `main.rs` e o branch de `provider_features` acima em
+            // `generate_world_with_options`), nenhuma feature de propaganda chega mais
+            // como `ProcessedElement` genérico neste dispatcher — a Feature original
+            // (com geometria e atributos intactos) é entregue a
+            // `advertising::generate_advertising` antes de ser convertida.
         }
         ProcessedElement::Relation(rel) => {
             let is_building_relation = rel.tags.contains_key("building")
@@ -356,10 +368,10 @@ fn dispatch_element(
                 );
             } else if rel.tags.contains_key("water")
                 || rel
-                .tags
-                .get("natural")
-                .map(|val| val == "water" || val == "bay")
-                .unwrap_or(false)
+                    .tags
+                    .get("natural")
+                    .map(|val| val == "water" || val == "bay")
+                    .unwrap_or(false)
             {
                 water_areas::generate_water_areas_from_relation(editor, rel, xzbbox);
             } else if rel.tags.contains_key("natural") {
@@ -391,6 +403,133 @@ fn dispatch_element(
     }
 }
 
+/// 🚨 RECONEXÃO: Gera UMA região (.mca) isolada a partir de uma fatia de `Feature`
+/// já pré-filtrada por bbox — usada pelo Master Control HUD (`master_control.rs`,
+/// modo Tile Streaming interativo sem GUI) para baixar e desenhar região por região
+/// sob demanda, em vez do Scanline global de `generate_world_with_options` abaixo.
+/// `master_control.rs::dispatch_generation` chamava esta função, mas ela nunca havia
+/// sido escrita — não compilava.
+///
+/// Deliberadamente reduzida frente ao Scanline principal: o HUD busca cada região
+/// avulsa sob demanda, sem o pré-processamento único de `ElevationData`/bioma real
+/// que `main.rs` faz para o bbox inteiro antes do Scanline — então aqui é sempre chão
+/// plano (`Ground::new_flat`) e sem floresta ambiente. Aceitável para o preview
+/// interativo do HUD; uma exportação final continua passando por
+/// `generate_world_with_options`.
+///
+/// Só é chamada quando a feature `gui` está desligada (`master_control.rs` é o único
+/// chamador, e ele só entra em cena via `#[cfg(not(feature = "gui"))]` em `main.rs`) —
+/// daí o `allow(dead_code)` condicional, para não acusar código morto num build com
+/// GUI que nunca deveria mesmo chamar esta função.
+#[cfg_attr(feature = "gui", allow(dead_code))]
+pub fn generate_region_from_global(
+    editor: &mut WorldEditor,
+    features: &[crate::providers::Feature],
+    args: &Args,
+    // Não usado: `features` e `editor` já estão em espaço Minecraft (XZ) — a
+    // transformação geográfica já aconteceu em `master_control.rs` antes de chamar
+    // esta função. Mantido na assinatura só para não forçar o chamador a descartá-lo.
+    _transformer: &crate::coordinate_system::transformation::CoordTransformer,
+) {
+    let (min_x, min_z) = editor.get_min_coords();
+    let (max_x, max_z) = editor.get_max_coords();
+    let xzbbox = XZBBox::new(min_x, max_x, min_z, max_z);
+
+    // Mesma bifurcação de `main.rs::run_generation_pipeline` (`is_provider_specific`):
+    // infra CAESB (Sanitation/Sewage/Utility/Power/Telecom/Indoor governamental) e
+    // Advertising vão direto pro motor especializado; o resto vira `ProcessedElement`
+    // pro dispatcher genérico.
+    let mut provider_specific_features: Vec<&crate::providers::Feature> = Vec::new();
+    let mut osm_elements: Vec<ProcessedElement> = Vec::new();
+
+    for feature in features {
+        let is_provider_specific = (matches!(
+            feature.semantic_group,
+            crate::providers::SemanticGroup::Sanitation
+                | crate::providers::SemanticGroup::Sewage
+                | crate::providers::SemanticGroup::Utility
+                | crate::providers::SemanticGroup::Power
+                | crate::providers::SemanticGroup::Telecom
+                | crate::providers::SemanticGroup::Indoor
+        ) && (feature.source.contains("CAESB")
+            || feature.source.contains("CityGML")
+            || feature.source.contains("IFC")
+            || feature.source.contains("Indoor")))
+            || feature.semantic_group == crate::providers::SemanticGroup::Advertising;
+
+        if is_provider_specific {
+            provider_specific_features.push(feature);
+        } else {
+            osm_elements.push(feature.clone().into_processed_element());
+        }
+    }
+
+    let highway_connectivity = highways::build_highway_connectivity_map(&osm_elements);
+    let mut flood_fill_cache = FloodFillCache::new();
+    let building_footprints = flood_fill_cache.collect_building_footprints(&osm_elements, &xzbbox);
+
+    let suppressed_building_outlines: HashSet<u64> = {
+        let mut outlines = HashSet::new();
+        for element in &osm_elements {
+            if let ProcessedElement::Relation(rel) = element {
+                let is_building_type =
+                    rel.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
+                if is_building_type
+                    && rel
+                        .members
+                        .iter()
+                        .any(|m| m.role == ProcessedMemberRole::Part)
+                {
+                    for member in &rel.members {
+                        if member.role == ProcessedMemberRole::Outer {
+                            outlines.insert(member.way.id);
+                        }
+                    }
+                }
+            }
+        }
+        outlines
+    };
+
+    // Ver o comentário sobre `Arc<Ground>` independente em `generate_world_with_options`
+    // logo abaixo: precisamos de `&Ground` E `&mut editor` na mesma chamada de
+    // `advertising::generate_advertising`, e pegar o Ground emprestado do próprio
+    // `editor` colidiria com esse empréstimo mutável.
+    let ground_arc = Arc::new(Ground::new_flat(args.ground_level));
+    editor.set_ground(ground_arc.clone());
+
+    for element in osm_elements {
+        dispatch_element(
+            element,
+            editor,
+            args,
+            &highway_connectivity,
+            &mut flood_fill_cache,
+            &building_footprints,
+            &suppressed_building_outlines,
+            &xzbbox,
+        );
+    }
+
+    for feature in provider_specific_features {
+        let is_caesb_infrastructure_feature = matches!(
+            feature.semantic_group,
+            crate::providers::SemanticGroup::Sanitation
+                | crate::providers::SemanticGroup::Utility
+                | crate::providers::SemanticGroup::Sewage
+                | crate::providers::SemanticGroup::Indoor
+                | crate::providers::SemanticGroup::Power
+                | crate::providers::SemanticGroup::Telecom
+        );
+
+        if is_caesb_infrastructure_feature {
+            man_made::generate_from_provider_feature(editor, feature, args);
+        } else if feature.semantic_group == crate::providers::SemanticGroup::Advertising {
+            advertising::generate_advertising(editor, feature, args, &ground_arc);
+        }
+    }
+}
+
 pub fn generate_world_with_options(
     elements: Vec<ProcessedElement>,
     xzbbox: XZBBox,
@@ -404,7 +543,7 @@ pub fn generate_world_with_options(
     let mut editor: WorldEditor = WorldEditor::new_with_format_and_name(
         options.path,
         &xzbbox,
-        llbbox.clone(),
+        llbbox,
         options.format,
         options.level_name.clone(),
         options.spawn_point,
@@ -438,9 +577,9 @@ pub fn generate_world_with_options(
                     rel.tags.get("type").map(|t: &String| t.as_str()) == Some("building");
                 if is_building_type
                     && rel
-                    .members
-                    .iter()
-                    .any(|m| m.role == ProcessedMemberRole::Part)
+                        .members
+                        .iter()
+                        .any(|m| m.role == ProcessedMemberRole::Part)
                 {
                     for member in &rel.members {
                         if member.role == ProcessedMemberRole::Outer {
@@ -550,8 +689,17 @@ pub fn generate_world_with_options(
                 Ground::new_flat(args.ground_level)
             };
 
+            // 🚨 RECONEXÃO (Advertising): Mantemos um `Arc<Ground>` próprio aqui (em vez de
+            // só `editor.set_ground(...)` e reler via `editor.get_ground()` mais abaixo)
+            // porque `advertising::generate_advertising` precisa de `&mut editor` E
+            // `&Ground` ao mesmo tempo na mesma chamada — pegar o `Ground` emprestado do
+            // próprio `editor` colidiria com o empréstimo mutável exigido pela função.
+            // Um `Arc` independente, clonado antes de entregar o outro para o editor,
+            // evita o conflito de borrow sem custo real (é só um Arc::clone, O(1)).
+            let local_ground_arc = Arc::new(local_ground);
+
             // Injeta o chão local no editor para que as árvores saibam onde nascer
-            editor.set_ground(Arc::new(local_ground));
+            editor.set_ground(local_ground_arc.clone());
 
             // 2. GERAÇÃO FÍSICA DO CHÃO NA REGIÃO
             let chunk_min_x = rx * 32;
@@ -702,6 +850,37 @@ pub fn generate_world_with_options(
 
                     if is_caesb_infrastructure_feature {
                         man_made::generate_from_provider_feature(&mut editor, feature, args);
+                        continue;
+                    }
+
+                    // 🚨 RECONEXÃO (Advertising): totens, outdoors e painéis MUB.
+                    //
+                    // Antes desta correção, `SemanticGroup::Advertising` nunca era
+                    // atribuído por nenhum provedor (`OSMProvider::determine_semantic_group`
+                    // caía sempre no fallback `Other`), e mesmo que fosse, o filtro
+                    // `is_provider_specific` de `main.rs` só deixava passar Sanitation/
+                    // Utility/Sewage/Indoor/Power/Telecom vindos de CAESB/CityGML/IFC —
+                    // então todo elemento `advertising=*` ia para `into_processed_element()`
+                    // e caía no dispatcher genérico de `ProcessedElement` (`dispatch_element`
+                    // abaixo), que chamava `advertising::generate_advertising(editor, node)`
+                    // com a assinatura ERRADA (a função exige `&Feature` + `&Args` + `&Ground`
+                    // para a extração PCA da geometria e o cálculo de nível do chão, não um
+                    // `&ProcessedNode` cru) — ou seja, nenhum outdoor/totem real do DF jamais
+                    // era desenhado, apesar do dado já vir baixado da Overpass
+                    // (`retrieve_data.rs` já pede `nwr["advertising"]`).
+                    //
+                    // Com `SemanticGroup::Advertising` agora atribuído e incluído em
+                    // `is_provider_specific`, a Feature chega aqui intacta (geometria +
+                    // atributos brutos: `angle`/`direction`, `material`, `layer`, `level`)
+                    // e é desenhada pelo motor especializado direto, sem passar pelo
+                    // dispatcher genérico.
+                    if feature.semantic_group == crate::providers::SemanticGroup::Advertising {
+                        advertising::generate_advertising(
+                            &mut editor,
+                            feature,
+                            args,
+                            &local_ground_arc,
+                        );
                         continue;
                     }
 

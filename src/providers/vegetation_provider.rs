@@ -30,7 +30,7 @@ pub const BIOME_CAMPO_SUJO: u16 = 4; // Arbustos espa�ados, gram�neas
 pub const BIOME_VEREDA: u16 = 5; // Buritis, solo alagado, nascentes
 pub const BIOME_CAMPO_RUPESTRE: u16 = 6; // Afloramentos rochosos, capim
 pub const BIOME_CAMPO_LIMPO: u16 = 7; // Campinas abertas: s� gram�neas, sem arbustos
-                                         // M�scaras de prote��o legal (Bitwise flags)
+                                      // M�scaras de prote��o legal (Bitwise flags)
 pub const MASK_APP_SICAR: u16 = 0x8000; // �rea de Preserva��o Permanente (For�a vegeta��o m�xima)
 
 /// Infere a fitofisionomia real a partir dos atributos do DBF do shapefile do IBGE.
@@ -244,16 +244,16 @@ impl VegetationProvider {
                             // classes 1/2 = Floresta/Formação Natural n�o Florestal).
                             // Se for classe urbana (24) ou �gua (33), ignoramos a vegeta��o aqui.
                             let mut base_biome = match mapbiomas_class {
-                                3 => BIOME_CERRADAO,        // Forest Formation: dossel fechado
-                                4 => BIOME_CERRADO_SS,      // Savanna Formation: o Cerrado t�pico
+                                3 => BIOME_CERRADAO,              // Forest Formation: dossel fechado
+                                4 => BIOME_CERRADO_SS, // Savanna Formation: o Cerrado t�pico
                                 5 | 6 | 49 => BIOME_MATA_GALERIA, // Mangue/Mata Alag�vel/Restinga Arb�rea
-                                9 => BIOME_CERRADO_SS,      // Silvicultura: trata como matriz aberta
-                                10 => BIOME_CAMPO_SUJO,     // Cobertura Herb�cea/Arbustiva mista
-                                11 | 50 => BIOME_VEREDA,    // Wetland/Restinga Herb�cea: solo alagado
-                                12 => BIOME_CAMPO_LIMPO,    // Grassland: campo limpo, s� gram�neas
-                                15 => BIOME_CAMPO_SUJO,     // Pastagem
+                                9 => BIOME_CERRADO_SS, // Silvicultura: trata como matriz aberta
+                                10 => BIOME_CAMPO_SUJO, // Cobertura Herb�cea/Arbustiva mista
+                                11 | 50 => BIOME_VEREDA, // Wetland/Restinga Herb�cea: solo alagado
+                                12 => BIOME_CAMPO_LIMPO, // Grassland: campo limpo, s� gram�neas
+                                15 => BIOME_CAMPO_SUJO, // Pastagem
                                 29 => BIOME_CAMPO_RUPESTRE, // Afloramento Rochoso
-                                13 => BIOME_CERRADO_SS,     // Outra �rea n�o vegetada (fallback conservador)
+                                13 => BIOME_CERRADO_SS, // Outra �rea n�o vegetada (fallback conservador)
                                 _ => BIOME_NONE,
                             };
 

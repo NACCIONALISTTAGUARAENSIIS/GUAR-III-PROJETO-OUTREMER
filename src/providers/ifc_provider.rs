@@ -5,16 +5,16 @@
 //! para o motor Voxel, utilizando uma âncora geodésica para converter o Cartesiano Local
 //! do CAD/Revit para o Sistema Global WGS84 -> Minecraft XZ.
 
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::cartesian::XZPoint;
+use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 
 use std::collections::HashMap;
+use std::f64::consts::PI;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::f64::consts::PI;
 
 pub struct IfcProvider {
     pub file_path: PathBuf,
@@ -105,7 +105,10 @@ impl DataProvider for IfcProvider {
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] 🏗️ Iniciando scanner BIM/IFC de ultra-detalhe: {}", self.file_path.display());
+        println!(
+            "[INFO] 🏗️ Iniciando scanner BIM/IFC de ultra-detalhe: {}",
+            self.file_path.display()
+        );
 
         let file = File::open(&self.file_path)
             .map_err(|e| format!("Falha ao abrir arquivo IFC: {}", e))?;
@@ -211,8 +214,9 @@ impl DataProvider for IfcProvider {
                         local_z /= points_found as f64;
 
                         // Mapeia o Cartesiano Local (X, Y) para o Global e gera a coordenada Minecraft XZ
-                        if let Some(xz_point) = self.transform_local_to_global(local_x, local_y, &transformer) {
-
+                        if let Some(xz_point) =
+                            self.transform_local_to_global(local_x, local_y, &transformer)
+                        {
                             // Cria as tags estruturais
                             let mut tags = HashMap::new();
                             tags.insert("source".to_string(), "BIM_IFC_Model".to_string());

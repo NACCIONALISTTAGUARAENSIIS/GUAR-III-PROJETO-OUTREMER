@@ -2,9 +2,9 @@ use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZPoint;
-use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::deterministic_rng::coord_rng;
 use crate::element_processing::tree::{Tree, TreeType};
+use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedElement, ProcessedWay};
 use crate::world_editor::WorldEditor;
 use rand::Rng;
@@ -381,8 +381,7 @@ fn generate_highways_internal(
                 .iter()
                 .filter(|n| {
                     n.tags.get("highway").map(|s: &String| s.as_str()) == Some("crossing")
-                        && n.tags.get("crossing").map(|s: &String| s.as_str())
-                            != Some("unmarked")
+                        && n.tags.get("crossing").map(|s: &String| s.as_str()) != Some("unmarked")
                 })
                 .map(|n| (n.x, n.z))
                 .collect();
@@ -679,7 +678,14 @@ fn generate_highways_internal(
                         // de travessia marcada. Só em vias reais (não calçadas/trilhas).
                         if block_range >= 2 && crossing_points.contains(&(*bx, *bz)) {
                             paint_zebra_crossing(
-                                editor, *bx, *bz, norm_x, norm_z, dir_x, dir_z, block_range,
+                                editor,
+                                *bx,
+                                *bz,
+                                norm_x,
+                                norm_z,
+                                dir_x,
+                                dir_z,
+                                block_range,
                             );
                         }
 
@@ -694,10 +700,10 @@ fn generate_highways_internal(
                         {
                             let tree_offset = block_range + (grass_buffer / 2).max(1);
                             for side in [1.0_f64, -1.0_f64] {
-                                let tx =
-                                    (*bx as f64 + tree_offset as f64 * norm_x * side).round() as i32;
-                                let tz =
-                                    (*bz as f64 + tree_offset as f64 * norm_z * side).round() as i32;
+                                let tx = (*bx as f64 + tree_offset as f64 * norm_x * side).round()
+                                    as i32;
+                                let tz = (*bz as f64 + tree_offset as f64 * norm_z * side).round()
+                                    as i32;
 
                                 let mut tree_rng = coord_rng(tx, 0, tz, way.id);
                                 if tree_rng.random_bool(0.6) {

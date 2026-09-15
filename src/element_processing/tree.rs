@@ -145,9 +145,9 @@ pub enum TreeType {
     IpeAmarelo,
     IpeRoxo,
     IpeBranco,
-    Buriti,   // Palmeira de Vereda
-    Sucupira, // Tronco muito retorcido
-    Copaiba,  // Copa grande e arredondada
+    Buriti,     // Palmeira de Vereda
+    Sucupira,   // Tronco muito retorcido
+    Copaiba,    // Copa grande e arredondada
     Pequi,      // Casca grossa e corticeira, copa larga e densa
     Barbatimao, // Arbusto/sub-bosque, copa rala e baixa
     Angico,     // Leguminosa alta, copa esparsa e plumosa
@@ -210,7 +210,9 @@ impl Tree<'_> {
             TreeType::Barbatimao
         } else if species.contains("angico") || species.contains("anadenanthera") {
             TreeType::Angico
-        } else if species.contains("jatobá") || species.contains("jatoba") || species.contains("hymenaea")
+        } else if species.contains("jatobá")
+            || species.contains("jatoba")
+            || species.contains("hymenaea")
         {
             TreeType::Jatoba
         } else if species.contains("baru") || species.contains("dipteryx") {
@@ -514,45 +516,45 @@ impl Tree<'_> {
                 };
                 if rng.random_bool(0.5)
                     && !editor.check_for_block_absolute(
-                    current_x + 1,
-                    wy,
-                    current_z,
-                    Some(&blacklist),
-                    None,
-                )
+                        current_x + 1,
+                        wy,
+                        current_z,
+                        Some(&blacklist),
+                        None,
+                    )
                 {
                     editor.set_block_if_absent_absolute(support_b, current_x + 1, wy, current_z);
                 }
                 if rng.random_bool(0.5)
                     && !editor.check_for_block_absolute(
-                    current_x - 1,
-                    wy,
-                    current_z,
-                    Some(&blacklist),
-                    None,
-                )
+                        current_x - 1,
+                        wy,
+                        current_z,
+                        Some(&blacklist),
+                        None,
+                    )
                 {
                     editor.set_block_if_absent_absolute(support_b, current_x - 1, wy, current_z);
                 }
                 if rng.random_bool(0.5)
                     && !editor.check_for_block_absolute(
-                    current_x,
-                    wy,
-                    current_z + 1,
-                    Some(&blacklist),
-                    None,
-                )
+                        current_x,
+                        wy,
+                        current_z + 1,
+                        Some(&blacklist),
+                        None,
+                    )
                 {
                     editor.set_block_if_absent_absolute(support_b, current_x, wy, current_z + 1);
                 }
                 if rng.random_bool(0.5)
                     && !editor.check_for_block_absolute(
-                    current_x,
-                    wy,
-                    current_z - 1,
-                    Some(&blacklist),
-                    None,
-                )
+                        current_x,
+                        wy,
+                        current_z - 1,
+                        Some(&blacklist),
+                        None,
+                    )
                 {
                     editor.set_block_if_absent_absolute(support_b, current_x, wy, current_z - 1);
                 }
@@ -607,11 +609,11 @@ impl Tree<'_> {
                         if force_split || rng.random_bool(0.5) {
                             let sub_angle = angle
                                 + (rng.random_range(30..60) as f64 * PI / 180.0)
-                                * if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+                                    * if rng.random_bool(0.5) { 1.0 } else { -1.0 };
                             for sub_step in 1i32..=2i32 {
                                 let sbx = bx
                                     + (sub_angle.cos() * sub_step as f64 * GOV_H_SCALE).round()
-                                    as i32;
+                                        as i32;
                                 let sbz = bz + (sub_angle.sin() * sub_step as f64).round() as i32;
 
                                 if !editor.check_for_block_absolute(
@@ -1101,7 +1103,12 @@ pub fn generate_chunk(
                 wx,
                 base_height,
                 wz,
-                Some(&[POLISHED_ANDESITE, GRAY_CONCRETE, LIGHT_GRAY_CONCRETE, GRAY_TERRACOTTA]),
+                Some(&[
+                    POLISHED_ANDESITE,
+                    GRAY_CONCRETE,
+                    LIGHT_GRAY_CONCRETE,
+                    GRAY_TERRACOTTA,
+                ]),
                 None,
             ) {
                 continue;

@@ -10,8 +10,8 @@ use rustc_hash::FxHashMap; // BESM-6: Hash O(1) de extrema performance
 use tobj;
 
 // 🚨 BESM-6: Utilizado para gerar um offset de ID único por malha
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Provedor de Malhas 3D de Fotogrametria (Wavefront .obj).
 /// Projetado para ler escaneamentos de drones (Monumentos, Estátuas, Pontes complexas).
@@ -95,9 +95,14 @@ impl DataProvider for MeshProvider {
         // Se a malha já vem em coordenadas reais (UTM), projetamos para WGS84.
         // Se crs_source for None, assumimos Plano Tangente Local (Centro = 0,0,0).
         let proj = if let Some(crs) = &self.crs_source {
-            Some(Proj::new_known_crs(crs, "EPSG:4326", None)
-                .ok()
-                .ok_or(format!("Falha ao inicializar PROJ para CRS {} -> 4326", crs))?)
+            Some(
+                Proj::new_known_crs(crs, "EPSG:4326", None)
+                    .ok()
+                    .ok_or(format!(
+                        "Falha ao inicializar PROJ para CRS {} -> 4326",
+                        crs
+                    ))?,
+            )
         } else {
             None
         };
