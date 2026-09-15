@@ -71,7 +71,12 @@ struct WorldMetadataRaw {
 /// ausente (mundo gerado por uma versão antiga, ou copiado sem o arquivo),
 /// cai para inferir a partir dos nomes dos arquivos `region/r.<rx>.<rz>.mca`
 /// (cada região cobre exatamente 512×512 blocos).
-fn discover_bounds(world_dir: &Path) -> Result<(i32, i32, i32, i32), String> {
+///
+/// `pub(crate)`: também usado por `bluemap_viewer::ensure_config` para
+/// centralizar a câmera inicial do BlueMap no meio do mundo gerado — ver o
+/// comentário lá para o bug real que motivou reaproveitar isto em vez de
+/// aceitar o `start-pos` default do BlueMap ({x: 0, z: 0}).
+pub(crate) fn discover_bounds(world_dir: &Path) -> Result<(i32, i32, i32, i32), String> {
     let metadata_path = world_dir.join("metadata.json");
     if let Ok(raw) = std::fs::read_to_string(&metadata_path) {
         if let Ok(m) = serde_json::from_str::<WorldMetadataRaw>(&raw) {

@@ -141,6 +141,35 @@ fn sanitize_map_id(world_dir: &Path) -> String {
     id
 }
 
+/// Centraliza a câmera inicial do BlueMap no MEIO do retângulo delimitador
+/// real do mundo gerado, em vez de aceitar o `{x: 0, z: 0}` default do
+/// BlueMap — reaproveita a mesma descoberta de limites que
+/// `world_viewer::discover_bounds` já faz para o relevo caseiro (via
+/// `metadata.json`, com fallback pros nomes dos arquivos `region/*.mca`), não
+/// duplicada aqui. Cai para `(0, 0)` (com aviso explícito, nunca em silêncio)
+/// só se os limites não puderem ser descobertos de jeito nenhum.
+fn compute_start_pos(world_dir: &Path) -> (i32, i32) {
+    match crate::world_viewer::discover_bounds(world_dir) {
+        Ok((min_x, max_x, min_z, max_z)) => {
+            let center_x = (min_x + max_x) / 2;
+            let center_z = (min_z + max_z) / 2;
+            println!(
+                "[INFO] Centralizando a câmera inicial do BlueMap em ({center_x}, {center_z}) \
+                 (meio do mundo gerado — o padrão do BlueMap, {{0, 0}}, é o Marco Zero de \
+                 Brasília, quase nunca dentro da área realmente gerada)."
+            );
+            (center_x, center_z)
+        }
+        Err(e) => {
+            eprintln!(
+                "[AVISO] Não foi possível descobrir os limites do mundo para centralizar a \
+                 câmera ({e}); usando o default do BlueMap (0, 0) — pode abrir olhando pro vazio."
+            );
+            (0, 0)
+        }
+    }
+}
+
 /// Garante que `config_dir` tem uma configuração BlueMap válida com um mapa
 /// apontando para `world_dir`. Gera a configuração padrão do zero na
 /// primeira vez (e só na primeira vez — chamadas seguintes reaproveitam o
@@ -192,16 +221,29 @@ fn ensure_config(
             .map_err(|e| format!("Falha ao escrever {core_conf:?}: {e}"))?;
     }
 
+    // 🚨 CORREÇÃO (achado real, testando contra o Guará I+II): o `start-pos`
+    // default do BlueMap é `{x: 0, z: 0}` — o ZERO ABSOLUTO da malha
+    // Minecraft deste motor, que é o Marco Zero fixo de Brasília
+    // (`DF_ORIGIN_LAT/LON` em `transformation.rs`), não necessariamente um
+    // ponto dentro do bbox pedido. Qualquer geração fora do Plano Piloto
+    // central (Guará, Ceilândia, Taguatinga, ...) abre o BlueMap olhando pro
+    // VAZIO — nenhum bloco gerado por perto — parecendo (ao olho, sem
+    // contexto) uma superfície plana travada/quebrada, quando na verdade é
+    // só a câmera longe de qualquer coisa. Ver `compute_start_pos`.
+    let start_pos = compute_start_pos(world_dir);
+
     // Config mínima confirmada suficiente nesta sessão: `world`/`dimension`/
-    // `name` bastam, o resto assume os defaults do próprio BlueMap. Reescrita
-    // toda vez (idempotente) para sempre refletir o `world_dir` pedido nesta
-    // chamada, mesmo que a config já existisse de uma chamada anterior com
-    // outro mundo.
+    // `name`/`start-pos` bastam, o resto assume os defaults do próprio
+    // BlueMap. Reescrita toda vez (idempotente) para sempre refletir o
+    // `world_dir` pedido nesta chamada, mesmo que a config já existisse de
+    // uma chamada anterior com outro mundo.
     let map_conf_path = config_dir.join("maps").join(format!("{map_id}.conf"));
     let map_conf = format!(
-        "world: \"{}\"\ndimension: \"minecraft:overworld\"\nname: \"{}\"\n",
+        "world: \"{}\"\ndimension: \"minecraft:overworld\"\nname: \"{}\"\nstart-pos: {{ x: {}, z: {} }}\n",
         world_dir.display(),
-        map_id
+        map_id,
+        start_pos.0,
+        start_pos.1,
     );
     std::fs::write(&map_conf_path, map_conf)
         .map_err(|e| format!("Falha ao escrever {map_conf_path:?}: {e}"))?;
@@ -353,5 +395,34 @@ mod tests {
         assert_eq!(parse_major("21.0.12"), Some(21));
         assert_eq!(parse_major("25.0.3"), Some(25));
         assert_eq!(parse_major("1.8.0_392"), Some(8));
+    }
+
+    /// Regressão do bug real achado gerando o Guará I+II: `compute_start_pos`
+    /// precisa devolver o MEIO do mundo, não `(0, 0)`, sempre que os limites
+    /// puderem ser descobertos — ver o comentário de `compute_start_pos` e
+    /// `docs/VISUALIZADORES_3D.md` para o achado completo (o BlueMap abria
+    /// olhando pro Marco Zero de Brasília, bem fora do bbox real do Guará).
+    #[test]
+    fn compute_start_pos_centers_on_real_world_bounds() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        std::fs::write(
+            tmp.path().join("metadata.json"),
+            r#"{"minMcX":-18525,"maxMcX":-12821,"minMcZ":3,"maxMcZ":8836,
+                "minGeoLat":-15.86,"maxGeoLat":-15.8,"minGeoLon":-47.99,"maxGeoLon":-47.95}"#,
+        )
+        .unwrap();
+
+        let (x, z) = compute_start_pos(tmp.path());
+        assert_eq!((x, z), (-15673, 4419));
+        // O bug real: a posição default do BlueMap fica bem fora do mundo.
+        assert_ne!((x, z), (0, 0));
+    }
+
+    #[test]
+    fn compute_start_pos_falls_back_to_origin_when_bounds_unknown() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        // Sem metadata.json e sem pasta region/: discover_bounds falha, e
+        // compute_start_pos precisa cair pro (0, 0) sem entrar em pânico.
+        assert_eq!(compute_start_pos(tmp.path()), (0, 0));
     }
 }

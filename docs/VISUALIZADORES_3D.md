@@ -122,6 +122,34 @@ independente (de uma ferramenta madura e completamente alheia a este
 projeto) de que o formato NBT que este motor escreve é um mundo Java Edition
 genuinamente válido.
 
+### Achado #5: o `start-pos` default do BlueMap abre olhando pro Marco Zero de Brasília, não pro mundo gerado
+
+Descoberto ao mostrar o Guará I+II renderizado pela primeira vez pro usuário:
+a câmera abria numa superfície plana, cinza, sem nenhum prédio/via visível —
+parecia um bug de renderização (textura quebrada), mas era outra coisa. O
+`start-pos` default do BlueMap é `{x: 0, z: 0}` — o **zero absoluto da malha
+Minecraft deste motor**, que é o Marco Zero fixo de Brasília
+(`DF_ORIGIN_LAT`/`DF_ORIGIN_LON` em `transformation.rs`), não necessariamente
+um ponto dentro do bbox pedido. O Guará I+II vai de X=-18525 a X=-12821 — o
+zero fica a mais de 12.800 blocos de distância do mundo real, numa área nunca
+gerada (vazio/void). `bluemap_viewer::compute_start_pos` corrige isso
+computando o meio do retângulo delimitador real do mundo (reaproveitando
+`world_viewer::discover_bounds`, a mesma descoberta de limites já usada pelo
+relevo caseiro) e escrevendo esse valor no `maps/<id>.conf` gerado — testado
+com uma regressão automatizada (`compute_start_pos_centers_on_real_world_bounds`)
+que fixa exatamente esse caso real (Guará I+II: meio em `(-15673, 4419)`,
+bem longe de `(0, 0)`).
+
+**Detalhe operacional encontrado ao corrigir isso manualmente pela primeira
+vez:** mudar só o `start-pos` de um `maps/<id>.conf` já renderizado e rodar
+`bluemap-cli.jar -s` (`--generate-websettings`, documentado como a forma de
+atualizar isso) **não** atualizou o `startPos` no `settings.json` do mapa
+nos testes desta sessão — só uma re-renderização completa (`-r`) fez
+efeito. Como `bluemap_viewer::run_render_and_serve` sempre roda com `-r`
+antes de `-w`, isto nunca é um problema pelo caminho normal (Rust) — só
+importa se alguém for editar a config manualmente depois de um render já
+feito, como aconteceu aqui.
+
 ### Por que o `.jar` do BlueMap não é baixado automaticamente
 
 `bluemap_viewer.rs` exige que o usuário baixe o `.jar` manualmente (a
