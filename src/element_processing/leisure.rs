@@ -6,21 +6,34 @@ use crate::element_processing::tree::Tree;
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
+use noise::{NoiseFn, OpenSimplex};
+use once_cell::sync::Lazy;
 use rand::Rng;
 
 /// Escala vertical rigorosa (1.15) e horizontal (1.33) aplicada ao lazer e relevo
 const V_SCALE: f64 = 1.15;
 const H_SCALE: f64 = 1.33;
 
-/// 🚨 BESM-6: Motor de Ruído Orgânico (Pseudo-Perlin Noise O(1))
-/// Usado para criar maciços florestais e canteiros fluidos de Burle Marx,
-/// substituindo a distribuição aleatória e irrealista.
+/// 🚨 RECONEXÃO: Motor de Ruído Orgânico — antes, um "pseudo-Perlin" de produto de
+/// seno/cosseno (`sin(x)·cos(z) + sin(0.5x+0.3z)·0.5`), a MESMA fórmula duplicada
+/// (e com o MESMO defeito) que existia em `natural.rs::organic_density_noise`. Ruído
+/// trigonométrico assim tem estrutura periódica forte em diagonais — visível como
+/// faixas repetidas nos "maciços florestais e canteiros fluidos de Burle Marx" que
+/// esta função desenha, em vez da distribuição orgânica pretendida. Confirmado
+/// comparando dois testes reais de geração do Guará I (com e sem provedores GDF):
+/// as mesmas faixas diagonais apareciam em ambos, isoladas depois de corrigir
+/// `natural.rs` e ver que persistiam — vinham daqui. Substituído por
+/// `noise::OpenSimplex` (gradiente de verdade), no mesmo padrão já usado em
+/// `tree.rs`. Duas instâncias com seeds distintas (macro/micro) em vez de uma só
+/// reamostrada em escalas diferentes, para as duas camadas não ficarem
+/// correlacionadas entre si.
+static NOISE_LEISURE_MACRO: Lazy<OpenSimplex> = Lazy::new(|| OpenSimplex::new(6402));
+static NOISE_LEISURE_MICRO: Lazy<OpenSimplex> = Lazy::new(|| OpenSimplex::new(1704));
+
 #[inline(always)]
-fn organic_noise(x: i32, z: i32, scale: f64) -> f64 {
-    let xf = x as f64 * scale;
-    let zf = z as f64 * scale;
-    // Padrão de interferência de ondas para criar "ilhas" e "clareiras"
-    ((xf.sin() * zf.cos()) + (xf * 0.5 + zf * 0.3).sin() * 0.5).abs() / 1.5
+fn organic_noise_layer(noise: &OpenSimplex, x: i32, z: i32, scale: f64) -> f64 {
+    let raw = noise.get([x as f64 * scale, z as f64 * scale]);
+    (raw + 1.0) / 2.0
 }
 
 pub fn generate_leisure(
@@ -354,7 +367,7 @@ pub fn generate_leisure(
                             editor.set_block_absolute(OAK_FENCE, x, ground_y + 2, z, None, None);
                             editor.set_block_absolute(OAK_FENCE, x, ground_y + 3, z, None, None);
                         }
-                        if local_x >= 11 && local_x <= 13 && local_z >= 11 && local_z <= 13 {
+                        if (11..=13).contains(&local_x) && (11..=13).contains(&local_z) {
                             editor.set_block_absolute(OAK_SLAB, x, ground_y + 4, z, None, None);
                         }
                         if local_x == 12 && local_z == 12 {
@@ -366,11 +379,11 @@ pub fn generate_leisure(
 
                 // 🚨 PAISAGISMO ORGÂNICO (Burle Marx, UnB, Parque da Cidade)
                 if matches!(leisure_type.as_str(), "park" | "garden" | "nature_reserve") {
-                    let bm_noise = organic_noise(x, z, 0.05); // Densidade macro (Canteiros/Bosques)
-                    let micro_noise = organic_noise(x, z, 0.2); // Densidade fina (Flores/Árvores isoladas)
+                    let bm_noise = organic_noise_layer(&NOISE_LEISURE_MACRO, x, z, 0.05); // Densidade macro (Canteiros/Bosques)
+                    let micro_noise = organic_noise_layer(&NOISE_LEISURE_MICRO, x, z, 0.2); // Densidade fina (Flores/Árvores isoladas)
 
                     let mut tile_rng = coord_rng(x, ground_y, z, element.id);
-                    let random_roll = tile_rng.random_range(0..1000);
+                    let random_roll = tile_rng.gen_range(0..1000);
 
                     if is_cristais {
                         // Praça dos Cristais: Cactáceas, areia e lagos angulares
@@ -480,7 +493,7 @@ pub fn generate_leisure(
                     && !is_ana_lidia
                 {
                     let mut tile_rng = coord_rng(x, ground_y, z, element.id);
-                    let play_roll = tile_rng.random_range(0..5000);
+                    let play_roll = tile_rng.gen_range(0..5000);
 
                     // 🚨 CORREÇÃO DOS INTERVALOS (Exclusivos para Inclusivos)
                     match play_roll {

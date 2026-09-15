@@ -1,0 +1,14 @@
+{
+  "elements": [
+    { "type": "node", "id": 9001, "lat": -15.81800, "lon": -47.98300, "tags": {} },
+    { "type": "node", "id": 9002, "lat": -15.81810, "lon": -47.98300, "tags": {} },
+    { "type": "node", "id": 9003, "lat": -15.81810, "lon": -47.98310, "tags": {} },
+    { "type": "node", "id": 9004, "lat": -15.81800, "lon": -47.98310, "tags": {} },
+    {
+      "type": "way",
+      "id": 9100,
+      "nodes": [9001, 9002, 9003, 9004, 9001],
+      "tags": { "building": "yes", "name": "Fixture OSM Building" }
+    }
+  ]
+}

@@ -68,6 +68,19 @@ pub fn clip_way_to_bbox(nodes: &[ProcessedNode], xzbbox: &XZBBox) -> Vec<Process
 }
 
 /// Clips a water polygon ring to bbox using Sutherland-Hodgman (post-ring-merge).
+///
+/// 🚨 BESM-6: Candidato real de reconexão, ainda não ligado. O consumidor óbvio
+/// é `water_areas::generate_water_areas_from_relation` — hoje ele roda
+/// `scanline_fill_complex` sobre o anel GLOBAL da relação (ex.: o Lago Paranoá
+/// inteiro) e só filtra pixel a pixel com `xzbbox.contains(...)` depois; clipar
+/// o anel a esta bbox ANTES do flood-fill evitaria refazer o preenchimento do
+/// lago inteiro em cada uma das dezenas de regiões que ele cruza. Não foi
+/// ligado agora porque `water_areas.rs` representa anéis como `Vec<(i32,i32)>`
+/// (tuplas cruas), enquanto esta função opera sobre `&[ProcessedNode]` — exige
+/// um adaptador (ou migrar `water_areas.rs` para `ProcessedNode`) para não
+/// arriscar reintroduzir um bug de geometria num caminho crítico sem teste
+/// dedicado. Ver tarefa de acompanhamento sugerida nesta sessão.
+#[allow(dead_code)]
 pub fn clip_water_ring_to_bbox(
     ring: &[ProcessedNode],
     xzbbox: &XZBBox,

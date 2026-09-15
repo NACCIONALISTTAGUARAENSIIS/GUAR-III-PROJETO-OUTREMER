@@ -253,10 +253,8 @@ pub fn parse_osm_data(
 
             nodes_map.insert(element.id, processed.clone());
 
-            if !tags.is_empty() {
-                if xzbbox.contains(&xzpoint) {
-                    processed_elements.push(ProcessedElement::Node(processed));
-                }
+            if !tags.is_empty() && xzbbox.contains(&xzpoint) {
+                processed_elements.push(ProcessedElement::Node(processed));
             }
         }
     }

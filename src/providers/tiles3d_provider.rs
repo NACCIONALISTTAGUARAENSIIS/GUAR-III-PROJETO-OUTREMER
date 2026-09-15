@@ -6,13 +6,12 @@
 //! garantindo escala infinita sem sobrecarga de memória RAM (Out-of-Core).
 
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
-use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
 
+use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
-use serde_json::Value;
 
 pub struct Tiles3DProvider {
     pub endpoint_url: String,
@@ -35,7 +34,9 @@ impl Tiles3DProvider {
     /// Verifica se a BoundingVolume do Tile (formato OGC Region: [west, south, east, north, min_h, max_h] em radianos)
     /// cruza com a BBox requisitada pelo motor.
     fn intersects_region(region_rads: &[Value], bbox: &LLBBox) -> bool {
-        if region_rads.len() < 4 { return false; }
+        if region_rads.len() < 4 {
+            return false;
+        }
 
         let tile_west = region_rads[0].as_f64().unwrap_or(0.0).to_degrees();
         let tile_south = region_rads[1].as_f64().unwrap_or(0.0).to_degrees();
@@ -48,7 +49,10 @@ impl Tiles3DProvider {
         let req_max_lon = bbox.max().lng();
 
         // Lógica de interseção de retângulos (AABB)
-        !(tile_west > req_max_lon || tile_east < req_min_lon || tile_south > req_max_lat || tile_north < req_min_lat)
+        !(tile_west > req_max_lon
+            || tile_east < req_min_lon
+            || tile_south > req_max_lat
+            || tile_north < req_min_lat)
     }
 
     /// 🚨 BESM-6: Traversal Recursivo da Árvore de Tiles (HLOD)
@@ -72,7 +76,6 @@ impl Tiles3DProvider {
                 // Se cruzou e tem conteúdo (payload B3DM, GLB, etc), mapeamos para a Voxelização Local
                 if let Some(content) = node.get("content") {
                     if let Some(uri) = content.get("uri").and_then(|u| u.as_str()) {
-
                         // OGC Spec: West, South, East, North (Radianos)
                         let w = region[0].as_f64().unwrap_or(0.0).to_degrees();
                         let s = region[1].as_f64().unwrap_or(0.0).to_degrees();
@@ -83,8 +86,10 @@ impl Tiles3DProvider {
 
                         // Projeção dos vértices da bounding box do Tile para a Malha Cartesiana XZ
                         if let (Ok(sw), Ok(se), Ok(ne), Ok(nw)) = (
-                            LLPoint::new(s, w), LLPoint::new(s, e),
-                            LLPoint::new(n, e), LLPoint::new(n, w)
+                            LLPoint::new(s, w),
+                            LLPoint::new(s, e),
+                            LLPoint::new(n, e),
+                            LLPoint::new(n, w),
                         ) {
                             let p_sw = transformer.transform_point(sw);
                             let p_se = transformer.transform_point(se);
@@ -138,7 +143,10 @@ impl DataProvider for Tiles3DProvider {
     }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
-        println!("[INFO] 🌐 Conectando à malha OGC 3D Tiles: {}", self.endpoint_url);
+        println!(
+            "[INFO] 🌐 Conectando à malha OGC 3D Tiles: {}",
+            self.endpoint_url
+        );
 
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -146,20 +154,27 @@ impl DataProvider for Tiles3DProvider {
             .map_err(|e| format!("Falha ao construir o cliente HTTP 3D Tiles: {}", e))?;
 
         // 1. Download do Tileset Root (tileset.json)
-        let response = client.get(&self.endpoint_url).send()
+        let response = client
+            .get(&self.endpoint_url)
+            .send()
             .map_err(|e| format!("Falha na ligação ao servidor 3D Tiles: {}", e))?;
 
         if !response.status().is_success() {
-            return Err(format!("Servidor 3D Tiles rejeitou o pedido: {}", response.status()));
+            return Err(format!(
+                "Servidor 3D Tiles rejeitou o pedido: {}",
+                response.status()
+            ));
         }
 
-        let json_text = response.text()
+        let json_text = response
+            .text()
             .map_err(|e| format!("Falha ao ler resposta do 3D Tiles: {}", e))?;
 
         let tileset: Value = serde_json::from_str(&json_text)
             .map_err(|e| format!("Tileset.json inválido: {}", e))?;
 
-        let root_node = tileset.get("root")
+        let root_node = tileset
+            .get("root")
             .ok_or("Tileset.json não contém o nó 'root' obrigatório da OGC.")?;
 
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -173,7 +188,10 @@ impl DataProvider for Tiles3DProvider {
         self.traverse_node(root_node, bbox, &transformer, &mut features, &mut next_id);
 
         features.shrink_to_fit();
-        println!("[INFO] 🧩 3D Tiles Intersectados: {} tiles isolados para o quadrante atual.", features.len());
+        println!(
+            "[INFO] 🧩 3D Tiles Intersectados: {} tiles isolados para o quadrante atual.",
+            features.len()
+        );
 
         Ok(features)
     }

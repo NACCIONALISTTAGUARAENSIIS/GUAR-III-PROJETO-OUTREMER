@@ -18,14 +18,16 @@
 //! para os demais `natural=*`) não intercepta, porque `natural=water`/`bay`
 //! é desviado para cá antes de chegar naquele branch.
 
-use crate::block_definitions::WATER;
+use crate::block_definitions::{GRAVEL, SAND, WATER};
 use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
+use crate::deterministic_rng::coord_rng;
 use crate::floodfill::{scanline_fill_complex, ComplexPolygon};
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation};
 use crate::world_editor::WorldEditor;
+use rand::Rng;
 
 /// Desenha um corpo d'água a partir de uma relação multipolígono (anel externo
-/// + anéis internos/ilhas). Reaproveita o rasterizador Scanline já usado por
+/// e anéis internos/ilhas). Reaproveita o rasterizador Scanline já usado por
 /// `landuse`/`leisure`/`natural` (via `FloodFillCache`) — mas chamado direto,
 /// sem cache, já que este caminho não recebe `Args`/`FloodFillCache` (só
 /// `editor`, a relação e o `XZBBox` de recorte, conforme o `dispatch_element`
@@ -68,6 +70,23 @@ pub fn generate_water_areas_from_relation(
         }
 
         let ground_y = editor.get_ground_level(x, z);
-        editor.set_block_absolute(WATER, x, ground_y, z, None, None);
+
+        // 🚨 RECONEXÃO: profundidade e leito orgânicos — antes, TODO corpo d'água
+        // gerado por relação multipolígono (Lago Paranoá incluso — o principal
+        // corpo d'água de Brasília, e o próprio caso que este arquivo existe pra
+        // cobrir) era uma lâmina de 1 bloco só, sem profundidade nem leito, uma
+        // "poça" achatada em vez de um lago de verdade. 2-4 blocos de profundidade,
+        // com leito de areia (predominante) ou cascalho, variando por posição
+        // exata via `coord_rng` — determinístico, mas nunca uniforme de ponta a
+        // ponta do lago.
+        let mut rng = coord_rng(x, ground_y, z, rel.id);
+        let profundidade = rng.gen_range(2..=4);
+        let leito = if rng.gen_bool(0.75) { SAND } else { GRAVEL };
+
+        for dy in 0..profundidade {
+            let y = ground_y - dy;
+            let block = if dy == profundidade - 1 { leito } else { WATER };
+            editor.set_block_absolute(block, x, y, z, None, None);
+        }
     }
 }

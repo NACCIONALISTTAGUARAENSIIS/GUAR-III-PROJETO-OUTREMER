@@ -63,6 +63,9 @@ pub(crate) struct WorldMetadata {
     pub max_geo_lon: f64,
 }
 
+/// (RegX, RegZ) -> (X, Y, Z) -> Block
+type HaloCache = HashMap<(i32, i32), HashMap<(i32, i32, i32), Block>>;
+
 /// The main world editor struct for placing blocks and saving worlds.
 ///
 /// ?? BESM-6 OUT-OF-CORE ARCHITECTURE ??
@@ -75,7 +78,7 @@ pub struct WorldEditor<'a> {
     // ?? O Roteador Espacial
     active_region_x: i32,
     active_region_z: i32,
-    halo_cache: HashMap<(i32, i32), HashMap<(i32, i32, i32), Block>>, // (RegX, RegZ) -> (X, Y, Z) -> Block
+    halo_cache: HaloCache,
 
     xzbbox: &'a XZBBox,
     llbbox: LLBBox,
@@ -192,6 +195,8 @@ impl<'a> WorldEditor<'a> {
     }
 
     /// Retorna o tamanho atual do Halo Cache para estat�sticas do Terminal HUD
+    /// (usado por `master_control.rs`, que só é alcançável no build sem `gui`).
+    #[allow(dead_code)]
     pub fn get_halo_metrics(&self) -> (usize, usize) {
         let active_buckets = self.halo_cache.len();
         let total_blocks = self.halo_cache.values().map(|bucket| bucket.len()).sum();
@@ -487,7 +492,7 @@ impl<'a> WorldEditor<'a> {
         } else {
             self.halo_cache
                 .get(&(rx, rz))
-                .map_or(false, |b| b.contains_key(&(x, absolute_y, z)))
+                .is_some_and(|b| b.contains_key(&(x, absolute_y, z)))
         }
     }
 

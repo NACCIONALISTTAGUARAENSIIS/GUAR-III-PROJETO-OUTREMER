@@ -81,8 +81,13 @@ impl GpkgProvider {
                     tags.insert("name".to_string(), val_str.clone());
                 }
                 "TIPO_VIA" | "CLASSE_VIA" | "HIGHWAY" => {
-                    tags.insert("highway".to_string(), "residential".to_string());
-                    // Fallback
+                    // 🚨 RECONEXÃO: ver `providers::classify_highway_from_tipo_via`
+                    // — antes, toda via virava `highway=residential` cego.
+                    tags.insert(
+                        "highway".to_string(),
+                        crate::providers::classify_highway_from_tipo_via(val_str).to_string(),
+                    );
+                    tags.insert("gdf:tipo_via".to_string(), val_str.clone());
                 }
                 "NATURAL" | "VEGETACAO" | "ARVORE" | "BIOMA" => {
                     tags.insert("natural".to_string(), val_str.to_lowercase());
@@ -128,7 +133,17 @@ impl DataProvider for GpkgProvider {
             .prepare("SELECT table_name, column_name, srs_id FROM gpkg_geometry_columns")
             .map_err(|e| format!("Falha ao ler gpkg_geometry_columns: {}", e))?;
 
-        let tables_iter = stmt_geom_cols
+        // 🚨 RECONEXÃO: antes, `tables_iter` era consumido diretamente num `for`,
+        // mantendo o cursor de `stmt_geom_cols` ATIVO (a meio da própria iteração)
+        // durante todo o corpo do laço — inclusive quando preparávamos e
+        // executávamos uma SEGUNDA consulta (`stmt_data`, por tabela) na MESMA
+        // conexão. Duas declarações simultaneamente ativas na mesma `Connection`
+        // faziam a segunda (`SELECT * FROM <tabela>`) devolver zero linhas mesmo
+        // com dados reais presentes — confirmado isolando o mesmo arquivo .gpkg
+        // fora deste laço, onde a consulta funcionava normalmente. Materializamos
+        // a lista de tabelas ANTES do laço, encerrando o cursor de
+        // `stmt_geom_cols` de vez, e só então abrimos a consulta por tabela.
+        let tables: Vec<(String, String, u32)> = stmt_geom_cols
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -136,7 +151,10 @@ impl DataProvider for GpkgProvider {
                     row.get::<_, u32>(2)?,
                 ))
             })
-            .map_err(|e| format!("Erro de query SQLite: {}", e))?;
+            .map_err(|e| format!("Erro de query SQLite: {}", e))?
+            .flatten()
+            .collect();
+        drop(stmt_geom_cols);
 
         // Mestre de Transforma��o para a Malha Voxel Minecraft
         let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(bbox, self.scale_h)
@@ -148,8 +166,8 @@ impl DataProvider for GpkgProvider {
         let mut features = Vec::new();
         let mut next_id = 5_000_000_000; // Offset dedicado (Evita colis�o com Shapefile e OSM)
 
-        for table_res in tables_iter {
-            if let Ok((table_name, geom_column, srs_id)) = table_res {
+        for (table_name, geom_column, srs_id) in tables {
+            {
                 println!(
                     "[INFO] Inspecionando tabela espacial: {} (EPSG:{})",
                     table_name, srs_id
@@ -209,11 +227,10 @@ impl DataProvider for GpkgProvider {
 
                     // Extrai os outros atributos para o HashMap
                     let mut raw_attributes = HashMap::new();
-                    for i in 0..column_count {
+                    for (i, col_name) in column_names.iter().enumerate().take(column_count) {
                         if i == geom_idx {
                             continue;
                         }
-                        let col_name = &column_names[i];
 
                         let val_str = match row.get_ref(i) {
                             Ok(ValueRef::Integer(n)) => n.to_string(),

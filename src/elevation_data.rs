@@ -1,9 +1,8 @@
+use crate::coordinate_system::{geographic::LLBBox, transformation::geo_distance};
+#[cfg(feature = "gui")]
+use crate::progress::emit_gui_progress_update;
 #[cfg(feature = "gui")]
 use crate::telemetry::{send_log, LogLevel};
-use crate::{
-    coordinate_system::{geographic::LLBBox, transformation::geo_distance},
-    progress::emit_gui_progress_update,
-};
 use image::Rgb;
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -29,7 +28,12 @@ pub struct ElevationData {
     // Para simplificar a ponte com o código legado, mantemos a estrutura de grid 2D,
     // MAS fatiado pelas proporções do Scanline se necessário, ou otimizado se for LiDAR.
     pub(crate) heights: Vec<Vec<i32>>,
+    // 🚨 Guardados na construção mas o consumo (`data_processing.rs`) usa
+    // `heights.get(row)/.get(col)` com checagem de limites em vez de ler estes
+    // campos diretamente — redundantes com `heights.len()`/`heights[0].len()`.
+    #[allow(dead_code)]
     pub(crate) width: usize,
+    #[allow(dead_code)]
     pub(crate) height: usize,
 }
 

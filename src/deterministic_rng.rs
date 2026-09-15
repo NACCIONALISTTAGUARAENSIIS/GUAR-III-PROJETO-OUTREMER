@@ -82,7 +82,9 @@ pub fn element_rng(element_id: u64) -> PincelRng {
     let h3 = avalanche_hash(h2);
     let h4 = avalanche_hash(h3);
 
-    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(h1, h2, h3, h4)))
+    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(
+        h1, h2, h3, h4,
+    )))
 }
 
 /// Creates a deterministic RNG seeded from an element ID with an additional salt.
@@ -96,7 +98,9 @@ pub fn element_rng_salted(element_id: u64, salt: u64) -> PincelRng {
     let h3 = avalanche_hash(h2);
     let h4 = avalanche_hash(h3);
 
-    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(h1, h2, h3, h4)))
+    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(
+        h1, h2, h3, h4,
+    )))
 }
 
 /// Creates a deterministic RNG seeded from 3D coordinates.
@@ -111,9 +115,7 @@ pub fn coord_rng(x: i32, y: i32, z: i32, element_id: u64) -> PincelRng {
     let uz = z as u32 as u64;
 
     // XOR assimétrico com rotações estritas para destruir a comutatividade e simetria dos eixos
-    let spatial_mix = ux
-        ^ uy.rotate_left(21)
-        ^ uz.rotate_left(42);
+    let spatial_mix = ux ^ uy.rotate_left(21) ^ uz.rotate_left(42);
 
     let initial_state = spatial_mix ^ element_id;
 
@@ -122,7 +124,9 @@ pub fn coord_rng(x: i32, y: i32, z: i32, element_id: u64) -> PincelRng {
     let h3 = avalanche_hash(h2);
     let h4 = avalanche_hash(h3);
 
-    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(h1, h2, h3, h4)))
+    PincelRng(Xoshiro256PlusPlus::from_seed(build_256bit_seed(
+        h1, h2, h3, h4,
+    )))
 }
 
 #[cfg(test)]

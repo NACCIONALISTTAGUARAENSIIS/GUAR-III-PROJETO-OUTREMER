@@ -1,0 +1,41 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "ed_num_pav": 2,
+        "ed_alt_aprox": 7.4,
+        "ed_nome": "Fixture GDF Edificacao",
+        "_gdf_layer": "edificacao"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-47.98280, -15.81815],
+            [-47.98270, -15.81815],
+            [-47.98270, -15.81805],
+            [-47.98280, -15.81805],
+            [-47.98280, -15.81815]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "calcada": "Sim",
+        "pavimentacao": "Concreto",
+        "_gdf_layer": "calcadas"
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [-47.98280, -15.81816],
+          [-47.98270, -15.81816]
+        ]
+      }
+    }
+  ]
+}

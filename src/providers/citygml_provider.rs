@@ -19,7 +19,11 @@ pub struct CityGmlProvider {
     pub priority: u8,
 }
 
+// 🚨 O parser hoje só distingue Wall/Window/Door/None ao ler `<bldg:...Surface>`;
+// `Roof`/`Ground` existem para o mesmo enum mas nenhum branch do parser ainda
+// os atribui (lacuna real de reconhecimento de tag GML, não um provider morto).
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum GmlSurfaceType {
     None,
     Wall,

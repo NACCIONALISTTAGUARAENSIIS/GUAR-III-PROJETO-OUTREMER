@@ -92,8 +92,15 @@ impl GDFProvider {
                     // o do OSM, ele será pescado pelo landmarks.rs
                 }
                 "TIPO_VIA" | "CLASSE_VIA" | "HIGHWAY" => {
-                    tags.insert("highway".to_string(), "residential".to_string());
-                    // Fallback
+                    // 🚨 RECONEXÃO: antes, QUALQUER via do SEDUH/SITURB virava
+                    // `highway=residential`, sem exceção — ver
+                    // `providers::classify_highway_from_tipo_via`. O valor bruto
+                    // ainda vira `gdf:tipo_via` (não se perde).
+                    tags.insert(
+                        "highway".to_string(),
+                        crate::providers::classify_highway_from_tipo_via(&val_str).to_string(),
+                    );
+                    tags.insert("gdf:tipo_via".to_string(), val_str.clone());
                 }
                 _ => {
                     // Mantém atributos crus para debug ou expansão futura
@@ -179,10 +186,11 @@ impl DataProvider for GDFProvider {
             // Extração e Reprojeção da Geometria
             let geometry = match shape {
                 Shape::Polygon(poly) => {
+                    // Shapefile Polygons contêm anéis (Rings). Assumimos o primeiro anel
+                    // como exterior por simplicidade (Otimização BESM-6: ignora buracos
+                    // internos complexos de shapefiles residenciais).
                     let mut outer_ring = Vec::new();
-
-                    // Shapefile Polygons contêm anéis (Rings). O primeiro geralmente é o Outer.
-                    for ring in poly.rings() {
+                    if let Some(ring) = poly.rings().iter().next() {
                         let mut mc_points = Vec::with_capacity(ring.points().len());
 
                         for pt in ring.points() {
@@ -202,10 +210,7 @@ impl DataProvider for GDFProvider {
                             mc_points.push(first);
                         }
 
-                        // Assumimos o primeiro anel como exterior por simplicidade.
-                        // (Otimização BESM-6: Ignora buracos internos complexos de shapefiles residenciais)
                         outer_ring = mc_points;
-                        break;
                     }
 
                     if outer_ring.len() < 4 {
@@ -214,13 +219,13 @@ impl DataProvider for GDFProvider {
                     GeometryType::Polygon(outer_ring)
                 }
                 Shape::Polyline(pline) => {
+                    // Pega só o primeiro segmento contínuo para evitar complexidade
                     let mut lines = Vec::new();
-                    for part in pline.parts() {
+                    if let Some(part) = pline.parts().iter().next() {
                         for pt in part {
                             let (lon, lat) = proj.convert((pt.x, pt.y)).unwrap_or((0.0, 0.0));
                             lines.push(Self::project_to_minecraft_xz(lat, lon, bbox, self.scale_h));
                         }
-                        break; // Pega só o primeiro segmento contínuo para evitar complexidade
                     }
                     if lines.len() < 2 {
                         continue;

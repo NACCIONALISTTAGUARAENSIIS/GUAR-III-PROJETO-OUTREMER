@@ -1,23 +1,23 @@
 pub mod citygml_provider;
 pub mod csv_provider;
-pub mod ifc_provider;
 pub mod dem_provider;
 pub mod dsm_provider;
 pub mod gdf_provider;
 pub mod geojson_provider;
 pub mod gpkg_provider;
+pub mod ifc_provider;
 pub mod indoor_utility_provider; // 🚨 Tornado público para que outros módulos possam usá-lo
+pub mod kml_provider;
 pub mod lidar_provider;
 pub mod mesh_provider;
+pub mod mvt_provider;
 pub mod osm_provider;
 pub mod pbf_provider;
-pub mod raster_provider;
-pub mod vegetation_provider;
-pub mod mvt_provider;
-pub mod wfs_provider;
-pub mod kml_provider;
 pub mod postgis_provider;
-mod tiles3d_provider;
+pub mod raster_provider;
+pub mod tiles3d_provider;
+pub mod vegetation_provider;
+pub mod wfs_provider;
 
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::LLBBox;
@@ -32,7 +32,13 @@ use std::sync::Arc;
 /// Grupos Semânticos evitam falsos positivos na resolução de colisões.
 /// Uma via (Highway) pode cruzar um rio (Waterway), mas dois provedores
 /// diferentes não devem gerar o mesmo Building no mesmo lugar.
+///
+/// Nem toda variante tem um provedor que a produza hoje (ex.: `Military` —
+/// nenhum provider atual classifica `military=*` do OSM para este grupo);
+/// mantidas como categorização reservada para providers futuros/tags ainda
+/// não mapeadas, não como sobra morta de um provider removido.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub enum SemanticGroup {
     Building,
     BuildingPart,
@@ -156,6 +162,59 @@ impl GeometryType {
     }
 }
 
+/// 🚨 RECONEXÃO: classifica o valor bruto de `TIPO_VIA`/`CLASSE_VIA`/`HIERARQUIA`
+/// (colunas comuns de shapefile/GeoJSON/GPKG/PostGIS do SEDUH/SITURB) num
+/// `highway=*` real, em vez do fallback cego para `residential` que
+/// `gdf_provider.rs`, `geojson_provider.rs`, `gpkg_provider.rs` e
+/// `postgis_provider.rs` usavam todos independentemente. Sem isso, o Eixo
+/// Rodoviário (Eixão), o Eixo Monumental, a EPTG e qualquer rodovia (BR-020,
+/// DF-001...) vindos de dado governamental (em vez do OSM) eram achatados na
+/// mesma classe de rua de bairro — `highways.rs` tem lógica real de
+/// largura/pista por `highway=*` que nunca via essa distinção. Heurística por
+/// palavra-chave (não há um dicionário de domínio oficial disponível aqui);
+/// compartilhada entre os 4 provedores para não divergir.
+pub fn classify_highway_from_tipo_via(raw: &str) -> &'static str {
+    let classe = raw.to_lowercase();
+    if classe.contains("eixo") || classe.contains("rodovia") {
+        "trunk"
+    } else if classe.contains("arterial") {
+        "primary"
+    } else if classe.contains("coletora") {
+        "secondary"
+    } else if classe.contains("ciclov") {
+        "cycleway"
+    } else if classe.contains("pedestr") || classe.contains("calçad") {
+        "pedestrian"
+    } else if classe.contains("vicinal") || classe.contains("rural") {
+        "unclassified"
+    } else {
+        "residential"
+    }
+}
+
+/// 🚨 RECONEXÃO: canal lateral para tags POR NÓ dentro de uma `Feature` (way/anel).
+/// `GeometryType::LineString`/`Polygon`/`MultiPolygon` só guardam coordenadas
+/// (`Vec<XZPoint>`) — não há onde armazenar a tag individual de um nó (`entrance=yes`,
+/// `door=yes`, `highway=crossing`) dentro da geometria em si. Sem isso, TODO nó de
+/// TODA via OSM perdia suas tags no round-trip `ProcessedElement` → `Feature` →
+/// `into_processed_element` — mesmo vindo da Overpass API pelo caminho padrão, não só
+/// de provedores alternativos. Na prática: `carve_and_place_door` (portas/entradas
+/// mapeadas no OSM, ligado a `buildings.rs`) e a detecção de faixa de pedestres
+/// (`highway=crossing`, em `highways.rs`) nunca disparavam para nenhum prédio ou rua
+/// gerado a partir de dados OSM reais — universal, não um caso raro.
+///
+/// `OSMProvider::fetch_features` serializa (via `serde_json`) um
+/// `Vec<Option<HashMap<String,String>>>` posicional (um item por ponto da geometria,
+/// `None` se o nó não tinha tags) sob esta chave, dentro de `Feature::attributes`.
+/// `Feature::into_processed_element` lê essa chave (se presente) para restaurar as
+/// tags de cada nó reconstruído, e remove a chave antes de repassar as tags restantes
+/// como as tags da própria via/relação — nunca vaza como uma tag "de verdade".
+pub const NODE_TAGS_ATTR: &str = "__osm_node_tags__";
+
+/// Formato serializado sob `NODE_TAGS_ATTR`: um item por ponto da geometria da
+/// `Feature` (mesma ordem/índice), `None` para nós sem tags.
+pub type NodeTagsSideChannel = Vec<Option<HashMap<String, String>>>;
+
 /// A "Feature" é a unidade universal de dados do motor.
 /// Um provedor OSM, Shapefile ou GeoJSON irá cuspir Features.
 #[derive(Debug, Clone)]
@@ -202,6 +261,10 @@ impl Feature {
         self.attributes.get(key)
     }
 
+    /// Mutador genérico de atributos pós-construção; nenhum provider precisa
+    /// dele hoje (todos montam `attributes` de uma vez no construtor), mas é
+    /// API pública real para quem for adaptar/enriquecer uma `Feature` depois.
+    #[allow(dead_code)]
     pub fn set_tag(&mut self, key: &str, value: &str) {
         self.attributes.insert(key.to_string(), value.to_string());
     }
@@ -220,7 +283,12 @@ impl Feature {
 pub trait DataProvider: Send + Sync {
     fn name(&self) -> &str;
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String>;
-    // 🚨 ADICIONADO: Acesso genérico à prioridade para o Spatial Sweeper do Manager
+    // 🚨 ADICIONADO: Acesso genérico à prioridade para o Spatial Sweeper do Manager.
+    // `resolve_collisions` hoje usa `Feature.priority` (copiado do provider na
+    // construção) em vez de chamar isto de volta no trait object — mantido como
+    // API de introspecção real (ex.: listar/logar a prioridade de cada provider
+    // registrado) mesmo sem um chamador interno agora.
+    #[allow(dead_code)]
     fn priority(&self) -> u8;
 }
 
@@ -288,7 +356,7 @@ impl ProviderManager {
     /// Lógica de Resolução de Colisões Espaciais (Spatial Sweeper Otimizado O(N))
     fn resolve_collisions(&self, mut features: Vec<Feature>) -> Vec<Feature> {
         // Ordena garantindo que os dados de Shapefile do GDF(priority 1) sejam processados primeiro.
-        features.sort_by(|a, b| a.priority.cmp(&b.priority));
+        features.sort_by_key(|f| f.priority);
 
         let mut accepted_features: Vec<Feature> = Vec::with_capacity(features.len());
 
@@ -379,15 +447,30 @@ impl Feature {
                 tags: self.attributes,
             }),
             GeometryType::LineString(pts) | GeometryType::Polygon(pts) => {
+                // Ver `NODE_TAGS_ATTR`: restaura as tags por nó (entrance/door/
+                // highway=crossing) que `OSMProvider::fetch_features` preservou
+                // no canal lateral — sem isso, todo nó reconstruído aqui nascia
+                // sem tags, mesmo quando o nó original as tinha.
+                let mut attributes = self.attributes;
+                let node_tags = attributes
+                    .remove(NODE_TAGS_ATTR)
+                    .and_then(|json| serde_json::from_str::<NodeTagsSideChannel>(&json).ok());
+
                 let nodes = pts
                     .into_iter()
-                    .map(|pt| {
+                    .enumerate()
+                    .map(|(i, pt)| {
                         fake_node_id = fake_node_id.wrapping_add(1);
+                        let tags = node_tags
+                            .as_ref()
+                            .and_then(|v| v.get(i))
+                            .and_then(|opt| opt.clone())
+                            .unwrap_or_default();
                         ProcessedNode {
                             id: fake_node_id,
                             x: pt.x,
                             z: pt.z,
-                            tags: HashMap::new(),
+                            tags,
                         }
                     })
                     .collect();
@@ -396,7 +479,7 @@ impl Feature {
                 ProcessedElement::Way(Arc::new(ProcessedWay {
                     id: self.id,
                     nodes,
-                    tags: self.attributes,
+                    tags: attributes,
                 }))
             }
             GeometryType::MultiPolygon { outer, inner } => {

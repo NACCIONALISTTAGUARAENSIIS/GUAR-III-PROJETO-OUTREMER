@@ -11,6 +11,11 @@ use crate::providers::{DataProvider, Feature, SemanticGroup};
 
 use std::collections::HashMap;
 
+// 🚨 Registrado de verdade em `main::register_providers` quando `--mvt-endpoint`
+// é passado; os campos ficam "nunca lidos" porque `fetch_features` ainda é um
+// placeholder (decodificação MVT/protobuf não implementada, ver o aviso que
+// ele mesmo imprime) — não uma falha de conexão.
+#[allow(dead_code)]
 pub struct MvtProvider {
     /// URL Endpoint com variáveis Slippy Map. Ex: "https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.mvt"
     pub endpoint: String,
@@ -29,9 +34,16 @@ impl MvtProvider {
         zoom: u8,
         scale_h: f64,
         priority: u8,
-        semantic_override: Option<SemanticGroup>
+        semantic_override: Option<SemanticGroup>,
     ) -> Self {
-        Self { endpoint, layer_filter, zoom, scale_h, priority, semantic_override }
+        Self {
+            endpoint,
+            layer_filter,
+            zoom,
+            scale_h,
+            priority,
+            semantic_override,
+        }
     }
 
     /// Matemática Pura do Web Mercator: Converte Lat/Lon global para a coordenada do Tile Slippy Map.
@@ -48,10 +60,20 @@ impl MvtProvider {
     /// Desfaz a projeção do Tile: Converte os pixels internos do MVT (0..4096) de volta para Lat/Lon real.
     #[inline]
     #[allow(dead_code)]
-    fn tile_pixel_to_lat_lon(tile_x: u32, tile_y: u32, zoom: u8, px: f32, py: f32, extent: u32) -> (f64, f64) {
+    fn tile_pixel_to_lat_lon(
+        tile_x: u32,
+        tile_y: u32,
+        zoom: u8,
+        px: f32,
+        py: f32,
+        extent: u32,
+    ) -> (f64, f64) {
         let n = f64::powi(2.0, zoom as i32);
         let lon_deg = (tile_x as f64 + (px as f64 / extent as f64)) / n * 360.0 - 180.0;
-        let lat_rad = (std::f64::consts::PI * (1.0 - 2.0 * (tile_y as f64 + (py as f64 / extent as f64)) / n)).sinh().atan();
+        let lat_rad = (std::f64::consts::PI
+            * (1.0 - 2.0 * (tile_y as f64 + (py as f64 / extent as f64)) / n))
+            .sinh()
+            .atan();
         let lat_deg = lat_rad.to_degrees();
         (lat_deg, lon_deg)
     }

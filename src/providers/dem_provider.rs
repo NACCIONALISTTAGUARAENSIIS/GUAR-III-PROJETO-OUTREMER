@@ -28,6 +28,7 @@ pub struct DemProvider {
 }
 
 impl DemProvider {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         file_path: PathBuf,
         scale_h: f64,

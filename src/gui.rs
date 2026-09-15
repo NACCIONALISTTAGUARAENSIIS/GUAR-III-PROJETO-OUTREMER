@@ -1,10 +1,9 @@
 use crate::args::Args;
-use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
+use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::ground::Ground;
 use crate::progress::{self, emit_gui_progress_update};
-use crate::retrieve_data;
-use crate::telemetry::{self, send_log, LogLevel};
+use crate::telemetry;
 use crate::version_check;
 use fastnbt::Value;
 use flate2::read::GzDecoder;
@@ -13,19 +12,24 @@ use log::LevelFilter;
 use rfd::FileDialog;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::{env, fs, io::Write};
 use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind};
 
-/// Manages the session.lock file for a Minecraft world directory
-struct SessionLock {
+/// Manages the session.lock file for a Minecraft world directory.
+///
+/// 🚨 BESM-6 RECONEXÃO: chamado por `main::run_generation_pipeline` (Java
+/// Anvil apenas — Bedrock usa LevelDB, que tem seu próprio lock nativo) antes
+/// de qualquer escrita, para impedir duas gerações concorrentes corromperem o
+/// mesmo diretório de mundo. `pub(crate)` porque o ponto de chamada real vive
+/// em `main.rs`, fora deste módulo.
+pub(crate) struct SessionLock {
     file: fs::File,
     path: PathBuf,
 }
 
 impl SessionLock {
     /// Creates and locks a session.lock file in the specified world directory
-    fn acquire(world_path: &Path) -> Result<Self, String> {
+    pub(crate) fn acquire(world_path: &Path) -> Result<Self, String> {
         let session_lock_path = world_path.join("session.lock");
 
         // Create or open the session.lock file
@@ -219,128 +223,10 @@ fn create_new_world(base_path: &Path) -> Result<String, String> {
     crate::world_utils::create_new_world(base_path)
 }
 
-/// Adds localized area name to the world name in level.dat
-fn add_localized_world_name(world_path: PathBuf, bbox: &LLBBox) -> PathBuf {
-    // Only proceed if the path exists
-    if !world_path.exists() {
-        return world_path;
-    }
-
-    // Check the level.dat file first to get the current name
-    let level_path = world_path.join("level.dat");
-
-    if !level_path.exists() {
-        return world_path;
-    }
-
-    // Try to read the current world name from level.dat
-    let Ok(level_data) = std::fs::read(&level_path) else {
-        return world_path;
-    };
-
-    let mut decoder = GzDecoder::new(level_data.as_slice());
-    let mut decompressed_data = Vec::new();
-    if decoder.read_to_end(&mut decompressed_data).is_err() {
-        return world_path;
-    }
-
-    let Ok(Value::Compound(ref root)) = fastnbt::from_bytes::<Value>(&decompressed_data) else {
-        return world_path;
-    };
-
-    let Some(Value::Compound(ref data)) = root.get("Data") else {
-        return world_path;
-    };
-
-    let Some(Value::String(current_name)) = data.get("LevelName") else {
-        return world_path;
-    };
-
-    // Only modify if it's a Pincelism world and doesn't already have an area name
-    if !current_name.starts_with("Pincelism World ") || current_name.contains(": ") {
-        return world_path;
-    }
-
-    // Calculate center coordinates of bbox
-    let center_lat = (bbox.min().lat() + bbox.max().lat()) / 2.0;
-    let center_lon = (bbox.min().lng() + bbox.max().lng()) / 2.0;
-
-    // Try to fetch the area name
-    let area_name = match retrieve_data::fetch_area_name(center_lat, center_lon) {
-        Ok(Some(name)) => name,
-        _ => return world_path, // Keep original name if no area name found
-    };
-
-    // Create new name with localized area name, ensuring total length doesn't exceed 30 characters
-    let base_name = current_name.clone();
-    let max_area_name_len = 30 - base_name.len() - 2; // 2 chars for ": "
-
-    let truncated_area_name =
-        if area_name.chars().count() > max_area_name_len && max_area_name_len > 0 {
-            // Truncate the area name to fit within the 30 character limit
-            area_name
-                .chars()
-                .take(max_area_name_len)
-                .collect::<String>()
-        } else if max_area_name_len == 0 {
-            // If base name is already too long, don't add area name
-            return world_path;
-        } else {
-            area_name
-        };
-
-    let new_name = format!("{base_name}: {truncated_area_name}");
-
-    // Update the level.dat file with the new name
-    if let Ok(level_data) = std::fs::read(&level_path) {
-        let mut decoder = GzDecoder::new(level_data.as_slice());
-        let mut decompressed_data = Vec::new();
-        if decoder.read_to_end(&mut decompressed_data).is_ok() {
-            if let Ok(mut nbt_data) = fastnbt::from_bytes::<Value>(&decompressed_data) {
-                // Update the level name in NBT data
-                if let Value::Compound(ref mut root) = nbt_data {
-                    if let Some(Value::Compound(ref mut data)) = root.get_mut("Data") {
-                        data.insert("LevelName".to_string(), Value::String(new_name));
-
-                        // Save the updated NBT data
-                        if let Ok(serialized_data) = fastnbt::to_bytes(&nbt_data) {
-                            let mut encoder = flate2::write::GzEncoder::new(
-                                Vec::new(),
-                                flate2::Compression::default(),
-                            );
-                            if encoder.write_all(&serialized_data).is_ok() {
-                                if let Ok(compressed_data) = encoder.finish() {
-                                    if let Err(e) = std::fs::write(&level_path, compressed_data) {
-                                        eprintln!("Failed to update level.dat with area name: {e}");
-                                        #[cfg(feature = "gui")]
-                                        send_log(
-                                            LogLevel::Warning,
-                                            "Failed to update level.dat with area name",
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Return the original path since we didn't change the directory name
-    world_path
-}
-
-/// Calculates the default spawn point at X=1, Z=1 relative to the world origin.
-/// This is used when no spawn point is explicitly selected by the user.
-fn calculate_default_spawn(xzbbox: &XZBBox) -> (i32, i32) {
-    (xzbbox.min_x() + 1, xzbbox.min_z() + 1)
-}
-
 /// Sets the player spawn point in level.dat using Minecraft XZ coordinates.
 /// The Y coordinate is set to a temporary value (150) and will be updated
 /// after terrain generation by `update_player_spawn_y_after_generation`.
-fn set_player_spawn_in_level_dat(
+pub(crate) fn set_player_spawn_in_level_dat(
     world_path: &str,
     spawn_x: i32,
     spawn_z: i32,
@@ -757,11 +643,32 @@ fn gui_start_generation(
         ],
         enable_underground_wfs: false,
         postgis_url: None,
+        postgis_table: None,
+        postgis_geom_column: None,
         local_gpkg: None,
         local_pbf: None,
         mvt_endpoint: None,
         local_citygml: None,
+        local_ifc: None,
         local_mesh: None,
+        local_caesb_geojson: None,
+        local_csv: None,
+        local_kml: None,
+        tiles3d_endpoint: None,
+        mapbiomas_tiff: None,
+        ibge_shapefile: None,
+        sicar_shapefile: None,
+        mapbiomas_top_left_lat: None,
+        mapbiomas_top_left_lon: None,
+        mapbiomas_pixel_size_deg: None,
+        local_dsm: None,
+        dsm_top_left_lat: None,
+        dsm_top_left_lon: None,
+        dsm_pixel_size_deg: None,
+        dem_top_left_lat: None,
+        dem_top_left_lon: None,
+        dem_pixel_size_deg: None,
+        no_ambient_forest: false,
         ground_level,
         terrain: terrain_enabled,
         interior: interior_enabled,

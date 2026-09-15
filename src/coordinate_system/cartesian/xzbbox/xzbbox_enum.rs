@@ -28,7 +28,11 @@ impl XZBBox {
         Self::new(min_x, max_x, min_z, max_z)
     }
 
-    /// Construct rectangle shape bbox from the x and z lengths of the world, originated at (0, 0)
+    /// Construct rectangle shape bbox from the x and z lengths of the world, originated at (0, 0).
+    /// Só exercitada pelos próprios testes deste módulo e por testes de
+    /// `world_editor::bedrock` hoje; `cargo check` sem `--all-targets` não
+    /// enxerga os testes, daí aparecer como não usada nesse comando.
+    #[allow(dead_code)]
     pub fn rect_from_xz_lengths(length_x: f64, length_z: f64) -> Result<Self, String> {
         if !length_x.is_finite() {
             return Err(format!(

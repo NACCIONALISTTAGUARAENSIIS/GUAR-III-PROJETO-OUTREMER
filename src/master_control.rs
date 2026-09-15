@@ -6,6 +6,17 @@
 //! Geometrias são extraídas, processadas e destruídas região por região (.mca),
 //! garantindo escala infinita (DF Inteiro) sem colapso de RAM (OOM).
 //! Utiliza Actor Pattern estrito para I/O do Manifesto, erradicando corrupção de disco.
+//!
+//! 🚨 STATUS DE CONEXÃO: este módulo é o modo alternativo de entrada quando o
+//! binário é compilado SEM a feature `gui` (`main()` chama
+//! `MasterControl::new(provider_manager, args)` só dentro de
+//! `#[cfg(not(feature = "gui"))]` — com `gui` ligada, `main()` sempre abre a
+//! janela Tauri em vez disso; é uma escolha de arquitetura, não uma lacuna).
+//! Verificado de verdade com `cargo check --no-default-features`: compila e é
+//! o ponto de entrada real desse build. Só aparece "morto" para o
+//! `cargo clippy --all-features` do CI porque essa checagem sempre liga `gui`,
+//! nunca visitando este ramo — daí o `allow` do módulo inteiro abaixo.
+#![allow(dead_code)]
 
 use colored::Colorize;
 use crossterm::{
@@ -20,17 +31,19 @@ use crossterm::{
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
 use crate::args::Args;
-use crate::coordinate_system::geographic::{LLBBox, LLPoint};
+use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
+use crate::coordinate_system::geographic::LLBBox;
 use crate::coordinate_system::transformation::CoordTransformer;
 use crate::data_processing;
 use crate::providers::ProviderManager;
+use crate::world_editor::{WorldEditor, WorldFormat};
 
 const MAX_PROJECT_QUOTA_BYTES: u64 = 180 * 1024 * 1024 * 1024;
 const MANIFEST_PATH: &str = "./world/besm6_manifest.bin";
@@ -55,6 +68,9 @@ pub enum BesmSignal {
     RegionEmpty(i32, i32), // 🚨 Aborto de fronteira
     GenerationComplete,
     Log(String),
+    // 🚨 RECONEXÃO: expõe `WorldEditor::get_halo_metrics` (baldes/blocos aguardando
+    // a região vizinha) no HUD — antes calculado e nunca lido em lugar nenhum.
+    HaloMetrics(usize, usize),
 }
 
 // 🚨 BESM-6: Mensagens de I/O Seguras para o Ator de Disco
@@ -86,38 +102,50 @@ impl MacroRegion {
             MacroRegion {
                 name: "Distrito Federal (Completo)",
                 command: "-gerar df",
-                min_lat: -16.06, max_lat: -15.45,
-                min_lon: -48.33, max_lon: -47.22,
+                min_lat: -16.06,
+                max_lat: -15.45,
+                min_lon: -48.33,
+                max_lon: -47.22,
             },
             MacroRegion {
                 name: "Plano Piloto (Asas + Eixo)",
                 command: "-gerar plano_piloto",
-                min_lat: -15.84, max_lat: -15.72,
-                min_lon: -47.95, max_lon: -47.82,
+                min_lat: -15.84,
+                max_lat: -15.72,
+                min_lon: -47.95,
+                max_lon: -47.82,
             },
             MacroRegion {
                 name: "Guará",
                 command: "-gerar guara",
-                min_lat: -15.86, max_lat: -15.80,
-                min_lon: -47.99, max_lon: -47.95,
+                min_lat: -15.86,
+                max_lat: -15.80,
+                min_lon: -47.99,
+                max_lon: -47.95,
             },
             MacroRegion {
                 name: "Taguatinga",
                 command: "-gerar taguatinga",
-                min_lat: -15.86, max_lat: -15.79,
-                min_lon: -48.09, max_lon: -48.03,
+                min_lat: -15.86,
+                max_lat: -15.79,
+                min_lon: -48.09,
+                max_lon: -48.03,
             },
             MacroRegion {
                 name: "Águas Claras",
                 command: "-gerar aguas_claras",
-                min_lat: -15.85, max_lat: -15.82,
-                min_lon: -48.04, max_lon: -48.01,
+                min_lat: -15.85,
+                max_lat: -15.82,
+                min_lon: -48.04,
+                max_lon: -48.01,
             },
             MacroRegion {
                 name: "Lago Sul",
                 command: "-gerar lago_sul",
-                min_lat: -15.89, max_lat: -15.80,
-                min_lon: -47.90, max_lon: -47.81,
+                min_lat: -15.89,
+                max_lat: -15.80,
+                min_lon: -47.90,
+                max_lon: -47.81,
             },
         ]
     }
@@ -131,6 +159,8 @@ pub struct SharedDashboardState {
     pub log_buffer: Vec<String>,
     pub is_generating: bool,
     pub status_msg: String,
+    pub halo_buckets: usize,
+    pub halo_blocks: usize,
 }
 
 impl SharedDashboardState {
@@ -142,6 +172,8 @@ impl SharedDashboardState {
             log_buffer: Vec::new(),
             is_generating: false,
             status_msg: "SISTEMA OPERANTE. AGUARDANDO DIRETRIZ.".to_string(),
+            halo_buckets: 0,
+            halo_blocks: 0,
         }
     }
 
@@ -225,8 +257,11 @@ impl MasterControl {
                 for line in buffer.lines() {
                     let parts: Vec<&str> = line.split(',').collect();
                     if parts.len() == 3 {
-                        if let (Ok(x), Ok(z), Ok(bytes)) = (parts[0].parse(), parts[1].parse(), parts[2].parse::<u64>()) {
-                            let old_bytes = self.state.regions_bytes.insert((x, z), bytes).unwrap_or(0);
+                        if let (Ok(x), Ok(z), Ok(bytes)) =
+                            (parts[0].parse(), parts[1].parse(), parts[2].parse::<u64>())
+                        {
+                            let old_bytes =
+                                self.state.regions_bytes.insert((x, z), bytes).unwrap_or(0);
                             self.state.accumulated_bytes_written -= old_bytes;
                             self.state.accumulated_bytes_written += bytes;
                             self.state.regions_map.insert((x, z), RegionStatus::Sealed);
@@ -247,19 +282,45 @@ impl MasterControl {
 
         let bar_color = if usage_percent > 90.0 { "red" } else { "cyan" };
 
-        println!("{}", "=================================================================================".cyan().bold());
-        println!("{} - {}", "[BESM-6]".yellow().bold(), "MASTER CONTROL DASHBOARD (BRASÍLIA DF)".bright_white().bold());
+        println!(
+            "{}",
+            "================================================================================="
+                .cyan()
+                .bold()
+        );
+        println!(
+            "{} - {}",
+            "[BESM-6]".yellow().bold(),
+            "MASTER CONTROL DASHBOARD (BRASÍLIA DF)"
+                .bright_white()
+                .bold()
+        );
 
-        let quota_str = format!("PROJECT QUOTA: {:.2} GB / {:.2} GB [{:.1}%]", consumed_gb, max_gb, usage_percent);
+        let quota_str = format!(
+            "PROJECT QUOTA: {:.2} GB / {:.2} GB [{:.1}%]",
+            consumed_gb, max_gb, usage_percent
+        );
         if usage_percent > 90.0 {
             println!("{}", quota_str.red().bold());
         } else {
             println!("{}", quota_str.color(bar_color).bold());
         }
 
+        println!(
+            "HALO CACHE: {} baldes / {} blocos aguardando regiões vizinhas",
+            self.state.halo_buckets, self.state.halo_blocks
+        );
         println!("STATUS: {}", self.state.status_msg.magenta().bold());
-        println!("{}", "=================================================================================".cyan().bold());
-        println!("{} Use Setas/WASD para mover a câmera. Ctrl+C para Abortar.", "CONTROLES:".white().bold());
+        println!(
+            "{}",
+            "================================================================================="
+                .cyan()
+                .bold()
+        );
+        println!(
+            "{} Use Setas/WASD para mover a câmera. Ctrl+C para Abortar.",
+            "CONTROLES:".white().bold()
+        );
         println!();
 
         let v_min_x = self.camera_x - VIEWPORT_WIDTH / 2;
@@ -269,14 +330,23 @@ impl MasterControl {
 
         print!("    ");
         for x in v_min_x..=v_max_x {
-            if x % 2 == 0 { print!("{:>3} ", x); } else { print!("    "); }
+            if x % 2 == 0 {
+                print!("{:>3} ", x);
+            } else {
+                print!("    ");
+            }
         }
         println!();
 
         for z in v_min_z..=v_max_z {
             print!("{:>3} ", z);
             for x in v_min_x..=v_max_x {
-                let status = self.state.regions_map.get(&(x, z)).copied().unwrap_or(RegionStatus::Empty);
+                let status = self
+                    .state
+                    .regions_map
+                    .get(&(x, z))
+                    .copied()
+                    .unwrap_or(RegionStatus::Empty);
                 match status {
                     RegionStatus::Sealed => print!("{} ", "[██]".green()),
                     RegionStatus::Processing => print!("{} ", "[██]".yellow()),
@@ -288,16 +358,32 @@ impl MasterControl {
             println!();
         }
 
-        println!("\n{}: {} Selado | {} Varredura Atual | {} Halo Vizinho | {} Falha IO",
-                 "LEGENDA".white().bold(), "[██]".green(), "[██]".yellow(), "[██]".blue(), "[XX]".red().bold());
-        println!("{}", "=================================================================================".cyan().bold());
+        println!(
+            "\n{}: {} Selado | {} Varredura Atual | {} Halo Vizinho | {} Falha IO",
+            "LEGENDA".white().bold(),
+            "[██]".green(),
+            "[██]".yellow(),
+            "[██]".blue(),
+            "[XX]".red().bold()
+        );
+        println!(
+            "{}",
+            "================================================================================="
+                .cyan()
+                .bold()
+        );
 
         println!("{}", "SYSTEM LOGS:".green().bold());
         let log_start = self.state.log_buffer.len().saturating_sub(6);
         for msg in &self.state.log_buffer[log_start..] {
             println!("> {}", msg);
         }
-        println!("{}", "=================================================================================".cyan().bold());
+        println!(
+            "{}",
+            "================================================================================="
+                .cyan()
+                .bold()
+        );
 
         if !self.state.is_generating {
             println!("{}", "DIRETRIZES TÁTICAS DISPONÍVEIS:".green().bold());
@@ -306,7 +392,11 @@ impl MasterControl {
             }
         }
 
-        print!("\n{} {}_", "root@besm6:~#".green().bold(), self.current_typing);
+        print!(
+            "\n{} {}_",
+            "root@besm6:~#".green().bold(),
+            self.current_typing
+        );
         stdout.flush().unwrap();
     }
 
@@ -320,18 +410,34 @@ impl MasterControl {
         thread::spawn(move || loop {
             if event::poll(Duration::from_millis(16)).unwrap() {
                 if let Event::Key(key_event) = event::read().unwrap() {
-                    if key_event.modifiers.contains(KeyModifiers::CONTROL) && key_event.code == KeyCode::Char('c') {
+                    if key_event.modifiers.contains(KeyModifiers::CONTROL)
+                        && key_event.code == KeyCode::Char('c')
+                    {
                         input_tx.send(UserInput::Quit).unwrap();
                         break;
                     }
                     match key_event.code {
-                        KeyCode::Up | KeyCode::Char('w') => input_tx.send(UserInput::MoveCamera(0, -1)).unwrap(),
-                        KeyCode::Down | KeyCode::Char('s') => input_tx.send(UserInput::MoveCamera(0, 1)).unwrap(),
-                        KeyCode::Left | KeyCode::Char('a') => input_tx.send(UserInput::MoveCamera(-1, 0)).unwrap(),
-                        KeyCode::Right | KeyCode::Char('d') => input_tx.send(UserInput::MoveCamera(1, 0)).unwrap(),
-                        KeyCode::Enter => input_tx.send(UserInput::Command("\n".to_string())).unwrap(),
-                        KeyCode::Backspace => input_tx.send(UserInput::Command("BACKSPACE".to_string())).unwrap(),
-                        KeyCode::Char(c) => input_tx.send(UserInput::Command(c.to_string())).unwrap(),
+                        KeyCode::Up | KeyCode::Char('w') => {
+                            input_tx.send(UserInput::MoveCamera(0, -1)).unwrap()
+                        }
+                        KeyCode::Down | KeyCode::Char('s') => {
+                            input_tx.send(UserInput::MoveCamera(0, 1)).unwrap()
+                        }
+                        KeyCode::Left | KeyCode::Char('a') => {
+                            input_tx.send(UserInput::MoveCamera(-1, 0)).unwrap()
+                        }
+                        KeyCode::Right | KeyCode::Char('d') => {
+                            input_tx.send(UserInput::MoveCamera(1, 0)).unwrap()
+                        }
+                        KeyCode::Enter => {
+                            input_tx.send(UserInput::Command("\n".to_string())).unwrap()
+                        }
+                        KeyCode::Backspace => input_tx
+                            .send(UserInput::Command("BACKSPACE".to_string()))
+                            .unwrap(),
+                        KeyCode::Char(c) => {
+                            input_tx.send(UserInput::Command(c.to_string())).unwrap()
+                        }
                         _ => {}
                     }
                 }
@@ -346,7 +452,8 @@ impl MasterControl {
             while let Ok(user_input) = input_rx.try_recv() {
                 match user_input {
                     UserInput::Quit => {
-                        self.state.push_log("Encerrando conexão terminal...".red().to_string());
+                        self.state
+                            .push_log("Encerrando conexão terminal...".red().to_string());
                         self.abort_flag.store(true, Ordering::SeqCst);
                         running = false;
                     }
@@ -377,7 +484,9 @@ impl MasterControl {
                 while let Ok(signal) = rx.try_recv() {
                     match signal {
                         BesmSignal::RegionProcessing(x, z) => {
-                            self.state.regions_map.insert((x, z), RegionStatus::Processing);
+                            self.state
+                                .regions_map
+                                .insert((x, z), RegionStatus::Processing);
                             self.state.status_msg = format!("VARREDURA: r.{}.{}", x, z);
 
                             // Atualiza apenas a área central na câmera para visualização rápida se estivermos longe
@@ -389,7 +498,8 @@ impl MasterControl {
                         BesmSignal::RegionSealed(x, z, bytes) => {
                             self.state.regions_map.insert((x, z), RegionStatus::Sealed);
 
-                            let old_bytes = self.state.regions_bytes.insert((x, z), bytes).unwrap_or(0);
+                            let old_bytes =
+                                self.state.regions_bytes.insert((x, z), bytes).unwrap_or(0);
                             self.state.accumulated_bytes_written -= old_bytes;
                             self.state.accumulated_bytes_written += bytes;
 
@@ -397,11 +507,18 @@ impl MasterControl {
 
                             if self.state.accumulated_bytes_written >= MAX_PROJECT_QUOTA_BYTES {
                                 self.abort_flag.store(true, Ordering::SeqCst);
-                                self.state.push_log("COTA ATINGIDA! CORTE GERAL DE PROCESSAMENTO.".red().bold().to_string());
+                                self.state.push_log(
+                                    "COTA ATINGIDA! CORTE GERAL DE PROCESSAMENTO."
+                                        .red()
+                                        .bold()
+                                        .to_string(),
+                                );
                             }
                         }
                         BesmSignal::RegionFailed(x, z) => {
-                            self.state.regions_map.insert((x, z), RegionStatus::Corrupted);
+                            self.state
+                                .regions_map
+                                .insert((x, z), RegionStatus::Corrupted);
                         }
                         BesmSignal::RegionEmpty(x, z) => {
                             self.state.regions_map.insert((x, z), RegionStatus::Empty);
@@ -412,12 +529,21 @@ impl MasterControl {
                         BesmSignal::Log(msg) => {
                             self.state.push_log(msg);
                         }
+                        BesmSignal::HaloMetrics(buckets, blocks) => {
+                            self.state.halo_buckets = buckets;
+                            self.state.halo_blocks = blocks;
+                        }
                         BesmSignal::GenerationComplete => {
                             self.state.is_generating = false;
-                            self.state.status_msg = "SISTEMA OPERANTE. AGUARDANDO DIRETRIZ.".to_string();
+                            self.state.status_msg =
+                                "SISTEMA OPERANTE. AGUARDANDO DIRETRIZ.".to_string();
 
                             if manifest_needs_update {
-                                self.disk_tx.send(DiskActorMsg::UpdateManifest(self.state.regions_bytes.clone())).unwrap_or_default();
+                                self.disk_tx
+                                    .send(DiskActorMsg::UpdateManifest(
+                                        self.state.regions_bytes.clone(),
+                                    ))
+                                    .unwrap_or_default();
                                 manifest_needs_update = false;
                             }
                         }
@@ -431,11 +557,17 @@ impl MasterControl {
 
         // Salva manifesto no final absoluto se necessário
         if manifest_needs_update {
-            self.disk_tx.send(DiskActorMsg::UpdateManifest(self.state.regions_bytes.clone())).unwrap_or_default();
+            self.disk_tx
+                .send(DiskActorMsg::UpdateManifest(
+                    self.state.regions_bytes.clone(),
+                ))
+                .unwrap_or_default();
         }
 
         // Destrói a thread de disco
-        self.disk_tx.send(DiskActorMsg::Terminate).unwrap_or_default();
+        self.disk_tx
+            .send(DiskActorMsg::Terminate)
+            .unwrap_or_default();
 
         disable_raw_mode().unwrap();
         execute!(stdout, Show, LeaveAlternateScreen).unwrap();
@@ -459,7 +591,11 @@ impl MasterControl {
         if let Some(region) = target_region {
             self.dispatch_generation(region);
         } else if !command.is_empty() {
-            self.state.push_log(format!("{} DIRETRIZ DESCONHECIDA: {}", "[ERRO]".red(), command));
+            self.state.push_log(format!(
+                "{} DIRETRIZ DESCONHECIDA: {}",
+                "[ERRO]".red(),
+                command
+            ));
         }
     }
 
@@ -480,13 +616,45 @@ impl MasterControl {
         let provider_manager = Arc::clone(&self.provider_manager);
         let args = Arc::clone(&self.args);
 
-        // A BBox máxima apenas para determinar a varredura
+        // A BBox máxima apenas para determinar a varredura. Os presets são fixos e
+        // hand-verificados (min < max em ambos os eixos), então uma falha aqui só
+        // pode significar um preset corrompido — falha rápida e alto, na hora.
         let macro_bbox = LLBBox::new(
-            LLPoint::new(region.min_lat, region.min_lon).unwrap(),
-            LLPoint::new(region.max_lat, region.max_lon).unwrap(),
-        );
+            region.min_lat,
+            region.min_lon,
+            region.max_lat,
+            region.max_lon,
+        )
+        .expect("BESM-6: preset de MacroRegion com BBox geograficamente inválida");
 
-        let (transformer, xzbbox) = CoordTransformer::llbbox_to_xzbbox(&macro_bbox, args.scale_h).unwrap();
+        let (transformer, xzbbox) =
+            CoordTransformer::llbbox_to_xzbbox(&macro_bbox, args.scale_h).unwrap();
+
+        // 🚨 BESM-6: `WorldEditor` empresta `&'a XZBBox` (o Roteador Espacial Core/Halo
+        // depende dele durante toda a varredura), mas a thread orquestradora abaixo
+        // exige captura 'static. Como este bbox vive exatamente pelo tempo de uma
+        // única "diretriz" de geração (uma chamada de `dispatch_generation`), vazá-lo
+        // deliberadamente é seguro e barato — não há loop que acumule vazamentos.
+        let xzbbox: &'static XZBBox = Box::leak(Box::new(xzbbox));
+
+        let world_dir = args
+            .path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("./world"));
+        let world_format = if args.bedrock {
+            WorldFormat::BedrockMcWorld
+        } else {
+            WorldFormat::JavaAnvil
+        };
+
+        let mut editor = WorldEditor::new_with_format_and_name(
+            world_dir,
+            xzbbox,
+            macro_bbox,
+            world_format,
+            None,
+            None,
+        );
 
         // Conversão de Blocos do Minecraft para Regiões MCA (1 Região = 512 Blocos)
         let min_rx = xzbbox.min_x() >> 9;
@@ -503,12 +671,17 @@ impl MasterControl {
 
         // 🚨 THREAD ORQUESTRADORA: Tile Streaming Assíncrono
         thread::spawn(move || {
-            let _ = tx.send(BesmSignal::Log(format!("Mapeando Reticulado {}...", region_name)));
+            let _ = tx.send(BesmSignal::Log(format!(
+                "Mapeando Reticulado {}...",
+                region_name
+            )));
 
             // 1. Fatiamento em Regiões .mca com Fetch Geométrico Dinâmico O(1) Memory
             for (rx, rz) in regions_to_process {
                 if abort_clone.load(Ordering::Relaxed) {
-                    let _ = tx.send(BesmSignal::Log("VARREDURA ABORTADA PELO USUÁRIO.".red().to_string()));
+                    let _ = tx.send(BesmSignal::Log(
+                        "VARREDURA ABORTADA PELO USUÁRIO.".red().to_string(),
+                    ));
                     break;
                 }
 
@@ -524,15 +697,32 @@ impl MasterControl {
                 let local_ll_max = transformer.inverse_transform(XZPoint::new(rx_max_x, rz_max_z));
 
                 // Se a transformada inversa falhar, ignora o tile
-                if local_ll_min.is_err() || local_ll_max.is_err() { continue; }
+                let (local_ll_min, local_ll_max) = match (local_ll_min, local_ll_max) {
+                    (Ok(a), Ok(b)) => (a, b),
+                    _ => continue,
+                };
 
-                let local_bbox = LLBBox::new(local_ll_min.unwrap(), local_ll_max.unwrap());
+                // 🚨 Os dois cantos calculados acima não são necessariamente (SW, NE) —
+                // dependendo do hemisfério/orientação, "rz_min_z" pode corresponder à
+                // maior latitude. Construímos o bbox local a partir do min/max real.
+                let local_bbox = match LLBBox::new(
+                    local_ll_min.lat().min(local_ll_max.lat()),
+                    local_ll_min.lng().min(local_ll_max.lng()),
+                    local_ll_min.lat().max(local_ll_max.lat()),
+                    local_ll_min.lng().max(local_ll_max.lng()),
+                ) {
+                    Ok(bbox) => bbox,
+                    Err(_) => continue,
+                };
 
                 // 🚨 Point-in-Polygon Check (Se estivéssemos cruzando Goiás e não o DF)
                 // O Motor verifica os limites estritos. Se o tile está no vazio, a gente mata logo a requisição.
                 // (Por segurança simplificada, omitimos o poly geoespacial completo aqui e verificamos a intersecção retangular de macro)
-                if local_bbox.min().lat() > macro_bbox.max().lat() || local_bbox.max().lat() < macro_bbox.min().lat() ||
-                    local_bbox.min().lng() > macro_bbox.max().lng() || local_bbox.max().lng() < macro_bbox.min().lng() {
+                if local_bbox.min().lat() > macro_bbox.max().lat()
+                    || local_bbox.max().lat() < macro_bbox.min().lat()
+                    || local_bbox.min().lng() > macro_bbox.max().lng()
+                    || local_bbox.max().lng() < macro_bbox.min().lng()
+                {
                     let _ = tx.send(BesmSignal::RegionEmpty(rx, rz));
                     continue;
                 }
@@ -543,30 +733,56 @@ impl MasterControl {
                 let local_features = match provider_manager.fetch_all(&local_bbox) {
                     Ok(features) => features,
                     Err(e) => {
-                        let _ = tx.send(BesmSignal::Log(format!("{} Falha GDB na r.{}.{}: {}", "[ERRO]".red(), rx, rz, e)));
+                        let _ = tx.send(BesmSignal::Log(format!(
+                            "{} Falha GDB na r.{}.{}: {}",
+                            "[ERRO]".red(),
+                            rx,
+                            rz,
+                            e
+                        )));
                         let _ = tx.send(BesmSignal::RegionFailed(rx, rz));
                         continue;
                     }
                 };
 
-                // Instancia o editor isolado
-                let mut editor = crate::world_editor::WorldEditor::new(rx, rz);
+                // 🚨 Move o Roteador para a região ativa e injeta o que vazou do Halo
+                editor.set_active_region(rx, rz);
+                editor.load_halo_to_core();
 
-                // 🚨 TWEAK BESM-6: Renderização e Descarte Instantâneo de Memória (Drop)
-                data_processing::generate_region_from_global(&mut editor, &local_features, &args, &transformer);
+                data_processing::generate_region_from_global(
+                    &mut editor,
+                    &local_features,
+                    &args,
+                    &transformer,
+                );
 
-                if let Err(e) = editor.save() {
-                    let _ = tx.send(BesmSignal::Log(format!("{} Falha I/O: r.{}.{}: {}", "[ERRO]".red(), rx, rz, e)));
-                    let _ = tx.send(BesmSignal::RegionFailed(rx, rz));
-                } else {
-                    let region_path = format!("./world/region/r.{}.{}.mca", rx, rz);
-                    let file_size = fs::metadata(&region_path).map(|m| m.len()).unwrap_or(0);
-                    let _ = tx.send(BesmSignal::RegionSealed(rx, rz, file_size));
+                // 🚨 TWEAK BESM-6: Comprime, grava o .mca no disco e aniquila a RAM do Core
+                editor.flush_active_region();
+
+                // 🚨 RECONEXÃO: reporta o tamanho do Halo Cache para o HUD (o quanto de
+                // blocos "vazaram" para regiões vizinhas ainda não processadas).
+                let (halo_buckets, halo_blocks) = editor.get_halo_metrics();
+                let _ = tx.send(BesmSignal::HaloMetrics(halo_buckets, halo_blocks));
+
+                let region_path = format!("./world/region/r.{}.{}.mca", rx, rz);
+                match fs::metadata(&region_path) {
+                    Ok(m) => {
+                        let _ = tx.send(BesmSignal::RegionSealed(rx, rz, m.len()));
+                    }
+                    Err(_) => {
+                        // Região sem nenhum bloco não-ar não grava .mca — não é uma falha de I/O.
+                        let _ = tx.send(BesmSignal::RegionEmpty(rx, rz));
+                    }
                 }
             }
 
             if !abort_clone.load(Ordering::Relaxed) {
-                let _ = tx.send(BesmSignal::Log(format!("{} MAPA MATERIALIZADO NO DISCO.", region_name.to_uppercase().green())));
+                // Fecha metadados finais (level.dat / equivalente) uma única vez, no fim da varredura.
+                editor.save();
+                let _ = tx.send(BesmSignal::Log(format!(
+                    "{} MAPA MATERIALIZADO NO DISCO.",
+                    region_name.to_uppercase().green()
+                )));
             }
 
             let _ = tx.send(BesmSignal::GenerationComplete);

@@ -3,6 +3,11 @@
 // Generates a PNG image of the generated world,
 // showing the topmost visible block at each position.
 // ?? BESM-6 TWEAK: Prote��o Din�mica de Mem�ria (Downsampling) contra Mapas Governamentais Massivos.
+//
+// 🚨 Chamado por `main::run_generation_pipeline` só dentro de `#[cfg(feature = "gui")]`
+// (o preview só faz sentido para quem tem uma janela pra exibi-lo). No build sem GUI
+// este módulo inteiro fica genuinamente inalcançável — não uma lacuna de conexão.
+#![cfg_attr(not(feature = "gui"), allow(dead_code))]
 
 use fastanvil::Region;
 use fastnbt::{from_bytes, Value};
@@ -316,7 +321,7 @@ fn get_sorted_sections<'a>(sections: &[&'a Value]) -> Vec<(i8, &'a Value)> {
         })
         .collect();
 
-    sorted.sort_by(|a, b| b.0.cmp(&a.0));
+    sorted.sort_by_key(|item| std::cmp::Reverse(item.0));
     sorted
 }
 

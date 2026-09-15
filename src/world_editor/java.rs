@@ -15,6 +15,10 @@ use std::fs::File;
 use std::io::Write;
 use std::sync::OnceLock;
 
+/// Índice da seção mais baixa do mundo (Y=-64 do `common::MIN_Y`, >> 4) — o
+/// `yPos` exigido na raiz de todo chunk pelo formato Java atual (1.18+).
+const MIN_SECTION_Y: i32 = -4;
+
 /// Cached base chunk sections (grass at Y=-62)
 /// Computed once on first use and reused for all empty chunks
 static BASE_CHUNK_SECTIONS: OnceLock<Vec<Section>> = OnceLock::new();
@@ -76,10 +80,10 @@ impl<'a> WorldEditor<'a> {
             other: FnvHashMap::default(),
         };
 
-        // Create the Level wrapper
-        let level_data = create_level_wrapper(&chunk_data);
+        // Monta a raiz do chunk (formato Java atual)
+        let level_data = build_chunk_root(&chunk_data);
 
-        // Serialize the chunk with Level wrapper
+        // Serializa o chunk
         let mut ser_buffer = Vec::with_capacity(8192);
         fastnbt::to_writer(&mut ser_buffer, &level_data).unwrap();
 
@@ -113,7 +117,7 @@ impl<'a> WorldEditor<'a> {
                         other: chunk_to_modify.other.clone(),
                     };
 
-                    let level_data = create_level_wrapper(&chunk);
+                    let level_data = build_chunk_root(&chunk);
                     ser_buffer.clear();
                     fastnbt::to_writer(&mut ser_buffer, &level_data).unwrap();
                     region
@@ -192,12 +196,37 @@ fn get_entity_coords(entity: &HashMap<String, Value>) -> Option<(i32, i32, i32)>
     Some((x, y, z))
 }
 
-/// Creates a Level wrapper for chunk data (Java Edition format)
+/// Builds the root chunk NBT (Java Edition, post-1.18 "current" format).
+///
+/// 🚨 CORREÇÃO CRÍTICA: antes, esta função (então chamada
+/// `create_level_wrapper`) envelopava todo o chunk num compound `"Level"` —
+/// o formato PRÉ-1.18 do Minecraft. `assets/minecraft/level.dat` (o
+/// template usado por este motor) declara `DataVersion 4189` (Minecraft
+/// 1.21.4), mas todo chunk escrito usava a estrutura antiga: sem "Level" o
+/// formato atual não tem, e sem `DataVersion`/`Status`/`yPos` soltos na
+/// raiz do chunk — os 4 sempre obrigatórios desde 1.18. Confirmado contra
+/// o próprio tipo `CurrentJavaChunk` da crate `fastanvil` (a mesma que
+/// este projeto usa): ele exige esses campos na raiz, não dentro de um
+/// wrapper "Level" (que a crate reserva para seu módulo `pre18`,
+/// deserialização de mundos ANTIGOS). Sem esta correção, nenhum mundo
+/// gerado por este motor carregava corretamente num cliente Minecraft
+/// real 1.18+: o cliente lê um DataVersion moderno, espera a estrutura
+/// moderna, não encontra `sections`/`Status` na raiz (estavam dentro de
+/// "Level"), e trata o chunk como ausente ou corrompido — descartando ou
+/// regenerando todo o conteúdo gerado. `block_entities` (já com o nome
+/// correto do formato moderno, vindo de `chunk.other`) sofria o mesmo
+/// aninhamento incorreto.
 #[inline]
-fn create_level_wrapper(chunk: &Chunk) -> HashMap<String, Value> {
+fn build_chunk_root(chunk: &Chunk) -> HashMap<String, Value> {
     let mut level_map = HashMap::from([
+        ("DataVersion".to_string(), Value::Int(4189)),
         ("xPos".to_string(), Value::Int(chunk.x_pos)),
         ("zPos".to_string(), Value::Int(chunk.z_pos)),
+        ("yPos".to_string(), Value::Int(MIN_SECTION_Y)),
+        (
+            "Status".to_string(),
+            Value::String("minecraft:full".to_string()),
+        ),
         (
             "isLightOn".to_string(),
             Value::Byte(i8::try_from(chunk.is_light_on).unwrap()),
@@ -252,7 +281,7 @@ fn create_level_wrapper(chunk: &Chunk) -> HashMap<String, Value> {
         level_map.insert(key.clone(), value.clone());
     }
 
-    HashMap::from([("Level".to_string(), Value::Compound(level_map))])
+    level_map
 }
 
 #[allow(dead_code)]

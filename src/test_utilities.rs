@@ -1,3 +1,8 @@
+// 🚨 Módulo de apoio a testes (`#[cfg(test)]` em main.rs). `generate_default_example`
+// é usado por `map_transformation::translate::translator`'s testes; o Clippy ainda
+// assim reporta as três funções como não usadas na checagem de alvo "bin test"
+// isolada (fora do grafo de alcance dessa checagem específica) — não uma lacuna real.
+#![allow(dead_code)]
 use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::osm_parser;

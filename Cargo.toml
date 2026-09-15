@@ -2,7 +2,7 @@
 name = "pincelism"
 version = "2.5.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.89"
 description = "Pincelism (BESM-6 Engine) - Procedural Digital Twin Generator for the Federal District"
 authors = ["Pince - @pincelism"]
 homepage = "https://github.com/nasnEdfbXOHEfuW5hi06gN/n-p70-fMh8I-k-oQ1-r-D-ZtpwC"
@@ -72,7 +72,7 @@ jsonwebtoken = "10.3.0"
 log = "0.4.27"
 
 # 🚨 BESM-6: Rand fixado na versão 0.8 (Estabilidade Governamental)
-rand = { version = "0.8", features = ["std", "std_rng"] }
+rand = { version = "0.8", features = ["std", "std_rng", "small_rng"] }
 rand_chacha = "0.3"
 
 reqwest = { version = "0.13.1", features = ["blocking", "json", "query"] }

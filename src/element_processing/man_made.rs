@@ -5,6 +5,8 @@ use crate::deterministic_rng::coord_rng;
 use crate::floodfill_cache::FloodFillCache;
 use crate::osm_parser::{ProcessedElement, ProcessedNode};
 use crate::world_editor::WorldEditor;
+use noise::{NoiseFn, OpenSimplex};
+use once_cell::sync::Lazy;
 use rand::Rng;
 // 🚨 BESM-6: Integração com Indoor Utility Provider (CAESB Infrastructure)
 use crate::providers::{Feature, GeometryType, SemanticGroup};
@@ -137,7 +139,7 @@ fn generate_antenna(editor: &mut WorldEditor, element: &ProcessedElement, args: 
             Some(h) => (h.parse::<f64>().unwrap_or(30.0) * V_SCALE) as i32,
             None => 40,
         }
-            .min(80);
+        .min(80);
 
         editor.set_block_absolute(IRON_BLOCK, x, ground_y + 1, z, None, None);
         for y in 2..height {
@@ -438,6 +440,14 @@ fn generate_manhole(editor: &mut WorldEditor, node: &ProcessedNode) {
     editor.set_block_absolute(IRON_TRAPDOOR, node.x, ground_y, node.z, None, Some(&[]));
 }
 
+/// 🚨 RECONEXÃO: mesma família de bug já corrigida em `natural.rs` e `leisure.rs` —
+/// o layout desta ETE usava ruído trigonométrico (`sin(x·0.3)·cos(z·0.3)`) para
+/// distribuir os tanques de aeração, com a mesma estrutura periódica/diagonal
+/// indesejada. Estação de tratamento real tem zonas de tanques agrupadas, não uma
+/// grade regular — ruído de gradiente de verdade preserva essa intenção sem o
+/// artefato visual.
+static NOISE_INDUSTRIAL_WORKS: Lazy<OpenSimplex> = Lazy::new(|| OpenSimplex::new(9215));
+
 /// Estações de Tratamento de Esgoto (CAESB) e Complexos Industriais
 fn generate_industrial_works(
     editor: &mut WorldEditor,
@@ -464,7 +474,7 @@ fn generate_industrial_works(
 
     // Planta de tratamento genérica (Piso de concreto e tanques abertos de água)
     for &(px, pz) in &area {
-        let noise = ((px as f64 * 0.3).sin() * (pz as f64 * 0.3).cos()).abs();
+        let noise = (NOISE_INDUSTRIAL_WORKS.get([px as f64 * 0.3, pz as f64 * 0.3]) + 1.0) / 2.0;
 
         // Chão de concreto industrial
         editor.set_block_absolute(LIGHT_GRAY_CONCRETE, px, base_y, pz, None, None);
@@ -718,8 +728,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
 
     // Material principal, variante envelhecida (desgaste orgânico) e líquido
     // interno (se houver) — determinados uma única vez pelo tipo de utilidade.
-    let (shell_block, weathered_block, fluid_block): (Block, Block, Option<Block>) = if is_sewage
-    {
+    let (shell_block, weathered_block, fluid_block): (Block, Block, Option<Block>) = if is_sewage {
         (STONE_BRICKS, CRACKED_STONE_BRICKS, Some(WATER)) // Esgoto: tijolo de pedra rachado
     } else if is_water {
         (CYAN_TERRACOTTA, CRACKED_STONE_BRICKS, Some(WATER)) // Água: terracota ciano
@@ -759,11 +768,12 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                             let set_x = px + dx;
                             let set_y = pipe_y + dy;
 
-                            let is_shell = pipe_radius <= 1 || dist_sq > inner_radius * inner_radius;
+                            let is_shell =
+                                pipe_radius <= 1 || dist_sq > inner_radius * inner_radius;
 
                             if is_shell {
                                 // ~18% da casca vira a variante desgastada.
-                                let block = if weather_rng.random_bool(0.18) {
+                                let block = if weather_rng.gen_bool(0.18) {
                                     weathered_block
                                 } else {
                                     shell_block
@@ -781,9 +791,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                                     Some(fluid) if dy <= 0 => fluid, // líquido só embaixo
                                     _ => AIR,
                                 };
-                                editor.set_block_absolute(
-                                    core_block, set_x, set_y, pz, None, None,
-                                );
+                                editor.set_block_absolute(core_block, set_x, set_y, pz, None, None);
                             }
                         }
                     }
@@ -804,9 +812,9 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
             let chamber_y = base_y + depth_offset;
             let mut chamber_rng = coord_rng(pt.x, chamber_y, pt.z, feature.id);
 
-            let has_cobweb = chamber_rng.random_bool(0.3);
-            let cobweb_dx = chamber_rng.random_range(-1..=1);
-            let cobweb_dz = chamber_rng.random_range(-1..=1);
+            let has_cobweb = chamber_rng.gen_bool(0.3);
+            let cobweb_dx = chamber_rng.gen_range(-1..=1);
+            let cobweb_dz = chamber_rng.gen_range(-1..=1);
 
             for dx in -1i32..=1i32 {
                 for dy in -1i32..=1i32 {
@@ -816,9 +824,9 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                             AIR // Interior vazio (o vão real do poço)
                         } else if has_cobweb && dy == 1 && dx == cobweb_dx && dz == cobweb_dz {
                             COBWEB // Câmara pouco visitada: sensação de esquecida
-                        } else if is_wet && dy == -1 && chamber_rng.random_bool(0.35) {
+                        } else if is_wet && dy == -1 && chamber_rng.gen_bool(0.35) {
                             MOSS_BLOCK // Umidade acumulada no fundo
-                        } else if chamber_rng.random_bool(0.2) {
+                        } else if chamber_rng.gen_bool(0.2) {
                             weathered_block
                         } else {
                             shell_block
@@ -871,7 +879,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
 
                     // Paredes laterais, com desgaste orgânico intercalado.
                     for dy in 0..chamber_height {
-                        let block = if wall_rng.random_bool(0.15) {
+                        let block = if wall_rng.gen_bool(0.15) {
                             weathered_block
                         } else {
                             shell_block
@@ -879,7 +887,7 @@ fn generate_underground_pipeline(editor: &mut WorldEditor, feature: &Feature, ar
                         editor.set_block_absolute(block, px, chamber_y + dy, pz, None, None);
                     }
                     // Piso — galerias de água/esgoto acumulam musgo no rodapé.
-                    let floor_block = if is_wet && wall_rng.random_bool(0.25) {
+                    let floor_block = if is_wet && wall_rng.gen_bool(0.25) {
                         MOSS_BLOCK
                     } else {
                         shell_block
@@ -980,7 +988,7 @@ fn generate_indoor_structure(editor: &mut WorldEditor, feature: &Feature, args: 
                 let mut room_rng = coord_rng(px, floor_y, pz, feature.id);
 
                 // Piso: musgo perto da parede em salas subterrâneas.
-                let floor_block = if is_underground && room_rng.random_bool(0.2) {
+                let floor_block = if is_underground && room_rng.gen_bool(0.2) {
                     MOSS_BLOCK
                 } else {
                     SMOOTH_STONE
@@ -989,7 +997,7 @@ fn generate_indoor_structure(editor: &mut WorldEditor, feature: &Feature, args: 
 
                 // Paredes: leve variação de tom, nunca perfeitamente uniforme.
                 for dy in 1..room_height {
-                    let wall_block = if room_rng.random_bool(0.15) {
+                    let wall_block = if room_rng.gen_bool(0.15) {
                         LIGHT_GRAY_CONCRETE
                     } else {
                         WHITE_CONCRETE

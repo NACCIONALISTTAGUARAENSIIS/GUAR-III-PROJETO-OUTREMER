@@ -153,6 +153,14 @@ pub struct Args {
     #[arg(long)]
     pub postgis_url: Option<String>,
 
+    /// Table name to query when --postgis-url is set (required to enable the PostGIS provider)
+    #[arg(long)]
+    pub postgis_table: Option<String>,
+
+    /// Geometry column name for --postgis-table (defaults to "geom" if omitted)
+    #[arg(long)]
+    pub postgis_geom_column: Option<String>,
+
     /// Path to local GeoPackage (.gpkg) file, the modern OGC standard replacing shapefiles
     #[arg(long)]
     pub local_gpkg: Option<PathBuf>,
@@ -176,6 +184,25 @@ pub struct Args {
     /// Path to local Photogrammetry Meshes (.obj, .gltf) directory for accurate monument representation
     #[arg(long)]
     pub local_mesh: Option<PathBuf>,
+
+    /// Path to a local CAESB/CEB indoor utility GeoJSON (interiors, floor plans,
+    /// sanitation/water/power infrastructure) for the IndoorUtilityProvider
+    #[arg(long)]
+    pub local_caesb_geojson: Option<PathBuf>,
+
+    /// Path to a local CSV of government open-data point listings (e.g.
+    /// dados.df.gov.br poles, NOVACAP trees, bus stops) with latitude/longitude columns
+    #[arg(long)]
+    pub local_csv: Option<PathBuf>,
+
+    /// Path to a local KML file (IPHAN heritage polygons, ADASA watersheds, Metrô-DF vectors)
+    #[arg(long)]
+    pub local_kml: Option<PathBuf>,
+
+    /// OGC 3D Tiles streaming endpoint URL (e.g. Cesium ion tileset.json base) for
+    /// textured 3D mesh streaming with spatial (HLOD) culling
+    #[arg(long)]
+    pub tiles3d_endpoint: Option<String>,
 
     // ==========================================================
     // CONFIGURAÇÕES BASE
@@ -236,6 +263,44 @@ pub struct Args {
     /// typically ~0.00027 for the standard 30m MapBiomas product)
     #[arg(long)]
     pub mapbiomas_pixel_size_deg: Option<f64>,
+
+    // ==========================================================
+    // 🚨 RECONEXÃO DSM — Modelo de Superfície real (telhados/copas)
+    // `Ground::surface_level` já degradava graciosamente para o chão nu quando
+    // `canopy_surface_cache` estava vazio (era sempre o caso); estes campos
+    // alimentam essa cache de verdade via `DsmProvider`, sem quebrar o
+    // fallback existente quando não fornecidos.
+    // ==========================================================
+    /// Path to a local DSM (Digital Surface Model) GeoTIFF raster — surface
+    /// heights INCLUDING rooftops/canopy, as opposed to --local-dem (bare
+    /// earth). Requires --dsm-top-left-lat/-lon and --dsm-pixel-size-deg.
+    #[arg(long)]
+    pub local_dsm: Option<PathBuf>,
+
+    /// Latitude of the DSM raster's top-left pixel (required with --local-dsm)
+    #[arg(long)]
+    pub dsm_top_left_lat: Option<f64>,
+
+    /// Longitude of the DSM raster's top-left pixel (required with --local-dsm)
+    #[arg(long)]
+    pub dsm_top_left_lon: Option<f64>,
+
+    /// Pixel size in degrees of the DSM raster (required with --local-dsm)
+    #[arg(long)]
+    pub dsm_pixel_size_deg: Option<f64>,
+
+    /// Latitude of the --local-dem raster's top-left pixel (required to use --local-dem
+    /// as a direct bare-earth source instead of the AWS SRTM API fetch)
+    #[arg(long)]
+    pub dem_top_left_lat: Option<f64>,
+
+    /// Longitude of the --local-dem raster's top-left pixel (see --dem-top-left-lat)
+    #[arg(long)]
+    pub dem_top_left_lon: Option<f64>,
+
+    /// Pixel size in degrees of the --local-dem raster (see --dem-top-left-lat)
+    #[arg(long)]
+    pub dem_pixel_size_deg: Option<f64>,
 
     /// Disable the ambient procedural Cerrado forest that fills open (non-urban,
     /// non-road) terrain independently of OSM natural=* tags (enabled by default
@@ -505,10 +570,7 @@ pub fn validate_args(args: &mut Args) -> Result<(), String> {
                 ifc_path.display()
             ));
         }
-        let ext = ifc_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = ifc_path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext.to_lowercase() != "ifc" {
             return Err(format!(
                 "IFC source must be an .ifc file. Found: {}",
@@ -669,7 +731,14 @@ mod tests {
 
     #[test]
     fn test_bedrock_flag() {
-        let cmd = ["arnis", "--bedrock", "--bbox", "1,2,3,4"];
+        let cmd = [
+            "arnis",
+            "--bedrock",
+            "--bbox",
+            "1,2,1.01,2.01",
+            "--max-area-km2",
+            "1000000",
+        ];
         let mut args = Args::parse_from(cmd.iter());
         assert!(args.bedrock);
         assert!(args.path.is_none());
@@ -726,7 +795,12 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
+            // 🚨 BESM-6: "1,2,3,4" cobre uma área real (~500km x 500km) maior que o
+            // teto padrão de --max-area-km2 (10000 km²); este teste quer testar a
+            // regra do WFS, não a de área, então a desabilitamos explicitamente.
+            "--max-area-km2",
+            "1000000",
             "--enable-underground-wfs",
         ];
         let mut args = Args::parse_from(cmd.iter());
@@ -747,7 +821,9 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
+            "--max-area-km2",
+            "1000000",
             "--file",
             "dummy.json",
             "--offline",
@@ -766,11 +842,15 @@ mod tests {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmp_path = tmpdir.path().to_str().unwrap();
 
+        // 🚨 BESM-6: A validação de bbox degenerada (min == max) já acontece dentro
+        // do `value_parser` (`LLBBox::from_str` -> `LLBBox::new`) durante o próprio
+        // parsing do clap — antes mesmo de `validate_args` rodar. `parse_from`
+        // chamaria `process::exit()` num valor inválido (matando o processo de
+        // testes inteiro); `try_parse_from` devolve o erro de forma testável.
         let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,1,1,1"];
-        let mut args = Args::parse_from(cmd.iter());
-        let result = validate_args(&mut args);
+        let result = Args::try_parse_from(cmd.iter());
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid bounding box"));
+        assert!(result.unwrap_err().to_string().contains("Invalid LLBBox"));
     }
 
     #[test]
@@ -781,11 +861,27 @@ mod tests {
         let cmd = ["arnis"];
         assert!(Args::try_parse_from(cmd.iter()).is_err());
 
-        let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,2,3,4"];
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmp_path,
+            "--bbox",
+            "1,2,1.01,2.01",
+            "--max-area-km2",
+            "1000000",
+        ];
         let mut args = Args::try_parse_from(cmd.iter()).unwrap();
         assert!(validate_args(&mut args).is_ok());
 
-        let cmd = ["arnis", "--path", tmp_path, "--bbox", "1,2,3,4"];
+        let cmd = [
+            "arnis",
+            "--path",
+            tmp_path,
+            "--bbox",
+            "1,2,1.01,2.01",
+            "--max-area-km2",
+            "1000000",
+        ];
         let mut args = Args::try_parse_from(cmd.iter()).unwrap();
         assert!(validate_args(&mut args).is_ok());
 
@@ -827,11 +923,13 @@ mod tests {
             "--output-dir",
             tmp_path,
             "--bbox",
-            "1,2,3,4",
+            "1,2,1.01,2.01",
+            "--max-area-km2",
+            "1000000",
             "--spawn-lat",
-            "2.0",
+            "1.005",
             "--spawn-lng",
-            "3.0",
+            "2.005",
         ];
         let mut args = Args::parse_from(cmd.iter());
         assert!(validate_args(&mut args).is_ok());
@@ -850,5 +948,4 @@ mod tests {
         let mut args = Args::parse_from(cmd.iter());
         assert!(validate_args(&mut args).is_err());
     }
-
 }

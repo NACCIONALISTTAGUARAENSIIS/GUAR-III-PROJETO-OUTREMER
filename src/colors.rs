@@ -108,7 +108,7 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> RGBTuple {
 pub fn apply_weathering(rgb: RGBTuple, seed: u32, is_west_facing: bool, distance: f64) -> RGBTuple {
     let (mut h, mut s, mut l) = rgb_to_hsl(rgb.0, rgb.1, rgb.2);
 
-    let is_faded_by_sun = seed % 2 == 0 || is_west_facing;
+    let is_faded_by_sun = seed.is_multiple_of(2) || is_west_facing;
 
     // BESM-6 Tweak: Micro-variation injetado diretamente na base para quebrar uniformidade perfeitamente lisa
     let micro_noise = (seed % 5) as f32 / 255.0;
@@ -328,7 +328,7 @@ pub fn resolve_roof_color(ctx: &ColorContext) -> RGBTuple {
                 (160, 160, 165)
             }
         } else {
-            if seed % 2 == 0 {
+            if seed.is_multiple_of(2) {
                 (140, 140, 135)
             } else {
                 (180, 80, 45)
@@ -341,13 +341,13 @@ pub fn resolve_roof_color(ctx: &ColorContext) -> RGBTuple {
         || btype.eq_ignore_ascii_case("commercial")
         || btype.eq_ignore_ascii_case("apartments")
     {
-        if seed % 2 == 0 {
+        if seed.is_multiple_of(2) {
             (140, 140, 135)
         } else {
             (185, 185, 180)
         } // Laje Plana
     } else {
-        if seed % 2 == 0 {
+        if seed.is_multiple_of(2) {
             (180, 80, 45)
         } else {
             (140, 140, 135)
@@ -380,12 +380,13 @@ pub fn color_text_to_rgb_tuple(text: &str) -> Option<RGBTuple> {
     // Evita a aloca��o pesada de mem�ria ao parsear milhares de cores.
     let mut parse_text: Cow<str> = Cow::Borrowed(&clean_text);
 
-    if !parse_text.starts_with('#') && parse_text.chars().all(|c| c.is_ascii_hexdigit()) {
-        if parse_text.len() == 3 || parse_text.len() == 6 || parse_text.len() == 8 {
-            hex_buffer.push('#');
-            hex_buffer.push_str(&parse_text);
-            parse_text = Cow::Owned(hex_buffer);
-        }
+    if !parse_text.starts_with('#')
+        && parse_text.chars().all(|c| c.is_ascii_hexdigit())
+        && (parse_text.len() == 3 || parse_text.len() == 6 || parse_text.len() == 8)
+    {
+        hex_buffer.push('#');
+        hex_buffer.push_str(&parse_text);
+        parse_text = Cow::Owned(hex_buffer);
     }
 
     let mut modifier_l = 0.0;

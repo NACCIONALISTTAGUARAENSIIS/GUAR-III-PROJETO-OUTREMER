@@ -6,7 +6,7 @@ use crate::element_processing::tree::{Tree, TreeType};
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
-use rand::prelude::IndexedRandom;
+use rand::prelude::SliceRandom;
 use rand::Rng;
 
 pub fn generate_landuse(
@@ -36,6 +36,11 @@ pub fn generate_landuse(
         "residential" => {
             // Restaurada a diferenciação rural/urbano do original
             let residential_tag = element.tags.get("residential").unwrap_or(&binding);
+            // 🚨 Ambos os ramos ainda retornam o mesmo bloco-base — a distinção
+            // rural/urbano real acontece depois (randomização), não aqui; mantido
+            // como `if` explícito (em vez de colapsar) porque a estrutura foi
+            // deliberadamente restaurada para diferenciar os dois casos no futuro.
+            #[allow(clippy::if_same_then_else)]
             if residential_tag == "rural" {
                 GRASS_BLOCK
             } else {
@@ -95,7 +100,7 @@ pub fn generate_landuse(
 
         if landuse_tag == "residential" && block_type != GRASS_BLOCK {
             // Se for urbano, gera um misto de calçamento de lote e terra
-            let random_value = rng.random_range(0..100);
+            let random_value = rng.gen_range(0..100);
             actual_block = if random_value < 60 {
                 GRASS_BLOCK // Gramado do quintal
             } else if random_value < 90 {
@@ -105,7 +110,7 @@ pub fn generate_landuse(
             };
         } else if landuse_tag == "commercial" {
             // Calçamento Comercial (Sólido e transitável)
-            let random_value = rng.random_range(0..100);
+            let random_value = rng.gen_range(0..100);
             actual_block = if random_value < 70 {
                 POLISHED_ANDESITE
             } else {
@@ -113,7 +118,7 @@ pub fn generate_landuse(
             };
         } else if landuse_tag == "industrial" {
             // Chão de Fábrica sujo / Pátio de manobras
-            let random_value = rng.random_range(0..100);
+            let random_value = rng.gen_range(0..100);
             actual_block = if random_value < 60 {
                 GRAY_CONCRETE
             } else if random_value < 90 {
@@ -123,7 +128,7 @@ pub fn generate_landuse(
             };
         } else if landuse_tag == "education" || landuse_tag == "religious" {
             // Identidade Institucional Brutalista Monumental
-            let random_value = rng.random_range(0..100);
+            let random_value = rng.gen_range(0..100);
             actual_block = if random_value < 45 {
                 SMOOTH_QUARTZ
             } else if random_value < 70 {
@@ -133,7 +138,7 @@ pub fn generate_landuse(
             };
         } else if landuse_tag == "park" || landuse_tag == "common" {
             // Parque e Lazer (Portuguese Pavement - Calçadão ajustado para 20% para não poluir)
-            if rng.random_range(0..100) < 20 {
+            if rng.gen_range(0..100) < 20 {
                 actual_block = if (x + z) % 2 == 0 {
                     BLACK_CONCRETE
                 } else {
@@ -142,7 +147,7 @@ pub fn generate_landuse(
             }
         } else if ["forest", "grass", "meadow", "greenfield"].contains(&landuse_tag.as_str()) {
             // Injeção de base de Cerrado Seco (Serapilheira) direto no solo
-            if rng.random_range(0..100) < 15 {
+            if rng.gen_range(0..100) < 15 {
                 actual_block = PODZOL;
             }
         }
@@ -161,10 +166,10 @@ pub fn generate_landuse(
             "cemetery" => {
                 // Lógica de Tumbas do Arnis Original Restaurada e Otimizada
                 if (x % 3 == 0) && (z % 3 == 0) {
-                    let random_choice: i32 = rng.random_range(0..100);
+                    let random_choice: i32 = rng.gen_range(0..100);
                     if random_choice < 15 {
                         if editor.check_for_block(x, 0, z, Some(&[PODZOL])) {
-                            if rng.random_bool(0.5) {
+                            if rng.gen_bool(0.5) {
                                 editor.set_block(COBBLESTONE, x - 1, 1, z, None, None);
                                 editor.set_block(STONE_BRICK_SLAB, x - 1, 2, z, None, None);
                                 editor.set_block(STONE_BRICK_SLAB, x, 1, z, None, None);
@@ -195,7 +200,7 @@ pub fn generate_landuse(
             "forest" => {
                 // Ecossistema de Cerrado (Cerradão)
                 if editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK, PODZOL])) {
-                    let random_choice: i32 = rng.random_range(0..100);
+                    let random_choice: i32 = rng.gen_range(0..100);
                     if random_choice < 6 {
                         let tree_type = *trees_ok_to_generate
                             .choose(&mut rng)
@@ -212,7 +217,7 @@ pub fn generate_landuse(
                     } else if random_choice < 70 {
                         editor.set_block(GRASS, x, 1, z, None, None);
                     }
-                    if rng.random_range(0..100) < 15 {
+                    if rng.gen_range(0..100) < 15 {
                         editor.set_block(MOSS_CARPET, x, 1, z, Some(&[AIR]), None);
                     }
                 }
@@ -220,13 +225,13 @@ pub fn generate_landuse(
             "grass" | "greenfield" => {
                 // Ecossistema de Cerrado (Campo Sujo - RP transitável)
                 if editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK, PODZOL])) {
-                    let random_choice: i32 = rng.random_range(0..100);
+                    let random_choice: i32 = rng.gen_range(0..100);
                     if random_choice < 5 {
                         editor.set_block(DEAD_BUSH, x, 1, z, None, None);
                     } else if random_choice < 70 {
                         editor.set_block(GRASS, x, 1, z, None, None);
                     }
-                    if rng.random_range(0..100) < 15 {
+                    if rng.gen_range(0..100) < 15 {
                         editor.set_block(MOSS_CARPET, x, 1, z, Some(&[AIR]), None);
                     }
                 }
@@ -234,7 +239,7 @@ pub fn generate_landuse(
             "meadow" => {
                 // Meadow: Variante campestre com flores (restaurada do original)
                 if editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK, PODZOL])) {
-                    let random_choice: i32 = rng.random_range(0..1001);
+                    let random_choice: i32 = rng.gen_range(0..1001);
                     if random_choice < 5 {
                         Tree::create(editor, (x, 1, z), Some(building_footprints));
                     } else if random_choice < 6 {
@@ -256,7 +261,7 @@ pub fn generate_landuse(
                 if x % 18 == 0 && z % 10 == 0 {
                     Tree::create(editor, (x, 1, z), Some(building_footprints));
                 } else if editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK, PODZOL])) {
-                    match rng.random_range(0..100) {
+                    match rng.gen_range(0..100) {
                         0 => editor.set_block(OAK_LEAVES, x, 1, z, None, None),
                         1..=2 => editor.set_block(FERN, x, 1, z, None, None),
                         3..=20 => editor.set_block(GRASS, x, 1, z, None, None),
@@ -269,8 +274,8 @@ pub fn generate_landuse(
                 if !editor.check_for_block(x, 0, z, Some(&[WATER])) {
                     if x % 9 == 0 && z % 9 == 0 {
                         editor.set_block(WATER, x, 0, z, Some(&[FARMLAND]), None);
-                    } else if rng.random_range(0..76) == 0 {
-                        let special_choice: i32 = rng.random_range(1..=10);
+                    } else if rng.gen_range(0..76) == 0 {
+                        let special_choice: i32 = rng.gen_range(1..=10);
                         if special_choice <= 4 {
                             editor.set_block(HAY_BALE, x, 1, z, None, Some(&[SPONGE]));
                         } else {
@@ -278,7 +283,7 @@ pub fn generate_landuse(
                         }
                     } else {
                         if editor.check_for_block(x, 0, z, Some(&[FARMLAND])) {
-                            let crop_choice = [WHEAT, CARROTS, POTATOES][rng.random_range(0..3)];
+                            let crop_choice = [WHEAT, CARROTS, POTATOES][rng.gen_range(0..3)];
                             editor.set_block(crop_choice, x, 1, z, None, None);
                         }
                     }
@@ -286,7 +291,7 @@ pub fn generate_landuse(
             }
             "construction" => {
                 // Restaurada a gigante lógica de Obras do original (Guindastes, areia, blocos)
-                let random_choice: i32 = rng.random_range(0..1501);
+                let random_choice: i32 = rng.gen_range(0..1501);
                 if random_choice < 15 {
                     editor.set_block(SCAFFOLDING, x, 1, z, None, None);
                     if random_choice < 2 {
@@ -322,7 +327,7 @@ pub fn generate_landuse(
                         FURNACE,
                     ];
                     editor.set_block(
-                        construction_items[rng.random_range(0..construction_items.len())],
+                        construction_items[rng.gen_range(0..construction_items.len())],
                         x,
                         1,
                         z,
@@ -370,8 +375,7 @@ pub fn generate_landuse(
                         "clay" | "kaolinite" => CLAY,
                         _ => STONE,
                     };
-                    let random_choice: i32 =
-                        rng.random_range(0..100 + editor.get_absolute_y(x, 0, z));
+                    let random_choice: i32 = rng.gen_range(0..100 + editor.get_absolute_y(x, 0, z));
                     if random_choice < 5 {
                         editor.set_block(ore_block, x, 0, z, Some(&[STONE]), None);
                     }

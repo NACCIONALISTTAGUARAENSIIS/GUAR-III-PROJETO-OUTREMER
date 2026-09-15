@@ -43,7 +43,7 @@ fn compute_clothoid_transition(nodes: &[XZPoint], segments_per_curve: usize) -> 
         }
 
         // O raio da curva de transi��o � proporcional ao comprimento dos segmentos
-        let transition_radius = (len1.min(len2) * 0.4).max(5.0).min(50.0); // Cap de raio realista
+        let transition_radius = (len1.min(len2) * 0.4).clamp(5.0, 50.0); // Cap de raio realista
 
         // Pontos de controle da curva B�zier Racional (Emula��o da Clotoide)
         let t1_x = p1.x as f64 - (v1_x / len1) * transition_radius;
@@ -383,11 +383,7 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
             }
 
             // --- POSICIONAMENTO DIN�MICO DOS TRILHOS E DORMENTES ---
-            let rail_block = determine_rail_direction(
-                (bx, bz),
-                prev.map(|(x, z)| (x, z)),
-                next.map(|(x, z)| (x, z)),
-            );
+            let rail_block = determine_rail_direction((bx, bz), prev, next);
 
             if is_double_track {
                 let offset = 3; // Dist�ncia exata do entre-eixo da via dupla
