@@ -1048,9 +1048,9 @@ impl BuildingStyle {
         // `get_building_wall_block_for_color` já existe e faz o casamento certo
         // (distância de cor contra a paleta real de blocos, não um cast cru).
         let roof_block_from_colors = resolve_roof_color(&ctx);
-        let roof_block = preset
-            .roof_block
-            .or(Some(get_building_wall_block_for_color(roof_block_from_colors)));
+        let roof_block = preset.roof_block.or(Some(get_building_wall_block_for_color(
+            roof_block_from_colors,
+        )));
 
         // Windows: default to true unless explicitly disabled
         let has_windows = preset.has_windows.unwrap_or(true);

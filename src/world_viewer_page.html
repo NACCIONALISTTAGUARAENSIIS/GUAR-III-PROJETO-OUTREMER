@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Pincelism — Visualizador 3D do Mundo</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #canvas-wrap { position: fixed; inset: 0; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; top: 12px; left: 12px; right: 12px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none; gap: 10px; flex-wrap: wrap;
+  }
+  .card {
+    background: rgba(15,18,14,0.78); backdrop-filter: blur(6px);
+    color: #f1efe6; border-radius: 8px; padding: 10px 14px;
+    font-size: 12.5px; line-height: 1.6; pointer-events: auto;
+  }
+  .card b { color: #fff; }
+  .card .dim { color: #b7b3a4; }
+  #hint {
+    position: fixed; bottom: 12px; left: 12px; color: #cfcabd;
+    font-size: 11.5px; background: rgba(15,18,14,0.6); padding: 6px 10px; border-radius: 6px;
+  }
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px; color: #cfcabd; font-size: 14px; background: #0d1117; z-index: 10;
+  }
+  .spinner { width: 26px; height: 26px; border-radius: 50%; border: 3px solid #3a3f36; border-top-color: #bf5b37; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #error { color: #e08b7d; max-width: 600px; text-align: center; padding: 0 20px; }
+</style>
+</head>
+<body>
+<div id="loading">
+  <div class="spinner"></div>
+  <div id="loading-text">Carregando relevo do mundo…</div>
+</div>
+<div id="canvas-wrap"></div>
+<div id="hud">
+  <div class="card" id="stats-card">
+    <div><b id="cell-count">–</b> <span class="dim">células</span> · <b id="step-val">–</b> <span class="dim">blocos/célula</span></div>
+    <div class="dim" id="extent-line">extensão —</div>
+  </div>
+  <div class="card">
+    <div><b>Pincelism</b> <span class="dim">— relevo 3D do mundo completo</span></div>
+    <div class="dim">Relevo real (altura de cada coluna) + cor do bloco topo, amostrado — não é um render voxel completo.</div>
+  </div>
+</div>
+<div id="hint">arraste para orbitar · scroll para zoom · botão direito para deslocar</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  const loading = document.getElementById('loading');
+  const loadingText = document.getElementById('loading-text');
+
+  function fail(msg) {
+    loading.innerHTML = '<div id="error">Falha ao carregar: ' + msg + '</div>';
+  }
+
+  fetch('/heights.json')
+    .then((r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then((data) => init(data))
+    .catch((e) => fail(e.message));
+
+  function init(data) {
+    const { originX, originZ, width, height, step, cells, noData } = data;
+
+    document.getElementById('cell-count').textContent = (width * height).toLocaleString('pt-BR');
+    document.getElementById('step-val').textContent = step;
+    document.getElementById('extent-line').textContent =
+      'extensão ' + (width * step).toLocaleString('pt-BR') + '×' + (height * step).toLocaleString('pt-BR') + ' blocos';
+
+    loadingText.textContent = 'Montando malha 3D (' + (width * height).toLocaleString('pt-BR') + ' células)…';
+
+    // Monta a geometria num setTimeout(0) pra deixar o navegador pintar o texto de progresso antes de travar na malha.
+    setTimeout(() => buildScene(originX, originZ, width, height, step, cells, noData), 30);
+  }
+
+  function buildScene(originX, originZ, width, height, step, cells, noData) {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1117);
+    scene.fog = new THREE.FogExp2(0x0d1117, 0.00035 / Math.max(step / 4, 1));
+
+    const wrap = document.getElementById('canvas-wrap');
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 1, 200000);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    wrap.appendChild(renderer.domElement);
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const hemi = new THREE.HemisphereLight(0xbfd4e6, 0x2b2620, 1.0);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xfff2da, 1.0);
+    sun.position.set(width * 0.3, 400, height * 0.2);
+    scene.add(sun);
+
+    // --- Constrói a malha de relevo (uma grade width x height de quads) ---
+    const positions = new Float32Array(width * height * 3);
+    const colors = new Float32Array(width * height * 3);
+    let minY = Infinity, maxY = -Infinity;
+
+    // cells[i] = [y, r, g, b] em row-major (dz*width+dx); y === noData => sem dado.
+    for (let dz = 0; dz < height; dz++) {
+      for (let dx = 0; dx < width; dx++) {
+        const i = dz * width + dx;
+        const c = cells[i];
+        const vi = i * 3;
+        const y = c[0] === noData ? 0 : c[0];
+        if (c[0] !== noData) {
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+        positions[vi] = dx * step;
+        positions[vi + 1] = y;
+        positions[vi + 2] = dz * step;
+        colors[vi] = c[1] / 255;
+        colors[vi + 1] = c[2] / 255;
+        colors[vi + 2] = c[3] / 255;
+      }
+    }
+    if (!isFinite(minY)) { minY = 0; maxY = 0; }
+
+    const indices = [];
+    for (let dz = 0; dz < height - 1; dz++) {
+      for (let dx = 0; dx < width - 1; dx++) {
+        const a = dz * width + dx;
+        const b = dz * width + dx + 1;
+        const c = (dz + 1) * width + dx;
+        const d = (dz + 1) * width + dx + 1;
+        // Pula o quad inteiro se qualquer canto for "sem dado" (buraco real no mundo gerado).
+        if (cells[a][0] === noData || cells[b][0] === noData || cells[c][0] === noData || cells[d][0] === noData) {
+          continue;
+        }
+        indices.push(a, c, b, b, c, d);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 10;
+    controls.maxDistance = Math.max(width, height) * step * 1.5;
+
+    const centerX = (width * step) / 2;
+    const centerZ = (height * step) / 2;
+    const centerY = (minY + maxY) / 2;
+    const radius = Math.max(width, height) * step * 0.55;
+
+    camera.position.set(centerX + radius * 0.5, Math.max(radius * 0.6, 200), centerZ + radius * 0.5);
+    controls.target.set(centerX, centerY, centerZ);
+    controls.update();
+
+    loading.style.display = 'none';
+
+    (function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+  }
+})();
+</script>
+</body>
+</html>

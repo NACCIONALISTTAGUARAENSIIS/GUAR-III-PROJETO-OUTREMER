@@ -31,6 +31,7 @@ mod urban_ground;
 mod version_check;
 mod world_editor;
 mod world_utils;
+mod world_viewer;
 
 use args::Args;
 use clap::Parser;
@@ -788,6 +789,29 @@ fn main() {
     unsafe {
         let _ = FreeConsole();
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+
+    // 🚨 BESM-6: `--view-world` interceptado cru em `std::env::args()`, ANTES do
+    // parsing normal do clap — ver o comentário de módulo em `world_viewer.rs`
+    // para o porquê (esse modo não usa `--bbox`, obrigatório em `Args` em todo
+    // outro modo; tornar `bbox` opcional só para isto tocaria dezenas de
+    // chamadores em toda a base de código). Sobe um servidor HTTP local
+    // mostrando o relevo 3D do mundo já gerado em `<PASTA>` e nunca retorna
+    // (roda até `Ctrl+C`).
+    let raw_args: Vec<String> = std::env::args().collect();
+    if let Some(idx) = raw_args.iter().position(|a| a == "--view-world") {
+        let Some(world_dir) = raw_args.get(idx + 1) else {
+            eprintln!("Uso: pincelism --view-world <PASTA_DO_MUNDO> [--port <PORTA>]");
+            std::process::exit(1);
+        };
+        let port = raw_args
+            .iter()
+            .position(|a| a == "--port")
+            .and_then(|i| raw_args.get(i + 1))
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(0);
+        world_viewer::serve(PathBuf::from(world_dir), port);
+        return;
     }
 
     let args_count = std::env::args().len();

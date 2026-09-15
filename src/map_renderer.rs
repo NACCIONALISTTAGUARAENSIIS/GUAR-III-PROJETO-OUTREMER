@@ -126,6 +126,152 @@ pub fn render_world_map(
     Ok(output_path)
 }
 
+/// Computa uma grade de altura+cor (topo real de cada coluna) para uma fatia do
+/// mundo — o mesmo escaneamento de NBT/paleta que `render_world_map` usa para o
+/// minimapa 2D do GUI, mas devolvendo dados crus em vez de gravar um PNG.
+///
+/// 🚨 BESM-6: Usado pelo `world_viewer` (`--view-world`), que serve esses dados
+/// como relevo 3D num navegador — não pelo preview do GUI. Ao contrário do
+/// minimapa (uma imagem 2D de cor só), aqui cada célula carrega também a altura
+/// (`world_y`) real do bloco, para o navegador desenhar um relevo de verdade
+/// (superfície com relevo, não uma foto plana). `downsample_factor` é decidido
+/// por quem chama (orçamento de células, não de pixels de imagem).
+pub fn compute_heightfield(
+    world_dir: &Path,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    downsample_factor: u32,
+) -> Vec<(i32, i32, i32, [u8; 3])> {
+    let min_region_x = min_x >> 9;
+    let max_region_x = max_x >> 9;
+    let min_region_z = min_z >> 9;
+    let max_region_z = max_z >> 9;
+
+    let region_dir = world_dir.join("region");
+
+    let region_coords: Vec<(i32, i32)> = (min_region_x..=max_region_x)
+        .flat_map(|rx| (min_region_z..=max_region_z).map(move |rz| (rx, rz)))
+        .collect();
+
+    region_coords
+        .par_iter()
+        .flat_map(|&(region_x, region_z)| {
+            render_region_to_heightcells(
+                region_x,
+                region_z,
+                &region_dir,
+                min_x,
+                min_z,
+                max_x,
+                max_z,
+                downsample_factor,
+            )
+        })
+        .collect()
+}
+
+/// Espelha `render_region_to_pixels`, mas devolve `(x, z, y, cor)` cru — ver
+/// `compute_heightfield`.
+#[allow(clippy::too_many_arguments)]
+fn render_region_to_heightcells(
+    region_x: i32,
+    region_z: i32,
+    region_dir: &Path,
+    min_x: i32,
+    min_z: i32,
+    max_x: i32,
+    max_z: i32,
+    downsample_factor: u32,
+) -> Vec<(i32, i32, i32, [u8; 3])> {
+    let mut cells = Vec::new();
+    let region_path = region_dir.join(format!("r.{}.{}.mca", region_x, region_z));
+    if !region_path.exists() {
+        return cells;
+    }
+
+    let Ok(file) = File::open(&region_path) else {
+        return cells;
+    };
+    let Ok(mut region) = Region::from_stream(file) else {
+        return cells;
+    };
+
+    let region_base_x = region_x * 512;
+    let region_base_z = region_z * 512;
+
+    for chunk_local_x in 0..32 {
+        for chunk_local_z in 0..32 {
+            let chunk_base_x = region_base_x + chunk_local_x * 16;
+            let chunk_base_z = region_base_z + chunk_local_z * 16;
+
+            if chunk_base_x + 15 < min_x
+                || chunk_base_x > max_x
+                || chunk_base_z + 15 < min_z
+                || chunk_base_z > max_z
+            {
+                continue;
+            }
+
+            let Ok(Some(chunk_data)) =
+                region.read_chunk(chunk_local_x as usize, chunk_local_z as usize)
+            else {
+                continue;
+            };
+
+            let chunk: Value = match from_bytes(&chunk_data) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let sections = get_sections_from_chunk(&chunk);
+            if sections.is_empty() {
+                continue;
+            }
+            let sorted_sections = get_sorted_sections(&sections);
+            if sorted_sections.is_empty() {
+                continue;
+            }
+
+            for local_x in 0..16 {
+                for local_z in 0..16 {
+                    let world_x = chunk_base_x + local_x;
+                    let world_z = chunk_base_z + local_z;
+
+                    if world_x < min_x || world_x > max_x || world_z < min_z || world_z > max_z {
+                        continue;
+                    }
+                    if world_x.rem_euclid(downsample_factor as i32) != 0
+                        || world_z.rem_euclid(downsample_factor as i32) != 0
+                    {
+                        continue;
+                    }
+
+                    if let Some((block_name, world_y)) =
+                        find_top_block_sorted(&sorted_sections, local_x as usize, local_z as usize)
+                    {
+                        let short_name =
+                            block_name.strip_prefix("minecraft:").unwrap_or(&block_name);
+                        let base_color = BLOCK_COLORS
+                            .get(short_name)
+                            .copied()
+                            .unwrap_or_else(|| get_fallback_color(&block_name));
+                        let color = apply_elevation_shading(base_color, world_y);
+                        cells.push((
+                            world_x,
+                            world_z,
+                            world_y,
+                            [color.0[0], color.0[1], color.0[2]],
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    cells
+}
+
 /// Renders all chunks within a region and returns pixel data
 #[allow(clippy::too_many_arguments)]
 fn render_region_to_pixels(
