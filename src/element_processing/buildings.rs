@@ -893,8 +893,16 @@ impl BuildingStyle {
 
         // Wall block: from tags, preset, category palette OR COLORS.RS
         let wall_block_from_colors = resolve_wall_color(&ctx);
-        // Prefixado com _ para calar o warning e não apagar lógica se usarmos no futuro
-        let _block_from_rgb = Block::new(wall_block_from_colors.0 as u16);
+        // Prefixado com _ para calar o warning e não apagar lógica se usarmos no futuro.
+        //
+        // 🚨 CORREÇÃO: antes construía `Block::new(wall_block_from_colors.0 as u16)`
+        // — tratando o canal VERMELHO (0-255) de uma cor RGB como se fosse um ID de
+        // bloco Minecraft direto. `Block::name()` faz um `match` exaustivo de IDs
+        // conhecidos e `panic!` no `_`; qualquer cor cujo componente R caia numa das
+        // lacunas da tabela (ex.: 145-154, 147 incluso) derruba o processo assim que
+        // esse bloco é escrito no mundo. `get_building_wall_block_for_color` já existe
+        // e faz o casamento correto (distância de cor contra a paleta real de blocos).
+        let _block_from_rgb = get_building_wall_block_for_color(wall_block_from_colors);
 
         let wall_block = preset
             .wall_block
@@ -1028,10 +1036,21 @@ impl BuildingStyle {
         });
 
         // Roof block: specific material for roofs or resolve from COLORS.RS
+        //
+        // 🚨 CORREÇÃO (crash real, achado gerando o Guará I+II inteiro pela primeira
+        // vez): `Block::new(roof_block_from_colors.0 as u16)` tratava o canal
+        // VERMELHO (0-255) de uma `RGBTuple` como se já fosse um ID de bloco válido.
+        // `Block::name()` faz `match self.id { ...conhecidos..., _ => panic!(...) }`
+        // — qualquer telhado cuja cor resolvida tivesse R numa lacuna da tabela de
+        // IDs (ex.: 145-154) derrubava o processo assim que o motor tentasse
+        // serializar o bloco pro NBT. Nunca apareceu nos testes pequenos porque a
+        // amostra de prédios era chica demais para sortear uma cor "azarada".
+        // `get_building_wall_block_for_color` já existe e faz o casamento certo
+        // (distância de cor contra a paleta real de blocos, não um cast cru).
         let roof_block_from_colors = resolve_roof_color(&ctx);
         let roof_block = preset
             .roof_block
-            .or(Some(Block::new(roof_block_from_colors.0 as u16)));
+            .or(Some(get_building_wall_block_for_color(roof_block_from_colors)));
 
         // Windows: default to true unless explicitly disabled
         let has_windows = preset.has_windows.unwrap_or(true);

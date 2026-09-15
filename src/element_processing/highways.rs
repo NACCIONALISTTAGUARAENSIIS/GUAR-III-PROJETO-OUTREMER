@@ -1229,7 +1229,14 @@ fn calculate_point_elevation(
     }
 
     if needs_end_slope && accumulated_distance >= (total_way_length.saturating_sub(slope_length)) {
-        let distance_from_end = total_way_length - accumulated_distance;
+        // 🚨 CORREÇÃO (crash real, achado gerando o Guará I+II inteiro): a guarda acima
+        // não garante `accumulated_distance <= total_way_length` — em vias reais longas,
+        // o acúmulo de `.round()` por segmento (`calculate_way_length`) e a soma
+        // independente de distância percorrida podem divergir por 1 unidade, fazendo
+        // `accumulated_distance` ultrapassar `total_way_length` na última amostra. Uma
+        // subtração `usize - usize` crua nesse caso estoura (`attempt to subtract with
+        // overflow`); `saturating_sub` trata isso como "chegou ao fim" (distância 0).
+        let distance_from_end = total_way_length.saturating_sub(accumulated_distance);
         let slope_progress = distance_from_end as f32 / slope_length as f32;
         return (base_elevation as f32 * slope_progress) as i32;
     }
