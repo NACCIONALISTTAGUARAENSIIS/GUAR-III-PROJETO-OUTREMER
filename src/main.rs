@@ -5,6 +5,7 @@ mod args;
 #[cfg(feature = "bedrock")]
 mod bedrock_block_map;
 mod block_definitions;
+mod bluemap_viewer;
 mod bresenham;
 mod clipping;
 mod colors;
@@ -811,6 +812,35 @@ fn main() {
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(0);
         world_viewer::serve(PathBuf::from(world_dir), port);
+        return;
+    }
+
+    // 🚨 BESM-6: `--view-world-bluemap` — mesmo espírito de interceptação crua
+    // que `--view-world` acima, mas delegando a renderização/serviço de
+    // verdade pro BlueMap (ver o comentário de módulo em `bluemap_viewer.rs`
+    // para o porquê e o que é automatizado). `--bluemap-jar`/`--java`/
+    // `--bluemap-config` são todos opcionais, com autodetecção documentada
+    // no próprio módulo.
+    if let Some(idx) = raw_args.iter().position(|a| a == "--view-world-bluemap") {
+        let Some(world_dir) = raw_args.get(idx + 1) else {
+            eprintln!(
+                "Uso: pincelism --view-world-bluemap <PASTA_DO_MUNDO> [--bluemap-jar <caminho>] [--java <caminho>] [--bluemap-config <pasta>]"
+            );
+            std::process::exit(1);
+        };
+        let get_opt = |flag: &str| -> Option<String> {
+            raw_args
+                .iter()
+                .position(|a| a == flag)
+                .and_then(|i| raw_args.get(i + 1))
+                .cloned()
+        };
+        bluemap_viewer::serve(
+            PathBuf::from(world_dir),
+            get_opt("--bluemap-jar").map(PathBuf::from),
+            get_opt("--java"),
+            get_opt("--bluemap-config").map(PathBuf::from),
+        );
         return;
     }
 
