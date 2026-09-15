@@ -150,6 +150,71 @@ antes de `-w`, isto nunca é um problema pelo caminho normal (Rust) — só
 importa se alguém for editar a config manualmente depois de um render já
 feito, como aconteceu aqui.
 
+### Achado #6: a correção do Achado #5 só vale para uma URL sem `#hash` — um link com posição salva sempre tem prioridade absoluta
+
+Depois de corrigir e confirmar (via `curl` no `settings.json` servido) que o
+`start-pos` do mapa `guara_full` estava correto (`[-15673, 4419]`), o usuário
+ainda reportou ver só vazio/preto — inclusive numa aba anônima do Tor, o que
+descartava cache/cookies como explicação. A causa raiz real (achada lendo o
+JS da própria interface do BlueMap, função `loadPageAddress`, já que o
+navegador MCP estava indisponível nesta sessão) é esta lógica, na ordem
+exata em que ela roda a cada carregamento de página:
+
+```js
+let t = (location.hash.substring(1) || this.settings.startLocation || "").split(":");
+if (t.length === 1 && /* mapa ainda não é o pedido */) { try { switchMap(t[0]) } catch { return false } }
+if (t.length !== 10) return false;
+// ... usa t[1..9] (x, y, z, distance, rotation, angle, tilt, ortho, viewMode)
+// LITERALMENTE, sem nunca consultar o `start-pos` do mapa.
+```
+
+e, no ponto de entrada da aplicação:
+
+```js
+await this.loadPageAddress() ||
+  (this.maps.length > 0 && await this.switchMap(this.maps[0].data.id), this.resetCamera());
+```
+
+Ou seja: **o `start-pos` por-mapa (nosso `compute_start_pos`) só é consultado
+dentro de `resetCamera()`, que só roda quando `loadPageAddress()` retorna
+`false`** — e isso só acontece quando a URL não tem `#` nenhum (hash vazio) E
+`webapp.conf`'s `start-location` também está vazio (nosso caso, nunca
+setado). **Qualquer URL com um hash de exatamente 10 campos
+(`mapa:x:y:z:distância:rotação:ângulo:tilt:ortho:modo`) é usada
+literalmente, ignorando `start-pos` por completo** — mesmo que aponte para
+fora do mundo gerado.
+
+Foi exatamente isso que aconteceu: a segunda captura de tela do usuário
+mostrava a URL
+`#guara_full:-19764:0:10239:12974:0.04:0:0:0:perspective` — um hash
+plenamente válido (10 campos), mas com `x=-19764, z=10239`, **fora do bbox
+real do Guará I+II** (`x: -18525..-12821`, `z: 3..8836`) — por isso vazio/
+preto, sem nenhum bloco por perto. A `distância=12974` (bem maior que o
+`1500` que `resetCamera()` usaria) sugere que a câmera tinha sido afastada
+manualmente (zoom out) tentando "achar" o mundo, e o BlueMap grava essa
+posição de volta na URL automaticamente a cada movimento de câmera
+(`updatePageAddress`) — por isso o hash "gruda" e sobrevive a uma nova aba/
+navegador anônimo (a posição está na própria URL digitada/copiada, não em
+cookie ou cache).
+
+**Confirmado nesta sessão, via `settings.json` servido ao vivo:**
+`curl http://localhost:8100/settings.json` mostra
+`"maps": ["guara_full", "overworld", "nether", "end"]` (`guara_full` é
+`this.maps[0]`) e
+`curl http://localhost:8100/maps/guara_full/settings.json` mostra
+`"startPos": [-15673, 4419]` — exatamente o meio do mundo, como esperado.
+Isso prova que a correção do Achado #5 está de fato ativa e correta; o
+sintoma que persistia era inteiramente devido ao hash da URL, não a uma
+falha na correção.
+
+**Correção prática (não é uma mudança de código — é operacional):** para ver
+o mundo do jeito certo, a URL usada para abrir o BlueMap **não pode ter nada
+depois da porta** — nem um `#` sozinho. Ex.: `http://<host>:8100/`, nunca um
+link salvo/compartilhado que já tenha um `#mapa:x:y:z:...` gravado. Se a
+câmera "se perder" (zoom/pan excessivo), a forma confiável de recomeçar é
+apagar tudo após a porta na barra de endereço e recarregar — não usar o
+botão "voltar", que reaproveita o hash salvo no histórico.
+
 ### Por que o `.jar` do BlueMap não é baixado automaticamente
 
 `bluemap_viewer.rs` exige que o usuário baixe o `.jar` manualmente (a
