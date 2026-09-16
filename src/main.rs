@@ -22,6 +22,7 @@ mod master_control;
 mod osm_parser;
 #[cfg(feature = "gui")]
 mod progress;
+mod provenance;
 mod providers;
 mod retrieve_data;
 #[cfg(feature = "gui")]
@@ -223,6 +224,20 @@ pub fn run_generation_pipeline(
         provider_specific_features.len(),
         osm_convertible_features.len()
     );
+
+    // 🚨 BESM-6: Auditoria de proveniência (`provenance.rs`) — registra a
+    // origem (provider + grupo semântico) de CADA feature ANTES dela virar
+    // `ProcessedElement`/ser despachada, porque essa conversão descarta
+    // `source`/`semantic_group` (só `id`/`geometry`/`attributes` sobrevivem).
+    // Sem isso feito aqui, não haveria como saber depois de onde cada
+    // elemento veio.
+    let mut provenance_ledger = provenance::ProvenanceLedger::new();
+    for feature in provider_specific_features
+        .iter()
+        .chain(osm_convertible_features.iter())
+    {
+        provenance_ledger.register_origin(feature);
+    }
 
     // Convert only non-provider-specific features to ProcessedElement (preserves existing flow)
     let parsed_elements: Vec<osm_parser::ProcessedElement> = osm_convertible_features
@@ -468,6 +483,7 @@ pub fn run_generation_pipeline(
         args.bbox,
         &args,
         generation_options,
+        &mut provenance_ledger,
     ) {
         Ok(_) => {
             if args.bedrock {

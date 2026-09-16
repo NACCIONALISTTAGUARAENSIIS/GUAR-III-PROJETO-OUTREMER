@@ -254,7 +254,19 @@ fn dispatch_element(
     building_footprints: &BuildingFootprintBitmap,
     suppressed_building_outlines: &HashSet<u64>,
     xzbbox: &XZBBox,
+    provenance: &mut crate::provenance::ProvenanceLedger,
 ) {
+    // 🚨 BESM-6: Auditoria de proveniência — acumula, nesta chamada, TODO
+    // módulo que efetivamente tratou o elemento (não só o primeiro branch que
+    // bateu: a via de energia abaixo, por exemplo, passa tanto por
+    // `power`/`man_made` QUANTO por `generate_underground_infrastructure` na
+    // MESMA chamada — um `Vec`, não um `Option`, captura essa mistura real em
+    // vez de escondê-la). Registrado no fim da função, via
+    // `provenance.record_dispatch`, que só grava se a origem da feature
+    // (provider/grupo semântico) foi registrada em `main.rs` antes da
+    // conversão pra `ProcessedElement`.
+    let mut dispatched_modules: Vec<&'static str> = Vec::new();
+
     match &element {
         ProcessedElement::Way(way) => {
             // 🚨 RECONEXÃO: `power=substation`/`power=plant` têm prioridade sobre
@@ -267,9 +279,11 @@ fn dispatch_element(
                 Some("substation") | Some("plant")
             ) {
                 power::generate_power(editor, &element, args);
+                dispatched_modules.push("power");
             } else if way.tags.contains_key("building") || way.tags.contains_key("building:part") {
                 if !suppressed_building_outlines.contains(&way.id) {
                     buildings::generate_buildings(editor, way, args, None, None, flood_fill_cache);
+                    dispatched_modules.push("buildings");
                 }
             } else if way.tags.contains_key("highway") {
                 highways::generate_highways(
@@ -280,8 +294,10 @@ fn dispatch_element(
                     flood_fill_cache,
                     building_footprints,
                 );
+                dispatched_modules.push("highways");
             } else if way.tags.contains_key("landuse") {
                 landuse::generate_landuse(editor, way, args, flood_fill_cache, building_footprints);
+                dispatched_modules.push("landuse");
             } else if way.tags.contains_key("natural") {
                 natural::generate_natural(
                     editor,
@@ -291,41 +307,55 @@ fn dispatch_element(
                     building_footprints,
                     None,
                 );
+                dispatched_modules.push("natural");
             } else if way.tags.contains_key("amenity") {
                 amenities::generate_amenities(editor, &element, args, flood_fill_cache);
+                dispatched_modules.push("amenities");
             } else if way.tags.contains_key("leisure") {
                 leisure::generate_leisure(editor, way, args, flood_fill_cache, building_footprints);
+                dispatched_modules.push("leisure");
             } else if way.tags.contains_key("barrier") {
                 barriers::generate_barriers(editor, &element);
+                dispatched_modules.push("barriers");
             } else if let Some(val) = way.tags.get("waterway") {
                 if val == "dock" {
                     // water_areas::generate_water_area_from_way(editor, way, xzbbox);
                 } else {
                     waterways::generate_waterways(editor, way);
+                    dispatched_modules.push("waterways");
                 }
             } else if way.tags.contains_key("railway") {
                 railways::generate_railways(editor, way);
+                dispatched_modules.push("railways");
             } else if way.tags.contains_key("roller_coaster") {
                 railways::generate_roller_coaster(editor, way);
+                dispatched_modules.push("railways::roller_coaster");
             } else if way.tags.contains_key("aeroway") || way.tags.contains_key("area:aeroway") {
                 highways::generate_aeroway(editor, way, args);
+                dispatched_modules.push("highways::aeroway");
             } else if way.tags.get("service") == Some(&"siding".to_string()) {
                 highways::generate_siding(editor, way);
+                dispatched_modules.push("highways::siding");
             } else if way.tags.get("tomb") == Some(&"pyramid".to_string()) {
                 historic::generate_pyramid(editor, way, args, flood_fill_cache);
+                dispatched_modules.push("historic::pyramid");
             } else if way.tags.contains_key("man_made")
                 && way.tags.get("man_made") != Some(&"pipeline".to_string())
             {
                 man_made::generate_man_made(editor, &element, args, flood_fill_cache);
+                dispatched_modules.push("man_made");
             } else if way.tags.contains_key("power") {
                 power::generate_power(editor, &element, args);
+                dispatched_modules.push("power");
             } else if way.tags.contains_key("place") {
                 landuse::generate_place(editor, way, args, flood_fill_cache);
+                dispatched_modules.push("landuse::place");
             }
 
             // Infra Subterrânea WFS (Saneamento/Energia)
             if way.tags.contains_key("man_made") || way.tags.contains_key("power") {
                 generate_underground_infrastructure(editor, way, args);
+                dispatched_modules.push("underground_infrastructure");
             }
         }
         ProcessedElement::Node(node) => {
@@ -346,10 +376,13 @@ fn dispatch_element(
                     building_footprints,
                     None,
                 );
+                dispatched_modules.push("natural");
             } else if node.tags.contains_key("amenity") {
                 amenities::generate_amenities(editor, &element, args, flood_fill_cache);
+                dispatched_modules.push("amenities");
             } else if node.tags.contains_key("barrier") {
                 barriers::generate_barrier_nodes(editor, node);
+                dispatched_modules.push("barriers");
             } else if node.tags.contains_key("highway") {
                 highways::generate_highways(
                     editor,
@@ -359,16 +392,22 @@ fn dispatch_element(
                     flood_fill_cache,
                     building_footprints,
                 );
+                dispatched_modules.push("highways");
             } else if node.tags.contains_key("tourism") {
                 tourisms::generate_tourisms(editor, node);
+                dispatched_modules.push("tourisms");
             } else if node.tags.contains_key("man_made") {
                 man_made::generate_man_made_nodes(editor, node, args);
+                dispatched_modules.push("man_made");
             } else if node.tags.contains_key("power") {
                 power::generate_power_nodes(editor, node, args);
+                dispatched_modules.push("power");
             } else if node.tags.contains_key("historic") {
                 historic::generate_historic(editor, node);
+                dispatched_modules.push("historic");
             } else if node.tags.contains_key("emergency") {
                 emergency::generate_emergency(editor, node);
+                dispatched_modules.push("emergency");
             }
             // 🚨 RECONEXÃO (Advertising): NÃO há branch `advertising` aqui de propósito.
             // Havia uma chamada `advertising::generate_advertising(editor, node)` neste
@@ -394,6 +433,7 @@ fn dispatch_element(
                     flood_fill_cache,
                     xzbbox,
                 );
+                dispatched_modules.push("buildings::from_relation");
             } else if rel.tags.contains_key("water")
                 || rel
                     .tags
@@ -402,6 +442,7 @@ fn dispatch_element(
                     .unwrap_or(false)
             {
                 water_areas::generate_water_areas_from_relation(editor, rel, xzbbox);
+                dispatched_modules.push("water_areas");
             } else if rel.tags.contains_key("natural") {
                 natural::generate_natural_from_relation(
                     editor,
@@ -410,6 +451,7 @@ fn dispatch_element(
                     flood_fill_cache,
                     building_footprints,
                 );
+                dispatched_modules.push("natural::from_relation");
             } else if rel.tags.contains_key("landuse") {
                 landuse::generate_landuse_from_relation(
                     editor,
@@ -418,6 +460,7 @@ fn dispatch_element(
                     flood_fill_cache,
                     building_footprints,
                 );
+                dispatched_modules.push("landuse::from_relation");
             } else if rel.tags.get("leisure") == Some(&"park".to_string()) {
                 leisure::generate_leisure_from_relation(
                     editor,
@@ -426,9 +469,15 @@ fn dispatch_element(
                     flood_fill_cache,
                     building_footprints,
                 );
+                dispatched_modules.push("leisure::from_relation");
             }
         }
     }
+
+    provenance.record_dispatch(
+        element.id(),
+        dispatched_modules.into_iter().map(String::from).collect(),
+    );
 }
 
 /// 🚨 RECONEXÃO: Gera UMA região (.mca) isolada a partir de uma fatia de `Feature`
@@ -462,6 +511,13 @@ pub fn generate_region_from_global(
     let (min_x, min_z) = editor.get_min_coords();
     let (max_x, max_z) = editor.get_max_coords();
     let xzbbox = XZBBox::new(min_x, max_x, min_z, max_z);
+
+    // 🚨 BESM-6: Ledger de proveniência DESCARTADO de propósito — este é o
+    // modo HUD interativo (streaming região-por-região, só sem a feature
+    // `gui`), chamado uma vez por região independente, sem um ponto final
+    // único onde escrever um relatório coerente para o mundo inteiro. Ver o
+    // comentário de módulo em `provenance.rs` ("Cobertura").
+    let mut discarded_provenance = crate::provenance::ProvenanceLedger::new();
 
     // Mesma bifurcação de `main.rs::run_generation_pipeline` (`is_provider_specific`):
     // infra CAESB (Sanitation/Sewage/Utility/Power/Telecom/Indoor governamental),
@@ -538,6 +594,7 @@ pub fn generate_region_from_global(
             &building_footprints,
             &suppressed_building_outlines,
             &xzbbox,
+            &mut discarded_provenance,
         );
     }
 
@@ -571,6 +628,7 @@ pub fn generate_world_with_options(
     llbbox: LLBBox,
     args: &Args,
     options: GenerationOptions,
+    provenance: &mut crate::provenance::ProvenanceLedger,
 ) -> Result<PathBuf, String> {
     let output_path = options.path.clone();
     let world_format = options.format;
@@ -855,6 +913,7 @@ pub fn generate_world_with_options(
                         &building_footprints,
                         &suppressed_building_outlines,
                         &xzbbox,
+                        provenance,
                     );
                 }
             }
@@ -914,6 +973,8 @@ pub fn generate_world_with_options(
 
                     if is_caesb_infrastructure_feature {
                         man_made::generate_from_provider_feature(&mut editor, feature, args);
+                        provenance
+                            .record_direct(feature, "man_made::generate_from_provider_feature");
                         continue;
                     }
 
@@ -928,6 +989,8 @@ pub fn generate_world_with_options(
                         && feature.source.contains("Photogrammetry_Mesh")
                     {
                         man_made::generate_from_provider_feature(&mut editor, feature, args);
+                        provenance
+                            .record_direct(feature, "man_made::generate_from_provider_feature");
                         continue;
                     }
 
@@ -960,10 +1023,17 @@ pub fn generate_world_with_options(
                             args,
                             &region_ground,
                         );
+                        provenance.record_direct(feature, "advertising::generate_advertising");
                         continue;
                     }
 
                     // 🚨 TWEAK: Roteador Semântico de Features de Alta Precisão
+                    // Re-registra a origem por segurança (idempotente — já foi
+                    // registrada em `main.rs` pra todo `provider_specific_features`,
+                    // mas outros chamadores de `generate_world_with_options` podem
+                    // não ter feito isso) antes de `into_processed_element()`
+                    // descartá-la.
+                    provenance.register_origin(feature);
                     let processed_element = feature.clone().into_processed_element();
 
                     // Delega para os construtores baseados nas tags traduzidas do Shapefile/WFS
@@ -976,6 +1046,7 @@ pub fn generate_world_with_options(
                         &building_footprints,
                         &suppressed_building_outlines,
                         &xzbbox,
+                        provenance,
                     );
                 }
             }
@@ -1055,6 +1126,17 @@ pub fn generate_world_with_options(
     // Sinaliza ao HUD que a obra acabou
     if let Some(tx) = &options.telemetry_tx {
         let _ = tx.send(BesmSignal::GenerationComplete);
+    }
+
+    // 🚨 BESM-6: Escreve o relatório de auditoria de proveniência
+    // (`provenance.ndjson` + `provenance_summary.json`) ao lado de
+    // `metadata.json`. Só pra Java Anvil por ora — `output_path` do Bedrock
+    // é o `.mcworld` já empacotado (zip), não uma pasta onde dá pra escrever
+    // arquivos soltos; ver o comentário de módulo em `provenance.rs`.
+    if world_format == WorldFormat::JavaAnvil {
+        if let Err(e) = provenance.write_reports(&output_path) {
+            eprintln!("Aviso: falha ao escrever o relatório de proveniência: {e}");
+        }
     }
 
     Ok(output_path)
