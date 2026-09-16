@@ -98,14 +98,54 @@ tratado como exposto mesmo que esse vizinho o cubra. Na pior hipótese isso
 mantém uns poucos triângulos extras nas costuras entre chunks — nunca
 omite um bloco que devia aparecer.
 
-### Navegação
+### Navegação: dois modos de câmera alternáveis
 
-Clique na tela pra travar o cursor (Pointer Lock). `WASD` anda na direção
-que a câmera olha (plano horizontal), mouse olha em qualquer direção,
-`Espaço`/`Shift` sobem/descem, a roda do mouse ajusta a velocidade de voo.
-`Esc` solta o cursor. **Não há colisão nem gravidade nesta versão** — é
-voo livre, não andar-sobre-o-chão; suficiente para inspecionar cada bloco
-de perto, mas documentado aqui como uma limitação real, não escondida.
+Pedido explícito do usuário: poder separar uma "visão normal" (câmera solta,
+pra ver o conjunto de fora) de uma "visão corporificada" (andar por dentro,
+como um personagem). Um botão no painel de opções alterna entre os dois, a
+qualquer momento, mantendo a orientação da câmera ao trocar:
+
+- **🛰 Visão livre** — `OrbitControls` (a mesma usada em `--view-world`):
+  arraste pra orbitar, scroll pra zoom, botão direito desloca o alvo. Boa
+  pra ver o traçado urbano inteiro de fora, sem se preocupar em "cair" em
+  algum lugar.
+- **🚶 Corporificada** — voo livre em primeira pessoa: `WASD` anda na
+  direção que a câmera olha (plano horizontal), **arrastar o mouse** olha
+  em qualquer direção, `Espaço`/`Shift` sobem/descem. **Não há colisão nem
+  gravidade nesta versão** — é voo livre, não andar-sobre-o-chão;
+  suficiente pra inspecionar cada bloco/parede/interior de perto, mas
+  documentado aqui como uma limitação real, não escondida.
+
+### Achado real: por que a primeira versão usava Pointer Lock e não funcionava
+
+A primeira versão deste visualizador usava a
+[Pointer Lock API](https://developer.mozilla.org/en-US/docs/Web/API/Pointer_Lock_API)
+do navegador (clique trava o cursor) pra olhar em primeira pessoa — o
+padrão usado por jogos em WebGL. Testado ao vivo pelo usuário: clicar não
+fazia nada, sem nenhum erro visível. Causa raiz: a Pointer Lock API exige
+um **contexto seguro** (HTTPS, ou `localhost`) nos navegadores modernos —
+servido por HTTP simples num IP público (o mesmo padrão de exposição já
+usado pelo BlueMap e pelo relevo caseiro nesta sessão), o navegador recusa
+o pedido de trava **silenciosamente**, sem disparar nenhum evento de erro
+que o código pudesse capturar. Corrigido substituindo por
+"arrastar-o-mouse-pra-olhar" (`mousedown`+`mousemove`+`mouseup` normais,
+usando `event.movementX/Y`) — funciona em qualquer contexto, HTTP incluído,
+sem exigir nenhuma permissão especial do navegador.
+
+### Carregamento: pré-carga em massa, não só reativo ao andar
+
+O usuário pediu explicitamente pra não depender de streaming reativo —
+"melhor renderizar tudo de uma vez". Isso é fisicamente inviável de forma
+literal para o mundo INTEIRO (dezenas de milhões de blocos expostos,
+gigabytes de dados, travaria qualquer navegador) — mas o visualizador agora
+**pré-carrega em massa** um raio generoso de chunks já na inicialização
+(ajustável no painel, padrão 15 chunks = 240 blocos de raio, com uma barra
+de progresso real enquanto carrega), em vez de só reagir a movimento. Isso
+cobre uma área grande o suficiente pra sentir como "está tudo ali" pra
+inspeção normal. O painel também tem um interruptor **"carregamento
+dinâmico"**: desligado, nenhum chunk novo carrega além do que já foi
+pré-carregado, mesmo andando — uma aproximação honesta de "tudo de uma vez,
+sem surpresas ao se mover", dentro do que o navegador aguenta.
 
 ### Teto de segurança por chunk
 
