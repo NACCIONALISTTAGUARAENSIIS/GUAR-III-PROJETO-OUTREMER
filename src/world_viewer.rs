@@ -206,8 +206,11 @@ fn write_response(stream: &mut TcpStream, status: &str, content_type: &str, body
 
 /// Trata uma única conexão HTTP/1.1: lê só a linha de requisição (método +
 /// caminho), ignora cabeçalhos/corpo (o navegador só faz GETs simples aqui),
-/// e responde. Servidor de inspeção local só — não foi hardened contra
-/// tráfego hostil de propósito (bind em 127.0.0.1, uso manual).
+/// e responde. Servidor de inspeção manual, não hardened contra tráfego
+/// hostil — bind em todas as interfaces (`0.0.0.0`) só porque foi pedido
+/// explicitamente pra acesso remoto na mesma rede/máquina que já expõe o
+/// BlueMap do mesmo jeito; para uso estritamente local prefira acessar via
+/// `127.0.0.1`/túnel SSH em vez de expor a porta.
 fn handle_connection(mut stream: TcpStream, page: &str, heights_json: &[u8]) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
@@ -268,18 +271,19 @@ pub fn serve(world_dir: PathBuf, port: u16) {
     };
     let heights_bytes = heights_json.into_bytes();
 
-    let listener = match TcpListener::bind(("127.0.0.1", port)) {
+    let listener = match TcpListener::bind(("0.0.0.0", port)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Erro ao abrir o servidor local na porta {port}: {e}");
+            eprintln!("Erro ao abrir o servidor na porta {port}: {e}");
             std::process::exit(1);
         }
     };
     let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
 
     println!();
-    println!("  🗺️  Visualizador 3D do Pincelism no ar:");
-    println!("     http://127.0.0.1:{actual_port}");
+    println!("  🗺️  Visualizador 3D do Pincelism no ar (todas as interfaces):");
+    println!("     http://127.0.0.1:{actual_port}  (local)");
+    println!("     http://<ip-desta-máquina>:{actual_port}  (rede/remoto)");
     println!();
     println!("  Abra esse endereço no navegador. Ctrl+C aqui encerra o servidor.");
     println!();
