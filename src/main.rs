@@ -846,14 +846,14 @@ fn main() {
     }
 
     // 🚨 BESM-6: `--view-world-voxels` — mesmo espírito de interceptação crua
-    // dos dois modos acima, mas renderizando um RECORTE em voxels reais
-    // (todo bloco exposto, não só o topo de cada coluna) — ver o comentário
-    // de módulo em `voxel_viewer.rs` para o porquê ao lado dos outros dois
-    // visualizadores. `--crop <minX> <minZ> <maxX> <maxZ>` é obrigatório
-    // (um recorte voxel completo do mundo inteiro estouraria a RAM/o
-    // navegador); `--min-y`/`--max-y`/`--port` são opcionais.
+    // dos dois modos acima, mas servindo o mundo INTEIRO (ou um `--crop`
+    // opcional) em voxels reais, carregados chunk a chunk sob demanda
+    // conforme o jogador anda — ver o comentário de módulo em
+    // `voxel_viewer.rs` para o porquê. `--crop` agora é OPCIONAL (restringe
+    // a área navegável; sem ele, todas as regiões presentes em `region/`
+    // são navegáveis). `--min-y`/`--max-y`/`--port` continuam opcionais.
     if let Some(idx) = raw_args.iter().position(|a| a == "--view-world-voxels") {
-        let usage = "Uso: pincelism --view-world-voxels <PASTA_DO_MUNDO> --crop <minX> <minZ> <maxX> <maxZ> [--min-y <N>] [--max-y <N>] [--port <PORTA>]";
+        let usage = "Uso: pincelism --view-world-voxels <PASTA_DO_MUNDO> [--crop <minX> <minZ> <maxX> <maxZ>] [--min-y <N>] [--max-y <N>] [--port <PORTA>]";
         let Some(world_dir) = raw_args.get(idx + 1) else {
             eprintln!("{usage}");
             std::process::exit(1);
@@ -865,33 +865,24 @@ fn main() {
                 .and_then(|i| raw_args.get(i + 1 + offset))
                 .and_then(|s| s.parse::<i32>().ok())
         };
-        let crop_idx = raw_args.iter().position(|a| a == "--crop");
-        let Some(crop_idx) = crop_idx else {
-            eprintln!("Erro: --crop <minX> <minZ> <maxX> <maxZ> é obrigatório.\n{usage}");
-            std::process::exit(1);
-        };
-        let crop_values: Vec<i32> = (0..4)
-            .filter_map(|off| raw_args.get(crop_idx + 1 + off)?.parse::<i32>().ok())
-            .collect();
-        let [min_x, min_z, max_x, max_z] = crop_values.as_slice() else {
-            eprintln!("Erro: --crop precisa de 4 inteiros: <minX> <minZ> <maxX> <maxZ>.\n{usage}");
-            std::process::exit(1);
-        };
+        let crop = raw_args.iter().position(|a| a == "--crop").map(|crop_idx| {
+            let crop_values: Vec<i32> = (0..4)
+                .filter_map(|off| raw_args.get(crop_idx + 1 + off)?.parse::<i32>().ok())
+                .collect();
+            let [min_x, min_z, max_x, max_z] = crop_values.as_slice() else {
+                eprintln!(
+                    "Erro: --crop precisa de 4 inteiros: <minX> <minZ> <maxX> <maxZ>.\n{usage}"
+                );
+                std::process::exit(1);
+            };
+            (*min_x, *min_z, *max_x, *max_z)
+        });
         let min_y = get_i32("--min-y", 0);
         let max_y = get_i32("--max-y", 0);
         let port = get_i32("--port", 0)
             .and_then(|p| u16::try_from(p).ok())
             .unwrap_or(0);
-        voxel_viewer::serve(
-            PathBuf::from(world_dir),
-            *min_x,
-            *min_z,
-            *max_x,
-            *max_z,
-            min_y,
-            max_y,
-            port,
-        );
+        voxel_viewer::serve(PathBuf::from(world_dir), crop, min_y, max_y, port);
         return;
     }
 

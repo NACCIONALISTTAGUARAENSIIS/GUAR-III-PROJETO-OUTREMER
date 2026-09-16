@@ -1,8 +1,10 @@
 # Visualizadores 3D do mundo gerado
 
-Este documento registra, de forma reprodutível, os dois visualizadores 3D
+Este documento registra, de forma reprodutível, os três visualizadores 3D
 embutidos no motor — quando usar cada um, como funcionam por baixo dos panos,
-e os achados reais desta sessão ao integrar o segundo deles (BlueMap).
+e os achados reais desta sessão ao integrar o segundo deles (BlueMap) e ao
+construir o terceiro (`--view-world-voxels`) depois que o BlueMap se mostrou
+frágil demais pra este mundo.
 
 ## 1. `--view-world` — relevo caseiro (rápido, sem dependências externas)
 
@@ -28,7 +30,91 @@ código (`world_viewer.rs`, comentário de módulo).
 recém-gerado, sem precisar de nada além do próprio binário — bom para
 iteração rápida durante o desenvolvimento.
 
-## 2. `--view-world-bluemap` — render real com [BlueMap](https://bluemap.bluecolored.de/)
+## 2. `--view-world-voxels` — voxels reais, mundo inteiro, sob demanda
+
+```bash
+pincelism --view-world-voxels "<pasta do mundo>" \
+  [--crop <minX> <minZ> <maxX> <maxZ>] \
+  [--min-y <N>] [--max-y <N>] \
+  [--port <porta>]
+```
+
+Sobe um servidor HTTP (`src/voxel_viewer.rs`) que serve uma página Three.js
+com navegação em **primeira pessoa** (voo livre, `PointerLockControls`) por
+cima de **voxels reais** — todo bloco não-transparente com pelo menos uma
+face exposta, não uma amostra do topo de cada coluna. Ao contrário de
+`--view-world`, dá pra ver paredes, telhados e entrar em interiores.
+
+### Por que isto existe apesar de já termos dois visualizadores
+
+Nesta sessão o usuário pediu explicitamente pra inspecionar o mundo gerado
+"em detalhe, cada bloco", pra poder iterar no código de geração do
+Pincelism depois — e pediu navegação livre tipo personagem, como o
+BlueMap oferece. `--view-world-bluemap` foi a primeira tentativa de
+resolver isso, mas uma investigação extensa (documentada nos Achados #5–#7
+acima) não encontrou a causa raiz de por que o **cliente** do BlueMap não
+conseguia renderizar/navegar até a área correta — mesmo depois de
+confirmar, por fora do BlueMap (gerando uma imagem direto do heightfield
+real do mundo), que os dados e a posição estavam certos. Em vez de continuar
+depurando uma ferramenta externa cujo código não escrevemos, construímos
+este visualizador — sem nenhuma dependência externa, sem nenhuma lógica de
+cliente que não é nossa.
+
+### Por que "mundo inteiro" virou um servidor de streaming de chunks
+
+A primeira versão deste módulo exigia um `--crop` obrigatório e pré-computava
+tudo de uma vez (funcionou, mas é um recorte, não o mundo todo). Pré-computar
+o mundo inteiro do Guará I+II (~5700×9200 blocos) em voxels de uma vez geraria
+dezenas de milhões de blocos expostos — gigabytes de JSON, inviável pro
+navegador montar de uma vez. A solução, do mesmo jeito que o próprio
+Minecraft e o BlueMap fazem: carregar só os **chunks** (colunas de 16×16
+blocos, formato nativo do Anvil) perto de onde o "jogador" está, sob
+demanda, via `GET /chunk/<cx>/<cz>`, e descartar (com uma margem de
+histerese, `RENDER_DIST_CHUNKS` vs `UNLOAD_DIST_CHUNKS` no HTML) os que
+ficam longe conforme você anda. Isso resolve "cidades futuras" de graça — o
+servidor não sabe nada sobre o Guará especificamente, só lê o `world_dir`
+passado região por região; qualquer mundo gerado por este motor funciona
+sem nenhuma mudança de código.
+
+`--crop` continua disponível, agora **opcional**: sem ele, todas as regiões
+presentes em `region/` são navegáveis; com ele, restringe a área streamável
+(útil pra focar numa cidade específica quando várias existem na mesma pasta).
+
+### Por que "sem nenhum bloco omitido" ainda descarta alguma coisa
+
+A única geometria descartada (`map_renderer::extract_exposed_voxels`) é a
+de blocos **totalmente cercados** por 6 outros blocos opacos — esses são,
+por definição, invisíveis de qualquer ângulo possível, inclusive no
+Minecraft real (o próprio jogo nunca desenha essas faces). Omitir isso não
+tira nenhum detalhe visível, só evita mandar geometria que nunca apareceria
+na tela — o mesmo tipo de *face culling* que qualquer motor de voxels faz.
+A faixa de altura padrão é a completa do Minecraft moderno (`-64` a `320`),
+então nada é cortado verticalmente por padrão.
+
+**Trade-off assumido conscientemente:** a exposição de um bloco é calculada
+só dentro do chunk que o contém — um bloco bem na borda de um chunk cujo
+vizinho fica no chunk adjacente (ainda não carregado nesse momento) é
+tratado como exposto mesmo que esse vizinho o cubra. Na pior hipótese isso
+mantém uns poucos triângulos extras nas costuras entre chunks — nunca
+omite um bloco que devia aparecer.
+
+### Navegação
+
+Clique na tela pra travar o cursor (Pointer Lock). `WASD` anda na direção
+que a câmera olha (plano horizontal), mouse olha em qualquer direção,
+`Espaço`/`Shift` sobem/descem, a roda do mouse ajusta a velocidade de voo.
+`Esc` solta o cursor. **Não há colisão nem gravidade nesta versão** — é
+voo livre, não andar-sobre-o-chão; suficiente para inspecionar cada bloco
+de perto, mas documentado aqui como uma limitação real, não escondida.
+
+### Teto de segurança por chunk
+
+`map_renderer::MAX_VOXEL_CELLS` (6 milhões de células) protege contra um
+`--crop` absurdamente grande sendo pedido de uma vez — mas por chunk
+(16×16×385 = 98.560 células na faixa de altura completa) isso nunca chega
+nem perto do limite, então o streaming normal nunca esbarra nele.
+
+## 3. `--view-world-bluemap` — render real com [BlueMap](https://bluemap.bluecolored.de/)
 
 ```bash
 pincelism --view-world-bluemap "<pasta do mundo>" \
@@ -277,9 +363,10 @@ sendo o BlueMap um projeto de código aberto confiável e amplamente usado.
 
 ## Comparação rápida
 
-| | `--view-world` | `--view-world-bluemap` |
-|---|---|---|
-| Dependências externas | nenhuma | JVM (Java 25+) + `bluemap-cli.jar` (baixado manualmente) |
-| Tempo até visualizar | segundos | minutos (proporcional ao tamanho do mundo) |
-| Fidelidade visual | relevo amostrado (altura+cor do topo, downsample) | blocos reais texturizados, múltiplas vistas |
-| Bom para | iteração rápida, visão geral da skyline/traçado | inspeção de perto, apresentação/demonstração |
+| | `--view-world` | `--view-world-bluemap` | `--view-world-voxels` |
+|---|---|---|---|
+| Dependências externas | nenhuma | JVM (Java 25+) + `bluemap-cli.jar` (baixado manualmente) | nenhuma |
+| Tempo até visualizar | segundos | minutos (proporcional ao tamanho do mundo) | segundos (chunks sob demanda) |
+| Fidelidade visual | relevo amostrado (altura+cor do topo, downsample) | blocos reais texturizados, múltiplas vistas | blocos reais (cor por bloco, sem textura), voo em 1ª pessoa |
+| Cobertura | mundo inteiro, sempre | mundo inteiro (uma vez renderizado) | mundo inteiro, chunk a chunk sob demanda |
+| Bom para | iteração rápida, visão geral da skyline/traçado | inspeção de perto, apresentação/demonstração | inspecionar cada bloco/parede/interior pra iterar no código de geração |

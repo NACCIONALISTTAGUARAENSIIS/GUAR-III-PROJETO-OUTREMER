@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<title>Pincelism — Voxels</title>
+<title>Pincelism — Voxels (mundo inteiro)</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   #canvas-wrap { position: fixed; inset: 0; }
@@ -23,6 +23,10 @@
     position: fixed; bottom: 12px; left: 12px; color: #cfcabd;
     font-size: 11.5px; background: rgba(15,18,14,0.6); padding: 6px 10px; border-radius: 6px;
   }
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+    border-radius: 50%; background: rgba(255,255,255,0.7); pointer-events: none; display: none;
+  }
   #loading {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     flex-direction: column; gap: 12px; color: #cfcabd; font-size: 14px; background: #0d1117; z-index: 10;
@@ -30,74 +34,81 @@
   .spinner { width: 26px; height: 26px; border-radius: 50%; border: 3px solid #3a3f36; border-top-color: #bf5b37; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #error { color: #e08b7d; max-width: 600px; text-align: center; padding: 0 20px; }
+  #click-to-play {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(13,17,23,0.55); color: #f1efe6; font-size: 16px; cursor: pointer; z-index: 8;
+  }
+  #click-to-play .box { background: rgba(15,18,14,0.9); padding: 20px 28px; border-radius: 10px; text-align: center; }
 </style>
 </head>
 <body>
 <div id="loading">
   <div class="spinner"></div>
-  <div id="loading-text">Carregando recorte voxel…</div>
+  <div id="loading-text">Carregando informações do mundo…</div>
 </div>
 <div id="canvas-wrap"></div>
-<div id="hud">
-  <div class="card" id="stats-card">
-    <div><b id="voxel-count">–</b> <span class="dim">voxels expostos</span></div>
-    <div class="dim" id="extent-line">recorte —</div>
-  </div>
-  <div class="card">
-    <div><b>Pincelism</b> <span class="dim">— recorte voxel real (bloco a bloco)</span></div>
-    <div class="dim">Todo bloco com face exposta no recorte pedido — paredes, telhados, interior. Blocos totalmente cercados são omitidos (não aparecem visualmente mesmo assim).</div>
+<div id="crosshair"></div>
+<div id="click-to-play">
+  <div class="box">
+    <div><b>Clique para entrar</b></div>
+    <div class="dim" style="margin-top:6px;">WASD anda · mouse olha · Espaço sobe · Shift desce · Esc sai</div>
   </div>
 </div>
-<div id="hint">arraste para orbitar · scroll para zoom · botão direito para deslocar</div>
+<div id="hud">
+  <div class="card" id="stats-card">
+    <div><b id="pos-x">–</b>, <b id="pos-y">–</b>, <b id="pos-z">–</b> <span class="dim">(x, y, z)</span></div>
+    <div class="dim"><b id="chunk-count">0</b> chunks carregados · <b id="voxel-count">0</b> voxels visíveis</div>
+    <div class="dim" id="extent-line">mundo —</div>
+  </div>
+  <div class="card">
+    <div><b>Pincelism</b> <span class="dim">— voxels reais, mundo inteiro, sob demanda</span></div>
+    <div class="dim">Todo bloco com face exposta é carregado ao redor de você — nada omitido, só chunks distantes ainda não visitados.</div>
+  </div>
+</div>
+<div id="hint">WASD anda · mouse olha (clique pra travar o cursor) · Espaço/Shift sobe/desce · scroll ajusta velocidade</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
 <script>
 (function () {
   const loading = document.getElementById('loading');
   const loadingText = document.getElementById('loading-text');
+  const clickToPlay = document.getElementById('click-to-play');
+  const crosshair = document.getElementById('crosshair');
 
   function fail(msg) {
+    loading.style.display = 'flex';
     loading.innerHTML = '<div id="error">Falha ao carregar: ' + msg + '</div>';
   }
 
-  fetch('/voxels.json')
-    .then((r) => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    })
-    .then((data) => init(data))
+  fetch('/world-info')
+    .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then((info) => init(info))
     .catch((e) => fail(e.message));
 
-  function init(data) {
-    const { minX, minY, minZ, maxX, maxY, maxZ, voxels } = data;
-
-    document.getElementById('voxel-count').textContent = voxels.length.toLocaleString('pt-BR');
+  function init(info) {
     document.getElementById('extent-line').textContent =
-      'recorte ' + (maxX - minX + 1) + '×' + (maxY - minY + 1) + '×' + (maxZ - minZ + 1) +
-      ' (x:' + minX + '..' + maxX + ', z:' + minZ + '..' + maxZ + ', y:' + minY + '..' + maxY + ')';
-
-    if (voxels.length === 0) {
-      fail('nenhum bloco encontrado nesse recorte (área vazia, ou fora do range de altura --min-y/--max-y).');
-      return;
-    }
-
-    loadingText.textContent = 'Montando ' + voxels.length.toLocaleString('pt-BR') + ' voxels…';
-    setTimeout(() => buildScene(minX, minY, minZ, maxX, maxY, maxZ, voxels), 30);
+      'mundo x:' + info.minX + '..' + info.maxX + ' z:' + info.minZ + '..' + info.maxZ +
+      ' y:' + info.minY + '..' + info.maxY;
+    loadingText.textContent = 'Montando cena…';
+    setTimeout(() => buildScene(info), 30);
   }
 
-  function buildScene(minX, minY, minZ, maxX, maxY, maxZ, voxels) {
+  function buildScene(info) {
+    const CHUNK = info.chunkSize;
+    // Recentraliza tudo em torno do spawn (X/Z) pra evitar problemas de
+    // precisão de ponto flutuante do WebGL em coordenadas grandes/negativas
+    // — o mesmo cuidado já tomado no visualizador de recorte único.
+    const originX = info.spawnX;
+    const originZ = info.spawnZ;
+
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d1117);
-
-    const sizeX = maxX - minX + 1;
-    const sizeY = maxY - minY + 1;
-    const sizeZ = maxZ - minZ + 1;
-    const diag = Math.sqrt(sizeX * sizeX + sizeY * sizeY + sizeZ * sizeZ);
-    scene.fog = new THREE.FogExp2(0x0d1117, 1.5 / Math.max(diag, 50));
+    scene.fog = new THREE.FogExp2(0x0d1117, 0.0028);
 
     const wrap = document.getElementById('canvas-wrap');
-    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, Math.max(diag * 3, 500));
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(0, info.spawnY, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -110,56 +121,162 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    const hemi = new THREE.HemisphereLight(0xbfd4e6, 0x2b2620, 1.0);
-    scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff2da, 1.1);
-    sun.position.set(sizeX * 0.6, sizeY * 2 + 40, sizeZ * 0.4);
+    scene.add(new THREE.HemisphereLight(0xbfd4e6, 0x2b2620, 1.15));
+    const sun = new THREE.DirectionalLight(0xfff2da, 0.9);
+    sun.position.set(200, 400, 100);
     scene.add(sun);
 
-    // Um único InstancedMesh (instancing de hardware) — leve mesmo com
-    // centenas de milhares de voxels, cada um só um cubo unitário
-    // reposicionado/recolorido por instância, sem geometria duplicada.
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const material = new THREE.MeshLambertMaterial();
-    const mesh = new THREE.InstancedMesh(geometry, material, voxels.length);
+    // --- Controles em primeira pessoa (voo livre — sem colisão/gravidade) ---
+    const controls = new THREE.PointerLockControls(camera, document.body);
+    document.getElementById('canvas-wrap').addEventListener('click', () => controls.lock());
+    controls.addEventListener('lock', () => { clickToPlay.style.display = 'none'; crosshair.style.display = 'block'; });
+    controls.addEventListener('unlock', () => { clickToPlay.style.display = 'flex'; crosshair.style.display = 'none'; });
+    clickToPlay.style.display = 'flex';
 
-    const matrix = new THREE.Matrix4();
-    const color = new THREE.Color();
-    for (let i = 0; i < voxels.length; i++) {
-      const [x, y, z, r, g, b] = voxels[i];
-      // Recentraliza no recorte (não nas coordenadas absolutas do mundo)
-      // pra evitar problemas de precisão de ponto flutuante do WebGL em
-      // coordenadas grandes/negativas.
-      matrix.setPosition(x - minX + 0.5, y - minY + 0.5, z - minZ + 0.5);
-      mesh.setMatrixAt(i, matrix);
-      mesh.setColorAt(i, color.setRGB(r / 255, g / 255, b / 255));
+    const move = { forward: false, back: false, left: false, right: false, up: false, down: false };
+    let speed = 24; // blocos/segundo
+    document.addEventListener('keydown', (e) => {
+      switch (e.code) {
+        case 'KeyW': move.forward = true; break;
+        case 'KeyS': move.back = true; break;
+        case 'KeyA': move.left = true; break;
+        case 'KeyD': move.right = true; break;
+        case 'Space': move.up = true; e.preventDefault(); break;
+        case 'ShiftLeft': case 'ShiftRight': move.down = true; break;
+      }
+    });
+    document.addEventListener('keyup', (e) => {
+      switch (e.code) {
+        case 'KeyW': move.forward = false; break;
+        case 'KeyS': move.back = false; break;
+        case 'KeyA': move.left = false; break;
+        case 'KeyD': move.right = false; break;
+        case 'Space': move.up = false; break;
+        case 'ShiftLeft': case 'ShiftRight': move.down = false; break;
+      }
+    });
+    document.addEventListener('wheel', (e) => {
+      speed = Math.max(2, Math.min(400, speed * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    }, { passive: true });
+
+    // --- Streaming de chunks ---
+    const RENDER_DIST_CHUNKS = 6;   // raio de carregamento, em chunks (16 blocos cada)
+    const UNLOAD_DIST_CHUNKS = 9;   // raio de descarte — maior que o de carga (histerese, evita ficar carregando/descarregando na borda)
+    const loaded = new Map();   // "cx,cz" -> THREE.InstancedMesh
+    const pending = new Set();  // "cx,cz" em requisição
+
+    const boxGeom = new THREE.BoxGeometry(1, 1, 1);
+    const sharedMaterial = new THREE.MeshLambertMaterial();
+    let visibleVoxels = 0;
+
+    function worldToChunk(x, z) { return [Math.floor(x / CHUNK), Math.floor(z / CHUNK)]; }
+
+    function loadChunk(cx, cz) {
+      const key = cx + ',' + cz;
+      if (loaded.has(key) || pending.has(key)) return;
+      pending.add(key);
+      fetch('/chunk/' + cx + '/' + cz)
+        .then((r) => r.json())
+        .then((data) => {
+          pending.delete(key);
+          if (loaded.has(key)) return; // já carregado nesse meio-tempo (não deveria, mas por garantia)
+          const voxels = data.voxels || [];
+          if (voxels.length === 0) { loaded.set(key, null); return; }
+
+          const mesh = new THREE.InstancedMesh(boxGeom, sharedMaterial, voxels.length);
+          const matrix = new THREE.Matrix4();
+          const color = new THREE.Color();
+          for (let i = 0; i < voxels.length; i++) {
+            const [x, y, z, r, g, b] = voxels[i];
+            matrix.setPosition(x - originX + 0.5, y + 0.5, z - originZ + 0.5);
+            mesh.setMatrixAt(i, matrix);
+            mesh.setColorAt(i, color.setRGB(r / 255, g / 255, b / 255));
+          }
+          mesh.instanceMatrix.needsUpdate = true;
+          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+          scene.add(mesh);
+          loaded.set(key, mesh);
+          visibleVoxels += voxels.length;
+        })
+        .catch(() => { pending.delete(key); });
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    scene.add(mesh);
 
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.minDistance = 2;
-    controls.maxDistance = diag * 2.5;
+    function unloadChunk(key) {
+      const mesh = loaded.get(key);
+      if (mesh) {
+        scene.remove(mesh);
+        mesh.dispose();
+        visibleVoxels -= mesh.count;
+      }
+      loaded.delete(key);
+    }
 
-    const centerX = sizeX / 2;
-    const centerY = sizeY / 2;
-    const centerZ = sizeZ / 2;
-    const radius = Math.max(diag * 0.7, 20);
+    function updateChunks() {
+      const px = camera.position.x + originX;
+      const pz = camera.position.z + originZ;
+      const [ccx, ccz] = worldToChunk(px, pz);
 
-    camera.position.set(centerX + radius * 0.6, centerY + radius * 0.5, centerZ + radius * 0.6);
-    controls.target.set(centerX, centerY, centerZ);
-    controls.update();
+      for (let dz = -RENDER_DIST_CHUNKS; dz <= RENDER_DIST_CHUNKS; dz++) {
+        for (let dx = -RENDER_DIST_CHUNKS; dx <= RENDER_DIST_CHUNKS; dx++) {
+          if (dx * dx + dz * dz > RENDER_DIST_CHUNKS * RENDER_DIST_CHUNKS) continue;
+          loadChunk(ccx + dx, ccz + dz);
+        }
+      }
+      for (const key of Array.from(loaded.keys())) {
+        const [cx, cz] = key.split(',').map(Number);
+        const dx = cx - ccx, dz = cz - ccz;
+        if (dx * dx + dz * dz > UNLOAD_DIST_CHUNKS * UNLOAD_DIST_CHUNKS) unloadChunk(key);
+      }
 
-    loading.style.display = 'none';
+      document.getElementById('chunk-count').textContent = loaded.size.toLocaleString('pt-BR');
+      document.getElementById('voxel-count').textContent = Math.max(0, visibleVoxels).toLocaleString('pt-BR');
+    }
 
-    (function animate() {
+    let lastChunkScan = 0;
+    let lastFrame = performance.now();
+    const velocity = new THREE.Vector3();
+    const forward = new THREE.Vector3();
+    const right = new THREE.Vector3();
+
+    function animate(now) {
       requestAnimationFrame(animate);
-      controls.update();
+      const dt = Math.min((now - lastFrame) / 1000, 0.1);
+      lastFrame = now;
+
+      if (controls.isLocked) {
+        camera.getWorldDirection(forward);
+        forward.y = 0; forward.normalize();
+        right.copy(forward).cross(camera.up);
+
+        velocity.set(0, 0, 0);
+        if (move.forward) velocity.add(forward);
+        if (move.back) velocity.sub(forward);
+        if (move.right) velocity.add(right);
+        if (move.left) velocity.sub(right);
+        if (velocity.lengthSq() > 0) velocity.normalize();
+        if (move.up) velocity.y += 1;
+        if (move.down) velocity.y -= 1;
+
+        camera.position.addScaledVector(velocity, speed * dt);
+      }
+
+      if (now - lastChunkScan > 200) {
+        lastChunkScan = now;
+        updateChunks();
+        const wx = Math.round(camera.position.x + originX);
+        const wy = Math.round(camera.position.y);
+        const wz = Math.round(camera.position.z + originZ);
+        document.getElementById('pos-x').textContent = wx;
+        document.getElementById('pos-y').textContent = wy;
+        document.getElementById('pos-z').textContent = wz;
+      }
+
       renderer.render(scene, camera);
-    })();
+    }
+
+    updateChunks();
+    loading.style.display = 'none';
+    requestAnimationFrame(animate);
   }
 })();
 </script>
