@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Pincelism — Voxels</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #0d1117; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #canvas-wrap { position: fixed; inset: 0; }
+  canvas { display: block; }
+  #hud {
+    position: fixed; top: 12px; left: 12px; right: 12px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none; gap: 10px; flex-wrap: wrap;
+  }
+  .card {
+    background: rgba(15,18,14,0.78); backdrop-filter: blur(6px);
+    color: #f1efe6; border-radius: 8px; padding: 10px 14px;
+    font-size: 12.5px; line-height: 1.6; pointer-events: auto;
+  }
+  .card b { color: #fff; }
+  .card .dim { color: #b7b3a4; }
+  #hint {
+    position: fixed; bottom: 12px; left: 12px; color: #cfcabd;
+    font-size: 11.5px; background: rgba(15,18,14,0.6); padding: 6px 10px; border-radius: 6px;
+  }
+  #loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px; color: #cfcabd; font-size: 14px; background: #0d1117; z-index: 10;
+  }
+  .spinner { width: 26px; height: 26px; border-radius: 50%; border: 3px solid #3a3f36; border-top-color: #bf5b37; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #error { color: #e08b7d; max-width: 600px; text-align: center; padding: 0 20px; }
+</style>
+</head>
+<body>
+<div id="loading">
+  <div class="spinner"></div>
+  <div id="loading-text">Carregando recorte voxel…</div>
+</div>
+<div id="canvas-wrap"></div>
+<div id="hud">
+  <div class="card" id="stats-card">
+    <div><b id="voxel-count">–</b> <span class="dim">voxels expostos</span></div>
+    <div class="dim" id="extent-line">recorte —</div>
+  </div>
+  <div class="card">
+    <div><b>Pincelism</b> <span class="dim">— recorte voxel real (bloco a bloco)</span></div>
+    <div class="dim">Todo bloco com face exposta no recorte pedido — paredes, telhados, interior. Blocos totalmente cercados são omitidos (não aparecem visualmente mesmo assim).</div>
+  </div>
+</div>
+<div id="hint">arraste para orbitar · scroll para zoom · botão direito para deslocar</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  const loading = document.getElementById('loading');
+  const loadingText = document.getElementById('loading-text');
+
+  function fail(msg) {
+    loading.innerHTML = '<div id="error">Falha ao carregar: ' + msg + '</div>';
+  }
+
+  fetch('/voxels.json')
+    .then((r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then((data) => init(data))
+    .catch((e) => fail(e.message));
+
+  function init(data) {
+    const { minX, minY, minZ, maxX, maxY, maxZ, voxels } = data;
+
+    document.getElementById('voxel-count').textContent = voxels.length.toLocaleString('pt-BR');
+    document.getElementById('extent-line').textContent =
+      'recorte ' + (maxX - minX + 1) + '×' + (maxY - minY + 1) + '×' + (maxZ - minZ + 1) +
+      ' (x:' + minX + '..' + maxX + ', z:' + minZ + '..' + maxZ + ', y:' + minY + '..' + maxY + ')';
+
+    if (voxels.length === 0) {
+      fail('nenhum bloco encontrado nesse recorte (área vazia, ou fora do range de altura --min-y/--max-y).');
+      return;
+    }
+
+    loadingText.textContent = 'Montando ' + voxels.length.toLocaleString('pt-BR') + ' voxels…';
+    setTimeout(() => buildScene(minX, minY, minZ, maxX, maxY, maxZ, voxels), 30);
+  }
+
+  function buildScene(minX, minY, minZ, maxX, maxY, maxZ, voxels) {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1117);
+
+    const sizeX = maxX - minX + 1;
+    const sizeY = maxY - minY + 1;
+    const sizeZ = maxZ - minZ + 1;
+    const diag = Math.sqrt(sizeX * sizeX + sizeY * sizeY + sizeZ * sizeZ);
+    scene.fog = new THREE.FogExp2(0x0d1117, 1.5 / Math.max(diag, 50));
+
+    const wrap = document.getElementById('canvas-wrap');
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, Math.max(diag * 3, 500));
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    wrap.appendChild(renderer.domElement);
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    const hemi = new THREE.HemisphereLight(0xbfd4e6, 0x2b2620, 1.0);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xfff2da, 1.1);
+    sun.position.set(sizeX * 0.6, sizeY * 2 + 40, sizeZ * 0.4);
+    scene.add(sun);
+
+    // Um único InstancedMesh (instancing de hardware) — leve mesmo com
+    // centenas de milhares de voxels, cada um só um cubo unitário
+    // reposicionado/recolorido por instância, sem geometria duplicada.
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshLambertMaterial();
+    const mesh = new THREE.InstancedMesh(geometry, material, voxels.length);
+
+    const matrix = new THREE.Matrix4();
+    const color = new THREE.Color();
+    for (let i = 0; i < voxels.length; i++) {
+      const [x, y, z, r, g, b] = voxels[i];
+      // Recentraliza no recorte (não nas coordenadas absolutas do mundo)
+      // pra evitar problemas de precisão de ponto flutuante do WebGL em
+      // coordenadas grandes/negativas.
+      matrix.setPosition(x - minX + 0.5, y - minY + 0.5, z - minZ + 0.5);
+      mesh.setMatrixAt(i, matrix);
+      mesh.setColorAt(i, color.setRGB(r / 255, g / 255, b / 255));
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    scene.add(mesh);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 2;
+    controls.maxDistance = diag * 2.5;
+
+    const centerX = sizeX / 2;
+    const centerY = sizeY / 2;
+    const centerZ = sizeZ / 2;
+    const radius = Math.max(diag * 0.7, 20);
+
+    camera.position.set(centerX + radius * 0.6, centerY + radius * 0.5, centerZ + radius * 0.6);
+    controls.target.set(centerX, centerY, centerZ);
+    controls.update();
+
+    loading.style.display = 'none';
+
+    (function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+  }
+})();
+</script>
+</body>
+</html>

@@ -184,7 +184,7 @@ fn render_region_to_heightcells(
     max_x: i32,
     max_z: i32,
     downsample_factor: u32,
-) -> Vec<(i32, i32, i32, [u8; 3])> {
+) -> VoxelList {
     let mut cells = Vec::new();
     let region_path = region_dir.join(format!("r.{}.{}.mca", region_x, region_z));
     if !region_path.exists() {
@@ -551,6 +551,294 @@ fn get_block_at_section(
     }
 
     None
+}
+
+/// Decodifica o bloco EXATO em `(local_x, local_y, local_z)` dentro de uma
+/// section — ao contrário de `get_block_at_section` (que escaneia de cima
+/// pra baixo procurando só o topo visível), isto devolve o bloco em
+/// qualquer altura específica. Necessário para `compute_voxel_crop`: um
+/// recorte voxel completo precisa de TODO bloco (paredes, interiores,
+/// fundações), não só a superfície de cima que basta pro minimapa 2D.
+fn get_block_at_exact_y(
+    section: &Value,
+    local_x: usize,
+    local_y: usize,
+    local_z: usize,
+) -> Option<String> {
+    let section_map = match section {
+        Value::Compound(m) => m,
+        _ => return None,
+    };
+
+    let block_states = match section_map.get("block_states") {
+        Some(Value::Compound(bs)) => bs,
+        _ => return None,
+    };
+
+    let palette = match block_states.get("palette") {
+        Some(Value::List(p)) => p,
+        _ => return None,
+    };
+
+    if palette.len() == 1 {
+        return get_block_name_from_palette(&palette[0]);
+    }
+
+    let data = match block_states.get("data") {
+        Some(Value::LongArray(d)) => d,
+        _ => return None,
+    };
+
+    let bits_per_block = std::cmp::max(4, (palette.len() as f64).log2().ceil() as usize);
+    let blocks_per_long = 64 / bits_per_block;
+    let mask = (1u64 << bits_per_block) - 1;
+
+    let block_index = local_y * 256 + local_z * 16 + local_x;
+    let long_index = block_index / blocks_per_long;
+    let bit_offset = (block_index % blocks_per_long) * bits_per_block;
+
+    if long_index >= data.len() {
+        return None;
+    }
+
+    let palette_index = ((data[long_index] as u64 >> bit_offset) & mask) as usize;
+    if palette_index < palette.len() {
+        get_block_name_from_palette(&palette[palette_index])
+    } else {
+        None
+    }
+}
+
+/// Teto de segurança pra `compute_voxel_crop`, mesmo espírito do
+/// `TARGET_CELLS` do `world_viewer`: um recorte voxel completo (todo bloco,
+/// não só o topo) cresce em O(dx*dy*dz), então sem um limite um pedido
+/// grande demais (ex.: o Guará I+II inteiro) estouraria a RAM tentando
+/// guardar uma grade 3D densa. Calibrado pra caber uma área generosa pra
+/// inspeção de perto (ex.: ~300×300 blocos por ~65 de altura).
+const MAX_VOXEL_CELLS: u64 = 6_000_000;
+
+/// `(x, y, z, [r, g, b])` por voxel exposto — alias só pra clippy não
+/// reclamar de "tipo complexo demais" no `Result<Vec<...>, String>` de
+/// `compute_voxel_crop`.
+type VoxelList = Vec<(i32, i32, i32, [u8; 3])>;
+
+/// Extrai TODO bloco não-transparente dentro do recorte `[min_x,max_x] ×
+/// [min_y,max_y] × [min_z,max_z]`, descartando (por economia de banda/RAM no
+/// navegador) qualquer bloco totalmente cercado por outros blocos opacos —
+/// só emite blocos com pelo menos uma face exposta a ar/transparente (ou à
+/// borda do recorte). Ao contrário de `compute_heightfield` (que só vê o
+/// topo de cada coluna), isto devolve o mundo real em blocos — paredes,
+/// interiores, terreno — para inspeção de perto no estilo de um render
+/// voxel completo.
+pub(crate) fn compute_voxel_crop(
+    world_dir: &Path,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    min_y: i32,
+    max_y: i32,
+) -> Result<VoxelList, String> {
+    if min_x > max_x || min_z > max_z || min_y > max_y {
+        return Err("recorte inválido: cada eixo precisa ter min <= max".to_string());
+    }
+
+    let w = (max_x - min_x + 1) as usize;
+    let d = (max_z - min_z + 1) as usize;
+    let h = (max_y - min_y + 1) as usize;
+    let total_cells = (w as u64) * (d as u64) * (h as u64);
+    if total_cells > MAX_VOXEL_CELLS {
+        return Err(format!(
+            "recorte grande demais para um render voxel completo: {w}×{h}×{d} = {total_cells} \
+             células (limite {MAX_VOXEL_CELLS}). Reduza a área (--crop) ou o intervalo de altura \
+             (--min-y/--max-y) — para uma visão geral do mundo inteiro use --view-world em vez disso."
+        ));
+    }
+
+    // Paleta local (índice u16, 0 = vazio/ar) em vez de guardar o nome do
+    // bloco por célula — a mesma coluna repete os mesmos poucos nomes de
+    // bloco milhares de vezes, então internar economiza RAM real num
+    // recorte de milhões de células.
+    let mut palette_names: Vec<String> = Vec::new();
+    let mut palette_lookup: FnvHashMap<String, u16> = FnvHashMap::default();
+    let mut grid: Vec<u16> = vec![0u16; w * d * h];
+
+    let min_region_x = min_x >> 9;
+    let max_region_x = max_x >> 9;
+    let min_region_z = min_z >> 9;
+    let max_region_z = max_z >> 9;
+    let region_dir = world_dir.join("region");
+
+    for region_x in min_region_x..=max_region_x {
+        for region_z in min_region_z..=max_region_z {
+            let region_path = region_dir.join(format!("r.{region_x}.{region_z}.mca"));
+            if !region_path.exists() {
+                continue;
+            }
+            let Ok(file) = File::open(&region_path) else {
+                continue;
+            };
+            let Ok(mut region) = Region::from_stream(file) else {
+                continue;
+            };
+
+            let region_base_x = region_x * 512;
+            let region_base_z = region_z * 512;
+
+            for chunk_local_x in 0..32 {
+                for chunk_local_z in 0..32 {
+                    let chunk_base_x = region_base_x + chunk_local_x * 16;
+                    let chunk_base_z = region_base_z + chunk_local_z * 16;
+                    if chunk_base_x + 15 < min_x
+                        || chunk_base_x > max_x
+                        || chunk_base_z + 15 < min_z
+                        || chunk_base_z > max_z
+                    {
+                        continue;
+                    }
+
+                    let Ok(Some(chunk_data)) =
+                        region.read_chunk(chunk_local_x as usize, chunk_local_z as usize)
+                    else {
+                        continue;
+                    };
+                    let chunk: Value = match from_bytes(&chunk_data) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let sections = get_sections_from_chunk(&chunk);
+
+                    for section in &sections {
+                        let Value::Compound(section_map) = section else {
+                            continue;
+                        };
+                        let Some(Value::Byte(section_y)) = section_map.get("Y") else {
+                            continue;
+                        };
+                        let section_min_y = (*section_y as i32) * 16;
+                        let section_max_y = section_min_y + 15;
+                        if section_max_y < min_y || section_min_y > max_y {
+                            continue;
+                        }
+
+                        for local_x in 0..16i32 {
+                            let world_x = chunk_base_x + local_x;
+                            if world_x < min_x || world_x > max_x {
+                                continue;
+                            }
+                            for local_z in 0..16i32 {
+                                let world_z = chunk_base_z + local_z;
+                                if world_z < min_z || world_z > max_z {
+                                    continue;
+                                }
+                                for local_y in 0..16i32 {
+                                    let world_y = section_min_y + local_y;
+                                    if world_y < min_y || world_y > max_y {
+                                        continue;
+                                    }
+                                    let Some(name) = get_block_at_exact_y(
+                                        section,
+                                        local_x as usize,
+                                        local_y as usize,
+                                        local_z as usize,
+                                    ) else {
+                                        continue;
+                                    };
+                                    if is_transparent_block(&name) {
+                                        continue;
+                                    }
+
+                                    let palette_index =
+                                        *palette_lookup.entry(name.clone()).or_insert_with(|| {
+                                            palette_names.push(name);
+                                            // 0 é reservado pra "vazio"; blocos reais começam em 1.
+                                            palette_names.len() as u16
+                                        });
+
+                                    let xi = (world_x - min_x) as usize;
+                                    let zi = (world_z - min_z) as usize;
+                                    let yi = (world_y - min_y) as usize;
+                                    grid[(yi * d + zi) * w + xi] = palette_index;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(extract_exposed_voxels(
+        &grid,
+        w,
+        d,
+        h,
+        min_x,
+        min_y,
+        min_z,
+        &palette_names,
+    ))
+}
+
+/// Passe de exposição: um bloco só entra no resultado se tiver pelo menos
+/// um dos 6 vizinhos vazio (ar/transparente, já descartado da grade) ou
+/// fora do recorte — blocos totalmente cercados por outros blocos opacos
+/// nunca aparecem visualmente e só inflariam o payload. Extraída como
+/// função pura (sobre a grade já montada) pra poder ser testada sem
+/// depender de arquivos de mundo reais.
+#[allow(clippy::too_many_arguments)]
+fn extract_exposed_voxels(
+    grid: &[u16],
+    w: usize,
+    d: usize,
+    h: usize,
+    min_x: i32,
+    min_y: i32,
+    min_z: i32,
+    palette_names: &[String],
+) -> VoxelList {
+    let is_empty = |xi: i64, yi: i64, zi: i64| -> bool {
+        if xi < 0 || yi < 0 || zi < 0 || xi as usize >= w || yi as usize >= h || zi as usize >= d {
+            return true;
+        }
+        grid[(yi as usize * d + zi as usize) * w + xi as usize] == 0
+    };
+
+    let mut voxels = Vec::new();
+    for yi in 0..h {
+        for zi in 0..d {
+            for xi in 0..w {
+                let palette_index = grid[(yi * d + zi) * w + xi];
+                if palette_index == 0 {
+                    continue;
+                }
+                let (xi64, yi64, zi64) = (xi as i64, yi as i64, zi as i64);
+                let exposed = is_empty(xi64 - 1, yi64, zi64)
+                    || is_empty(xi64 + 1, yi64, zi64)
+                    || is_empty(xi64, yi64 - 1, zi64)
+                    || is_empty(xi64, yi64 + 1, zi64)
+                    || is_empty(xi64, yi64, zi64 - 1)
+                    || is_empty(xi64, yi64, zi64 + 1);
+                if !exposed {
+                    continue;
+                }
+
+                let name = &palette_names[(palette_index - 1) as usize];
+                let short_name = name.strip_prefix("minecraft:").unwrap_or(name);
+                let color = BLOCK_COLORS
+                    .get(short_name)
+                    .copied()
+                    .unwrap_or_else(|| get_fallback_color(name));
+                voxels.push((
+                    min_x + xi as i32,
+                    min_y + yi as i32,
+                    min_z + zi as i32,
+                    [color.0[0], color.0[1], color.0[2]],
+                ));
+            }
+        }
+    }
+    voxels
 }
 
 /// Extracts block name from a palette entry
@@ -1133,4 +1421,71 @@ fn get_block_colors() -> FnvHashMap<&'static str, Rgb<u8>> {
         ("pumpkin_stem", Rgb([120, 140, 70])),
         ("melon_stem", Rgb([120, 140, 70])),
     ])
+}
+
+#[cfg(test)]
+mod voxel_crop_tests {
+    use super::*;
+
+    /// Grade 3×3×3 totalmente preenchida com o mesmo bloco: só o cubo do
+    /// meio (1,1,1) tem os 6 vizinhos ocupados — é o único que deve ser
+    /// descartado. Os outros 26 (a casca externa) têm pelo menos uma face
+    /// tocando a borda do recorte (tratada como exposta) e devem sobrar.
+    #[test]
+    fn extract_exposed_voxels_culls_only_the_fully_buried_center() {
+        let (w, d, h) = (3, 3, 3);
+        let grid = vec![1u16; w * d * h];
+        let palette = vec!["minecraft:stone".to_string()];
+
+        let voxels = extract_exposed_voxels(&grid, w, d, h, 0, 0, 0, &palette);
+
+        assert_eq!(
+            voxels.len(),
+            26,
+            "só o bloco central (1,1,1) deve ser culled"
+        );
+        assert!(
+            !voxels.iter().any(|&(x, y, z, _)| (x, y, z) == (1, 1, 1)),
+            "o bloco central, cercado nas 6 faces, não deveria aparecer no resultado"
+        );
+    }
+
+    /// Uma grade totalmente vazia (paleta índice 0 em toda célula) não deve
+    /// produzir nenhum voxel — regressão simples pra garantir que o índice
+    /// 0 = "vazio" é respeitado e não é interpretado como um bloco real.
+    #[test]
+    fn extract_exposed_voxels_empty_grid_yields_nothing() {
+        let grid = vec![0u16; 4 * 4 * 4];
+        let palette: Vec<String> = vec![];
+        let voxels = extract_exposed_voxels(&grid, 4, 4, 4, -10, 5, 20, &palette);
+        assert!(voxels.is_empty());
+    }
+
+    /// Um único bloco isolado (grade 1×1×1) não tem nenhum vizinho dentro
+    /// do recorte — todos os 6 lados caem fora da grade e contam como
+    /// "vazio" — então ele precisa aparecer exposto, nunca culled.
+    #[test]
+    fn extract_exposed_voxels_single_block_is_always_exposed() {
+        let grid = vec![1u16];
+        let palette = vec!["minecraft:oak_planks".to_string()];
+        let voxels = extract_exposed_voxels(&grid, 1, 1, 1, 100, -64, 200, &palette);
+        assert_eq!(voxels.len(), 1);
+        assert_eq!((voxels[0].0, voxels[0].1, voxels[0].2), (100, -64, 200));
+    }
+
+    #[test]
+    fn compute_voxel_crop_rejects_oversized_requests() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let err = compute_voxel_crop(tmp.path(), -1000, 1000, -1000, 1000, -64, 320)
+            .expect_err("recorte gigante precisa ser rejeitado antes de tentar alocar a grade");
+        assert!(err.contains("grande demais"), "mensagem inesperada: {err}");
+    }
+
+    #[test]
+    fn compute_voxel_crop_rejects_inverted_bounds() {
+        let tmp = tempfile::tempdir().expect("tmp dir");
+        let err = compute_voxel_crop(tmp.path(), 10, -10, 0, 5, 0, 5)
+            .expect_err("min_x > max_x precisa ser rejeitado");
+        assert!(err.contains("inválido"));
+    }
 }
