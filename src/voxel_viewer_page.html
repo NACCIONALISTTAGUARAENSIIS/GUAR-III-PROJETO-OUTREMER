@@ -13,20 +13,34 @@
     pointer-events: none; gap: 10px; flex-wrap: wrap;
   }
   .card {
-    background: rgba(15,18,14,0.78); backdrop-filter: blur(6px);
+    background: rgba(15,18,14,0.82); backdrop-filter: blur(6px);
     color: #f1efe6; border-radius: 8px; padding: 10px 14px;
     font-size: 12.5px; line-height: 1.6; pointer-events: auto;
   }
   .card b { color: #fff; }
   .card .dim { color: #b7b3a4; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .row label { min-width: 122px; color: #cfcabd; }
+  .row input[type=range] { width: 120px; }
+  .btn {
+    background: #262b22; color: #f1efe6; border: 1px solid #3a3f36; border-radius: 6px;
+    padding: 6px 10px; font-size: 12px; cursor: pointer; user-select: none;
+  }
+  .btn:hover { background: #333a2c; }
+  .btn.active { background: #bf5b37; border-color: #d97a56; }
+  .toggle-group { display: flex; gap: 6px; }
   #hint {
     position: fixed; bottom: 12px; left: 12px; color: #cfcabd;
-    font-size: 11.5px; background: rgba(15,18,14,0.6); padding: 6px 10px; border-radius: 6px;
+    font-size: 11.5px; background: rgba(15,18,14,0.65); padding: 6px 10px; border-radius: 6px;
+    max-width: 60vw;
   }
-  #crosshair {
-    position: fixed; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
-    border-radius: 50%; background: rgba(255,255,255,0.7); pointer-events: none; display: none;
+  #progress-wrap {
+    position: fixed; bottom: 12px; right: 12px; width: 260px;
+    background: rgba(15,18,14,0.82); border-radius: 8px; padding: 8px 12px; color: #f1efe6;
+    font-size: 11.5px; display: none;
   }
+  #progress-bar-bg { background: #262b22; border-radius: 4px; height: 6px; margin-top: 5px; overflow: hidden; }
+  #progress-bar { background: #bf5b37; height: 100%; width: 0%; transition: width 0.15s; }
   #loading {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     flex-direction: column; gap: 12px; color: #cfcabd; font-size: 14px; background: #0d1117; z-index: 10;
@@ -34,11 +48,10 @@
   .spinner { width: 26px; height: 26px; border-radius: 50%; border: 3px solid #3a3f36; border-top-color: #bf5b37; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   #error { color: #e08b7d; max-width: 600px; text-align: center; padding: 0 20px; }
-  #click-to-play {
-    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
-    background: rgba(13,17,23,0.55); color: #f1efe6; font-size: 16px; cursor: pointer; z-index: 8;
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px;
+    border-radius: 50%; background: rgba(255,255,255,0.7); pointer-events: none; display: none;
   }
-  #click-to-play .box { background: rgba(15,18,14,0.9); padding: 20px 28px; border-radius: 10px; text-align: center; }
 </style>
 </head>
 <body>
@@ -48,33 +61,62 @@
 </div>
 <div id="canvas-wrap"></div>
 <div id="crosshair"></div>
-<div id="click-to-play">
-  <div class="box">
-    <div><b>Clique para entrar</b></div>
-    <div class="dim" style="margin-top:6px;">WASD anda · mouse olha · Espaço sobe · Shift desce · Esc sai</div>
-  </div>
-</div>
+
 <div id="hud">
   <div class="card" id="stats-card">
     <div><b id="pos-x">–</b>, <b id="pos-y">–</b>, <b id="pos-z">–</b> <span class="dim">(x, y, z)</span></div>
-    <div class="dim"><b id="chunk-count">0</b> chunks carregados · <b id="voxel-count">0</b> voxels visíveis</div>
+    <div class="dim"><b id="chunk-count">0</b> chunks · <b id="voxel-count">0</b> voxels visíveis</div>
     <div class="dim" id="extent-line">mundo —</div>
   </div>
-  <div class="card">
-    <div><b>Pincelism</b> <span class="dim">— voxels reais, mundo inteiro, sob demanda</span></div>
-    <div class="dim">Todo bloco com face exposta é carregado ao redor de você — nada omitido, só chunks distantes ainda não visitados.</div>
+
+  <div class="card" id="controls-card">
+    <div class="row">
+      <label>Modo de câmera</label>
+      <div class="toggle-group">
+        <div class="btn" id="mode-orbit">🛰 Visão livre</div>
+        <div class="btn" id="mode-walk">🚶 Corporificada</div>
+      </div>
+    </div>
+    <div class="row">
+      <label>Distância de render</label>
+      <input type="range" id="render-dist" min="4" max="32" value="15" step="1">
+      <span class="dim" id="render-dist-val">15 chunks</span>
+    </div>
+    <div class="row">
+      <label>Carregamento dinâmico</label>
+      <div class="btn active" id="toggle-streaming">ativado</div>
+    </div>
+    <div class="row">
+      <label>Velocidade (voo)</label>
+      <input type="range" id="fly-speed" min="4" max="200" value="24" step="1">
+      <span class="dim" id="fly-speed-val">24 blocos/s</span>
+    </div>
+    <div class="row">
+      <div class="btn" id="btn-recenter">recentralizar no spawn</div>
+    </div>
   </div>
 </div>
-<div id="hint">WASD anda · mouse olha (clique pra travar o cursor) · Espaço/Shift sobe/desce · scroll ajusta velocidade</div>
+
+<div id="progress-wrap">
+  <div><b id="progress-label">Carregando região inicial…</b></div>
+  <div id="progress-bar-bg"><div id="progress-bar"></div></div>
+</div>
+
+<div id="hint">
+  <b>Visão livre:</b> arraste pra orbitar · scroll pra zoom · botão direito desloca &nbsp;|&nbsp;
+  <b>Corporificada:</b> WASD anda · arraste o mouse pra olhar · Espaço/Shift sobe/desce
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 (function () {
   const loading = document.getElementById('loading');
   const loadingText = document.getElementById('loading-text');
-  const clickToPlay = document.getElementById('click-to-play');
   const crosshair = document.getElementById('crosshair');
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressBar = document.getElementById('progress-bar');
+  const progressLabel = document.getElementById('progress-label');
 
   function fail(msg) {
     loading.style.display = 'flex';
@@ -97,18 +139,16 @@
   function buildScene(info) {
     const CHUNK = info.chunkSize;
     // Recentraliza tudo em torno do spawn (X/Z) pra evitar problemas de
-    // precisão de ponto flutuante do WebGL em coordenadas grandes/negativas
-    // — o mesmo cuidado já tomado no visualizador de recorte único.
+    // precisão de ponto flutuante do WebGL em coordenadas grandes/negativas.
     const originX = info.spawnX;
     const originZ = info.spawnZ;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d1117);
-    scene.fog = new THREE.FogExp2(0x0d1117, 0.0028);
+    scene.fog = new THREE.FogExp2(0x0d1117, 0.0022);
 
     const wrap = document.getElementById('canvas-wrap');
-    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 2000);
-    camera.position.set(0, info.spawnY, 0);
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 3000);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -126,15 +166,162 @@
     sun.position.set(200, 400, 100);
     scene.add(sun);
 
-    // --- Controles em primeira pessoa (voo livre — sem colisão/gravidade) ---
-    const controls = new THREE.PointerLockControls(camera, document.body);
-    document.getElementById('canvas-wrap').addEventListener('click', () => controls.lock());
-    controls.addEventListener('lock', () => { clickToPlay.style.display = 'none'; crosshair.style.display = 'block'; });
-    controls.addEventListener('unlock', () => { clickToPlay.style.display = 'flex'; crosshair.style.display = 'none'; });
-    clickToPlay.style.display = 'flex';
+    // ================= Streaming de chunks =================
+    let RENDER_DIST_CHUNKS = 15;
+    let dynamicStreamingEnabled = true;
+    const loaded = new Map();   // "cx,cz" -> THREE.InstancedMesh | null (null = chunk vazio)
+    const pending = new Set();
+    const boxGeom = new THREE.BoxGeometry(1, 1, 1);
+    const sharedMaterial = new THREE.MeshLambertMaterial();
+    let visibleVoxels = 0;
+
+    function chunkKey(cx, cz) { return cx + ',' + cz; }
+    function worldToChunk(x, z) { return [Math.floor(x / CHUNK), Math.floor(z / CHUNK)]; }
+
+    function applyChunk(cx, cz, voxels) {
+      const key = chunkKey(cx, cz);
+      if (voxels.length === 0) { loaded.set(key, null); return; }
+      const mesh = new THREE.InstancedMesh(boxGeom, sharedMaterial, voxels.length);
+      const matrix = new THREE.Matrix4();
+      const color = new THREE.Color();
+      for (let i = 0; i < voxels.length; i++) {
+        const [x, y, z, r, g, b] = voxels[i];
+        matrix.setPosition(x - originX + 0.5, y + 0.5, z - originZ + 0.5);
+        mesh.setMatrixAt(i, matrix);
+        mesh.setColorAt(i, color.setRGB(r / 255, g / 255, b / 255));
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      scene.add(mesh);
+      loaded.set(key, mesh);
+      visibleVoxels += voxels.length;
+      updateHudCounts();
+    }
+
+    function loadChunk(cx, cz) {
+      const key = chunkKey(cx, cz);
+      if (loaded.has(key) || pending.has(key)) return Promise.resolve();
+      pending.add(key);
+      return fetch('/chunk/' + cx + '/' + cz)
+        .then((r) => r.json())
+        .then((data) => { pending.delete(key); applyChunk(cx, cz, data.voxels || []); })
+        .catch(() => { pending.delete(key); });
+    }
+
+    function unloadChunk(key) {
+      const mesh = loaded.get(key);
+      if (mesh) { scene.remove(mesh); mesh.dispose(); visibleVoxels -= mesh.count; }
+      loaded.delete(key);
+    }
+
+    function updateHudCounts() {
+      document.getElementById('chunk-count').textContent = loaded.size.toLocaleString('pt-BR');
+      document.getElementById('voxel-count').textContent = Math.max(0, visibleVoxels).toLocaleString('pt-BR');
+    }
+
+    function chunksInRadius(centerCx, centerCz, radius) {
+      const list = [];
+      for (let dz = -radius; dz <= radius; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          if (dx * dx + dz * dz <= radius * radius) list.push([centerCx + dx, centerCz + dz]);
+        }
+      }
+      // Mais perto do centro primeiro — sensação de "de dentro pra fora" ao carregar.
+      list.sort((a, b) => (a[0] * a[0] + a[1] * a[1]) - (b[0] * b[0] + b[1] * b[1]));
+      return list;
+    }
+
+    // Carrega um lote grande de chunks já na inicialização (não espera o
+    // jogador andar) — "renderiza tudo de una vez" dentro de um raio
+    // generoso, em vez de só reagir a movimento. Concorrência limitada
+    // (o navegador já limita conexões por host, mas processamos em lotes
+    // pra poder mostrar uma barra de progresso de verdade).
+    function eagerPreload(centerCx, centerCz, radius) {
+      const targets = chunksInRadius(centerCx, centerCz, radius);
+      const total = targets.length;
+      let done = 0;
+      progressWrap.style.display = 'block';
+      progressLabel.textContent = 'Carregando região inicial (' + total.toLocaleString('pt-BR') + ' chunks)…';
+
+      const CONCURRENCY = 12;
+      let nextIndex = 0;
+      return new Promise((resolve) => {
+        function pump() {
+          if (nextIndex >= total) {
+            if (done >= total) { progressWrap.style.display = 'none'; resolve(); }
+            return;
+          }
+          const [cx, cz] = targets[nextIndex++];
+          loadChunk(cx, cz).finally(() => {
+            done++;
+            progressBar.style.width = Math.round((done / total) * 100) + '%';
+            progressLabel.textContent = 'Carregando região inicial… (' + done.toLocaleString('pt-BR') + '/' + total.toLocaleString('pt-BR') + ')';
+            if (done >= total) { progressWrap.style.display = 'none'; resolve(); }
+            pump();
+          });
+        }
+        for (let i = 0; i < Math.min(CONCURRENCY, total); i++) pump();
+        if (total === 0) resolve();
+      });
+    }
+
+    function refreshStreaming(px, pz) {
+      if (!dynamicStreamingEnabled) return;
+      const [ccx, ccz] = worldToChunk(px, pz);
+      for (const [cx, cz] of chunksInRadius(ccx, ccz, RENDER_DIST_CHUNKS)) loadChunk(cx, cz);
+      const unloadRadius = RENDER_DIST_CHUNKS + 3;
+      for (const key of Array.from(loaded.keys())) {
+        const [cx, cz] = key.split(',').map(Number);
+        const dx = cx - ccx, dz = cz - ccz;
+        if (dx * dx + dz * dz > unloadRadius * unloadRadius) unloadChunk(key);
+      }
+      updateHudCounts();
+    }
+
+    // ================= Modos de câmera =================
+    // "Visão livre": OrbitControls, câmera solta, boa pra ver o conjunto de fora.
+    // "Corporificada": voo em 1ª pessoa — arrastar o mouse olha (sem exigir
+    // Pointer Lock, que exige contexto seguro/HTTPS e falhava silenciosamente
+    // servido por HTTP simples), WASD anda, Espaço/Shift sobe/desce.
+    let mode = 'orbit';
+    const orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.08;
+    orbitControls.minDistance = 2;
+    orbitControls.maxDistance = 2500;
 
     const move = { forward: false, back: false, left: false, right: false, up: false, down: false };
-    let speed = 24; // blocos/segundo
+    let flySpeed = 24;
+    let yaw = 0, pitch = 0;
+    let dragging = false;
+
+    function setMode(next) {
+      mode = next;
+      document.getElementById('mode-orbit').classList.toggle('active', mode === 'orbit');
+      document.getElementById('mode-walk').classList.toggle('active', mode === 'walk');
+      crosshair.style.display = mode === 'walk' ? 'block' : 'none';
+      orbitControls.enabled = mode === 'orbit';
+      if (mode === 'walk') {
+        // Deriva yaw/pitch atuais da câmera pra continuar olhando pro
+        // mesmo lugar ao trocar de modo, em vez de resetar a visão.
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+        euler.setFromQuaternion(camera.quaternion);
+        yaw = euler.y; pitch = euler.x;
+      }
+    }
+    document.getElementById('mode-orbit').addEventListener('click', () => setMode('orbit'));
+    document.getElementById('mode-walk').addEventListener('click', () => setMode('walk'));
+
+    renderer.domElement.addEventListener('mousedown', (e) => { if (mode === 'walk') dragging = true; });
+    window.addEventListener('mouseup', () => { dragging = false; });
+    window.addEventListener('mousemove', (e) => {
+      if (mode !== 'walk' || !dragging) return;
+      yaw -= e.movementX * 0.0022;
+      pitch -= e.movementY * 0.0022;
+      pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, pitch));
+      camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+    });
+
     document.addEventListener('keydown', (e) => {
       switch (e.code) {
         case 'KeyW': move.forward = true; break;
@@ -155,85 +342,37 @@
         case 'ShiftLeft': case 'ShiftRight': move.down = false; break;
       }
     });
-    document.addEventListener('wheel', (e) => {
-      speed = Math.max(2, Math.min(400, speed * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
-    }, { passive: true });
 
-    // --- Streaming de chunks ---
-    const RENDER_DIST_CHUNKS = 6;   // raio de carregamento, em chunks (16 blocos cada)
-    const UNLOAD_DIST_CHUNKS = 9;   // raio de descarte — maior que o de carga (histerese, evita ficar carregando/descarregando na borda)
-    const loaded = new Map();   // "cx,cz" -> THREE.InstancedMesh
-    const pending = new Set();  // "cx,cz" em requisição
+    // ================= Painel de opções =================
+    const renderDistInput = document.getElementById('render-dist');
+    const renderDistVal = document.getElementById('render-dist-val');
+    renderDistInput.addEventListener('input', () => {
+      RENDER_DIST_CHUNKS = parseInt(renderDistInput.value, 10);
+      renderDistVal.textContent = RENDER_DIST_CHUNKS + ' chunks';
+    });
 
-    const boxGeom = new THREE.BoxGeometry(1, 1, 1);
-    const sharedMaterial = new THREE.MeshLambertMaterial();
-    let visibleVoxels = 0;
+    const flySpeedInput = document.getElementById('fly-speed');
+    const flySpeedVal = document.getElementById('fly-speed-val');
+    flySpeedInput.addEventListener('input', () => {
+      flySpeed = parseInt(flySpeedInput.value, 10);
+      flySpeedVal.textContent = flySpeed + ' blocos/s';
+    });
 
-    function worldToChunk(x, z) { return [Math.floor(x / CHUNK), Math.floor(z / CHUNK)]; }
+    const streamingToggle = document.getElementById('toggle-streaming');
+    streamingToggle.addEventListener('click', () => {
+      dynamicStreamingEnabled = !dynamicStreamingEnabled;
+      streamingToggle.textContent = dynamicStreamingEnabled ? 'ativado' : 'desativado (fixo)';
+      streamingToggle.classList.toggle('active', dynamicStreamingEnabled);
+    });
 
-    function loadChunk(cx, cz) {
-      const key = cx + ',' + cz;
-      if (loaded.has(key) || pending.has(key)) return;
-      pending.add(key);
-      fetch('/chunk/' + cx + '/' + cz)
-        .then((r) => r.json())
-        .then((data) => {
-          pending.delete(key);
-          if (loaded.has(key)) return; // já carregado nesse meio-tempo (não deveria, mas por garantia)
-          const voxels = data.voxels || [];
-          if (voxels.length === 0) { loaded.set(key, null); return; }
+    document.getElementById('btn-recenter').addEventListener('click', () => {
+      camera.position.set(0, info.spawnY, 0);
+      if (mode === 'orbit') { orbitControls.target.set(0, info.spawnY - 20, 0); orbitControls.update(); }
+    });
 
-          const mesh = new THREE.InstancedMesh(boxGeom, sharedMaterial, voxels.length);
-          const matrix = new THREE.Matrix4();
-          const color = new THREE.Color();
-          for (let i = 0; i < voxels.length; i++) {
-            const [x, y, z, r, g, b] = voxels[i];
-            matrix.setPosition(x - originX + 0.5, y + 0.5, z - originZ + 0.5);
-            mesh.setMatrixAt(i, matrix);
-            mesh.setColorAt(i, color.setRGB(r / 255, g / 255, b / 255));
-          }
-          mesh.instanceMatrix.needsUpdate = true;
-          if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-          scene.add(mesh);
-          loaded.set(key, mesh);
-          visibleVoxels += voxels.length;
-        })
-        .catch(() => { pending.delete(key); });
-    }
-
-    function unloadChunk(key) {
-      const mesh = loaded.get(key);
-      if (mesh) {
-        scene.remove(mesh);
-        mesh.dispose();
-        visibleVoxels -= mesh.count;
-      }
-      loaded.delete(key);
-    }
-
-    function updateChunks() {
-      const px = camera.position.x + originX;
-      const pz = camera.position.z + originZ;
-      const [ccx, ccz] = worldToChunk(px, pz);
-
-      for (let dz = -RENDER_DIST_CHUNKS; dz <= RENDER_DIST_CHUNKS; dz++) {
-        for (let dx = -RENDER_DIST_CHUNKS; dx <= RENDER_DIST_CHUNKS; dx++) {
-          if (dx * dx + dz * dz > RENDER_DIST_CHUNKS * RENDER_DIST_CHUNKS) continue;
-          loadChunk(ccx + dx, ccz + dz);
-        }
-      }
-      for (const key of Array.from(loaded.keys())) {
-        const [cx, cz] = key.split(',').map(Number);
-        const dx = cx - ccx, dz = cz - ccz;
-        if (dx * dx + dz * dz > UNLOAD_DIST_CHUNKS * UNLOAD_DIST_CHUNKS) unloadChunk(key);
-      }
-
-      document.getElementById('chunk-count').textContent = loaded.size.toLocaleString('pt-BR');
-      document.getElementById('voxel-count').textContent = Math.max(0, visibleVoxels).toLocaleString('pt-BR');
-    }
-
-    let lastChunkScan = 0;
+    // ================= Loop principal =================
     let lastFrame = performance.now();
+    let lastStreamRefresh = 0;
     const velocity = new THREE.Vector3();
     const forward = new THREE.Vector3();
     const right = new THREE.Vector3();
@@ -243,7 +382,9 @@
       const dt = Math.min((now - lastFrame) / 1000, 0.1);
       lastFrame = now;
 
-      if (controls.isLocked) {
+      if (mode === 'orbit') {
+        orbitControls.update();
+      } else {
         camera.getWorldDirection(forward);
         forward.y = 0; forward.normalize();
         right.copy(forward).cross(camera.up);
@@ -256,27 +397,39 @@
         if (velocity.lengthSq() > 0) velocity.normalize();
         if (move.up) velocity.y += 1;
         if (move.down) velocity.y -= 1;
-
-        camera.position.addScaledVector(velocity, speed * dt);
+        camera.position.addScaledVector(velocity, flySpeed * dt);
       }
 
-      if (now - lastChunkScan > 200) {
-        lastChunkScan = now;
-        updateChunks();
-        const wx = Math.round(camera.position.x + originX);
-        const wy = Math.round(camera.position.y);
-        const wz = Math.round(camera.position.z + originZ);
-        document.getElementById('pos-x').textContent = wx;
-        document.getElementById('pos-y').textContent = wy;
-        document.getElementById('pos-z').textContent = wz;
+      if (now - lastStreamRefresh > 250) {
+        lastStreamRefresh = now;
+        const wx = camera.position.x + originX;
+        const wz = camera.position.z + originZ;
+        refreshStreaming(wx, wz);
+        document.getElementById('pos-x').textContent = Math.round(wx);
+        document.getElementById('pos-y').textContent = Math.round(camera.position.y);
+        document.getElementById('pos-z').textContent = Math.round(wz);
       }
 
       renderer.render(scene, camera);
     }
 
-    updateChunks();
+    // ================= Inicialização =================
+    camera.position.set(0, info.spawnY, 0);
+    orbitControls.target.set(0, info.spawnY - 20, 0);
+    orbitControls.update();
+    setMode('orbit');
+
+    const [spawnCx, spawnCz] = worldToChunk(info.spawnX, info.spawnZ);
+    renderDistInput.value = RENDER_DIST_CHUNKS;
+    renderDistVal.textContent = RENDER_DIST_CHUNKS + ' chunks';
+
+    // Esconde a tela de carregamento cheia ANTES do pré-carregamento em
+    // massa começar — assim a barra de progresso (canto inferior direito)
+    // fica visível por cima da cena, e dá pra ver os chunks aparecendo ao
+    // vivo em vez de olhar pra uma tela preta sólida até tudo terminar.
     loading.style.display = 'none';
     requestAnimationFrame(animate);
+    eagerPreload(spawnCx, spawnCz, RENDER_DIST_CHUNKS);
   }
 })();
 </script>
