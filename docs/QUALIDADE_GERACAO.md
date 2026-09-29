@@ -536,3 +536,158 @@ Mesmos comandos da seção "Como reproduzir a validação". Testes novos:
 dominância institucional > loja, unidade indoor enriquecendo o shopping),
 `sports::tests` (classificação), `oriented_frame::tests`,
 `railways::tests` (offset por tag), `stations::tests` (índice de trilhos).
+
+---
+
+# Parte III — Vias entre provedores: conflação por linha, pistas duplicadas e sinalização
+
+Terceira rodada, feita no servidor Oracle sobre o branch da nuvem, trazendo
+para esta arquitetura o que uma auditoria paralela de vias (branch local
+`vias-auditoria-oracle`) tinha encontrado e que a Parte I/II ainda não cobria.
+Tudo medido no recorte `--bbox -15.825,-47.985,-15.806,-47.965` (EPTG + norte
+do Guará I), gerado pelo commit da nuvem (`a8aa071`) e por esta versão sobre
+os MESMOS arquivos (`--file` OSM + `--local-geojson` GDF + `--terrain`).
+
+| | nuvem (`a8aa071`) | esta versão |
+|---|---|---|
+| vias do OSM desenhadas | 227 | 475 |
+| "prédios" do GDF | 4.135 | 3.744 |
+| prédios do OSM (antes substituídos por "prédio" falso de calçada/lote) | 4 | 78 |
+| células de eixo amarelo no chão¹ | 0 | 6.368 |
+| células de sinalização branca no chão¹ | 28.297 | 43.852 |
+
+¹ Contadas lendo os `.mca` numa amostra de 1 a cada 4 chunks (1 de cada 2 em
+cada eixo), no bloco logo acima da camada de terra da Scanline.
+
+## 16. Merge de LINHAS: a caixa envolvente não diz se é a mesma rua
+
+**Sintoma.** Ruas do Guará desenhadas duas vezes (o eixo do GDF e a mesma rua
+do OSM lado a lado, com dois eixos a 1–2 blocos um do outro) e, ao mesmo
+tempo, vias do OSM que sumiam sem ter duplicata: ruas de serviço, calçadas e
+trechos da própria EPTG/EPIA.
+
+**Causa.** A regra do §1 (≥50% do AABB da candidata dentro do AABB de uma
+feature de outra fonte e maior prioridade) é boa para áreas, mas para linhas
+falha nos dois sentidos. A caixa de uma avenida diagonal do GDF cobre o
+quarteirão inteiro e "engole" tudo o que está dentro dela; e uma rua longa do
+OSM quase nunca tem a caixa ≥50% dentro da de um único trecho curto do eixo do
+GDF (o eixo é segmentado a cada cruzamento). Medido no Guará I+II inteiro
+(`osm_highways.json` × `gdf_guara_full_merged.geojson`, amostras a cada 4
+blocos): a regra descartava **1.711 vias do OSM que não eram a mesma rua**
+(779 de serviço, 546 calçadas, 235 residenciais, 8 trechos de motorway e 8 de
+trunk) — e cada uma doava suas tags (`footway`, `service`...) à avenida que a
+"cobriu" — e deixava passar **457 duplicatas reais**. Além disso a herança de
+semântica (§15) copiava `__osm_node_tags__`, as tags POR NÓ (portas,
+travessias) que são posicionais: no vencedor, de outra geometria, elas caíam
+nos nós errados.
+
+**Distâncias medidas (OSM → eixo GDF mais próximo, mediana):**
+residential/tertiary/secondary/primary 1,2–2,0 blocos (a mesma rua);
+motorway/trunk 23–36 (EPTG, EPIA e Estrada Parque Guará não existem no eixo de
+arruamento do GDF); service/footway/cycleway 20–50.
+
+**Correção (`providers/mod.rs`).** Linhas (`LineString`) saem da regra por
+AABB e passam por `LineIndex::conflate`: a candidata é a mesma via se ≥70% do
+seu comprimento está a ≤6 blocos de linhas já aceitas (de outra fonte, maior
+prioridade, mesmo grupo) — somando TODOS os trechos, não um só. A duplicata:
+- é descartada e empresta a semântica que falta (`inherit_line_semantics`)
+  só às linhas que ela cobre em ≥50% (a rua transversal não herda o nome); a
+  classe `highway` que o tradutor do GDF INFERE do número de faixas
+  (`gdf:nrfaixas`) é trocada pela classe curada do OSM, e a inferida fica em
+  `gdf:highway_por_nrfaixas`;
+- se carrega estrutura (`bridge`/`tunnel`/`layer`), é ela que fica: os eixos
+  do GDF que ela cobre inteiros saem, porque o eixo não representa tabuleiro
+  nem túnel.
+Linha × área nunca colide; áreas e pontos seguem a regra do §1.
+`NODE_TAGS_ATTR` entrou em `NON_INHERITABLE_KEYS`.
+
+**Verificação.** `providers::line_conflation_tests` (5 testes): rua do OSM
+sobre dois trechos do GDF vira uma rua só e empresta nome/sentido/classe sem
+sobrescrever as faixas medidas; serviço e calçada dentro da caixa de uma
+avenida diagonal sobrevivem; pista paralela a 15 blocos e rua transversal
+sobrevivem sem herdar nome; ponte do OSM substitui o eixo do GDF; tags por nó
+não são herdadas.
+
+## 17. Pista de mão única de avenida duplicada ganhava canteiro próprio
+
+**Sintoma.** Na EPTG, grama e faixas de calçada DENTRO do canteiro entre as
+pistas; a mureta New Jersey da expressa, quando aparecia, cortava uma das
+mãos.
+
+**Causa.** EPTG, EPIA, Eixão, L2 e marginais estão no OSM como DUAS vias
+`oneway=yes`, uma por pista; o canteiro real é o vão entre elas. `highways.rs`
+aplicava o canteiro da tipologia (`physical_median_radius`: 6 no Eixão, 10 no
+Monumental, mureta de 1 na expressa) e o passeio dentro de CADA via. Com
+largura vinda de `lanes`, o canteiro ainda "comia" as faixas centrais.
+
+**Correção (`highways.rs`).** Via de mão única não tem canteiro próprio; se a
+tipologia é de pista dupla, também não ganha passeio (não se sabe de que lado
+fica o canteiro, e o passeio de um lado cairia dentro dele). Via de mão dupla
+com `dual_carriageway=yes` (`nrpistas=2` do GDF) ganha canteiro de 2. Quando a
+largura vem de `width`/`lanes`, o canteiro soma a ela. `kerb=no` (OSM, ou
+`meiofio=Não` do GDF) deixa a guia rente, sem a meia laje.
+
+## 18. A sinalização horizontal nunca era pintada
+
+**Sintoma.** Nenhuma rua com eixo amarelo nem divisória de faixa (0 células de
+`YELLOW_CONCRETE` no recorte); só a demarcação de vaga aparecia.
+
+**Causa.** O leito é escrito antes da tinta, pelo mesmo elemento e com a mesma
+precedência (§13); eixo, divisórias, bordos e zebra escreviam com
+`set_block_absolute(..., None, None)` — "empate = o primeiro fica" —, e o
+leito já estava lá. A vaga aparecia porque é escolhida como o próprio bloco do
+leito. Na EPTG o tracejado só existia por acaso, no ramo "com canteiro" (a tinta
+chegava antes do asfalto naquela célula); tirar o canteiro das pistas de mão
+única (§17) o fazia sumir também.
+
+**Correção.** `paint_marking`: toda sinalização pinta com whitelist = o leito
+da própria via. Aparece sobre o asfalto, e nunca cai em calçada, meio-fio,
+prédio ou via de outro revestimento.
+
+## 19. Camadas curadas do GDF caíam no fallback `building=yes`
+
+**Sintoma.** Fileiras de "prédios" rasos ao longo das ruas do Guará e, em 22
+lotes, um "prédio" do tamanho do lote inteiro (no recorte, um deles cobria
+toda a margem sul da EPTG).
+
+**Causa.** `GeoJsonProvider::translate_attributes` termina com um fallback
+"sem tag primária ⇒ prédio", útil para footprints brutos da Codeplan. Mas a
+camada "Passeio e ou Calçadas" mapeia a faixa de passeio mesmo onde NÃO há
+calçada (`calcada=Não`: 1.263; "A SER PREENCHIDO": 1.054), e 22 lotes não têm
+`PN_USO` (a correção `uso_to_tag` do §12 só vale quando há uso): 2.339 feições
+sem tag primária que viravam prédio — e, com prioridade 1, ainda substituíam
+prédios reais do OSM no merge.
+
+**Correção (`geojson_provider.rs`).** Feição de camada curada (`_gdf_layer`)
+nunca cai no fallback — a camada já diz o que ela é; sem tag primária, não é
+desenhada. A camada `edificacao` passa a receber `building=yes` de base (antes
+vinha do fallback quando `ED_NUM_PAV` faltava). Junto, o tradutor aproveita as
+colunas reais do eixo de arruamento: `nrfaixas`→`lanes` (a largura sai da
+mesma regra do OSM), `nrpistas=2`→`dual_carriageway=yes`,
+`tipopavimentacao`/`revestimento`→`surface` (Asfalto, Paralelepípedo,
+Ladrilho, Placa de concreto, Pedra irregular; leito natural e revestimento
+solto vencem a pavimentação declarada), `meiofio=Não`→`kerb=no`; calçada
+`Sim` ganha `area=yes` e é preenchida em vez de riscada só no contorno. Em
+`highways.rs`, calçada em área usa o andesito do passeio e placa de concreto
+o cinza-claro do concreto (antes caía no cinza do leito e se confundia com a
+pista).
+
+**Verificação.** `providers::geojson_provider::tests` (5 testes): faixa sem
+calçada não é prédio; calçada construída é área com a pavimentação real;
+edificação sem pavimentos segue sendo prédio; footprint sem camada mantém o
+fallback; eixo carrega faixas, pistas, revestimento e guia.
+
+## 20. Lint do toolchain novo (`floodfill_cache.rs`)
+
+`chunks_exact(2)` com tamanho constante vira `as_chunks::<2>()` (estável desde
+1.88; o projeto declara `rust-version = 1.89`). O nightly 1.99 do servidor já
+acusa esse lint em `clippy -D warnings`; o `stable` do CI passaria a acusar
+também.
+
+## Validação da Parte III
+
+`cargo fmt --check`; `cargo clippy --all-targets --all-features -- -D
+warnings` e `--no-default-features`; `cargo test` nos dois (133 e 126
+testes). Mundos do recorte gerados pelas duas versões e medidos lendo as
+regiões `.mca` (material no nível do chão por coluna) e o
+`provenance_summary.json`.

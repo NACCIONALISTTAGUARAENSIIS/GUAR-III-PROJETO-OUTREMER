@@ -22,7 +22,7 @@ pub mod wfs_provider;
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::LLBBox;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 // ============================================================================
@@ -493,14 +493,59 @@ impl ProviderManager {
 
         let mut accepted_features: Vec<Feature> = Vec::with_capacity(features.len());
         let mut superseded = 0usize;
+        let mut replaced_by_structure = 0usize;
 
-        // Grid de indexação espacial (Baldes de 256x256 blocos)
+        // Grid de indexação espacial (Baldes de 256x256 blocos) — só áreas e
+        // pontos. Linhas têm índice e regra próprios (`LineIndex`).
         const GRID_SIZE: i32 = 256;
         let mut spatial_grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        let mut lines = LineIndex::default();
+        // Linhas aceitas que depois foram substituídas por uma via com estrutura
+        // (ponte/túnel/`layer`) de menor prioridade — ver `LineIndex`.
+        let mut removed: HashSet<usize> = HashSet::new();
 
         for new_feature in features {
             let dedup_eligible = new_feature.semantic_group != SemanticGroup::Terrain
                 && new_feature.semantic_group != SemanticGroup::Infrastructure;
+
+            // LINHAS (vias, trilhos, cercas, cursos d'água): a regra por AABB não
+            // serve. A caixa de uma avenida diagonal cobre um bairro inteiro —
+            // medido no Guará, ela descartava 1.711 vias do OSM que NÃO eram a
+            // mesma rua (779 de serviço, 546 calçadas, trechos da EPTG/EPIA) — e
+            // uma rua longa do OSM quase nunca tem a caixa ≥50% dentro da de um
+            // trecho curto do eixo do GDF, então 457 ruas saíam desenhadas duas
+            // vezes. Linha é "a mesma" que outra quando CORRE junto dela.
+            if dedup_eligible && line_points(&new_feature).is_some() {
+                match lines.conflate(&new_feature, &accepted_features, &removed) {
+                    LineMatch::Distinct => {}
+                    LineMatch::Duplicate(targets) if has_structure(&new_feature) => {
+                        // O eixo do GDF não sabe representar tabuleiro nem túnel:
+                        // a via com estrutura fica e substitui os eixos que cobre.
+                        for (idx, reverse_coverage) in targets {
+                            if reverse_coverage >= LINE_MIN_COVERAGE
+                                && !has_structure(&accepted_features[idx])
+                            {
+                                removed.insert(idx);
+                                replaced_by_structure += 1;
+                            }
+                        }
+                    }
+                    LineMatch::Duplicate(targets) => {
+                        for (idx, reverse_coverage) in targets {
+                            // Só empresta semântica a quem ela cobre de fato: a rua
+                            // transversal numa interseção não herda o nome.
+                            if reverse_coverage >= LINE_ENRICH_COVERAGE {
+                                inherit_line_semantics(&mut accepted_features[idx], &new_feature);
+                            }
+                        }
+                        superseded += 1;
+                        continue;
+                    }
+                }
+                lines.insert(accepted_features.len(), &new_feature);
+                accepted_features.push(new_feature);
+                continue;
+            }
 
             let mut is_superseded = false;
 
@@ -560,7 +605,19 @@ impl ProviderManager {
                 superseded
             );
         }
+        if replaced_by_structure > 0 {
+            println!(
+                "[INFO] Merge Intelligence: {} eixo(s) substituídos por via com ponte/túnel de outro provedor.",
+                replaced_by_structure
+            );
+        }
 
+        let mut accepted_features: Vec<Feature> = accepted_features
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !removed.contains(i))
+            .map(|(_, f)| f)
+            .collect();
         accepted_features.shrink_to_fit();
         accepted_features
     }
@@ -600,7 +657,18 @@ pub(crate) fn aabb_coverage_ratio(inner: (i32, i32, i32, i32), outer: (i32, i32,
 /// Ver `ProviderManager::resolve_collisions` para a regra completa.
 /// Chaves que descrevem a ORIGEM/medição de uma feature, não o objeto — nunca
 /// são herdadas (a proveniência do vencedor tem que continuar verdadeira).
-const NON_INHERITABLE_KEYS: &[&str] = &["source", "density", "layer_name", "id", "osm_id"];
+///
+/// `NODE_TAGS_ATTR` também fica de fora: são tags POR NÓ, casadas pela posição
+/// do nó na geometria (portas, travessias). Herdadas por um vencedor de outra
+/// geometria, cairiam nos nós errados dele.
+const NON_INHERITABLE_KEYS: &[&str] = &[
+    "source",
+    "density",
+    "layer_name",
+    "id",
+    "osm_id",
+    NODE_TAGS_ATTR,
+];
 
 /// Copia para `winner` toda chave semântica de `loser` que o vencedor não
 /// tem. O vencedor mantém geometria, prioridade e tudo que já declarava; a
@@ -623,6 +691,179 @@ fn inherit_missing_semantics(winner: &mut Feature, loser: &Feature) {
             .entry("merged:source".to_string())
             .or_insert_with(|| loser.source.clone());
     }
+}
+
+// ============================================================================
+// CONFLAÇÃO DE LINHAS ENTRE PROVEDORES
+// ============================================================================
+
+/// Distância (blocos) abaixo da qual uma linha "corre junto" de outra. Medido
+/// no Guará I+II (OSM × eixo de arruamento do GDF, amostras a cada 4 blocos):
+/// a mesma rua fica a 1,2–2,0 blocos (mediana, residential a primary); vias
+/// paralelas distintas (as duas pistas da EPTG, marginal × expressa) ficam a
+/// 10+ blocos; EPTG/EPIA/serviço/calçadas, que não existem no GDF, a 20–50.
+const LINE_TOLERANCE: f64 = 6.0;
+/// Fração mínima do comprimento da candidata junto de linhas aceitas para ela
+/// ser a mesma (uma rua que só CRUZA outra fica junto dela em poucas amostras).
+const LINE_MIN_COVERAGE: f64 = 0.7;
+/// Fração mínima de uma linha aceita coberta pela duplicata para herdar dela.
+const LINE_ENRICH_COVERAGE: f64 = 0.5;
+const LINE_SAMPLE_STEP: f64 = 4.0;
+const LINE_CELL: i32 = 32;
+
+fn line_points(feature: &Feature) -> Option<&[XZPoint]> {
+    match &feature.geometry {
+        GeometryType::LineString(pts) if pts.len() >= 2 => Some(pts),
+        _ => None,
+    }
+}
+
+/// Ponte, túnel ou nível diferente do chão.
+fn has_structure(feature: &Feature) -> bool {
+    let tag = |k: &str| feature.get_tag(k).map(|s| s.as_str());
+    matches!(tag("bridge"), Some(v) if v != "no")
+        || matches!(tag("tunnel"), Some(v) if v != "no")
+        || matches!(tag("layer"), Some(v) if v.trim() != "0")
+}
+
+fn samples_along(pts: &[XZPoint]) -> Vec<(f64, f64)> {
+    let mut out = Vec::new();
+    for pair in pts.windows(2) {
+        let (ax, az) = (pair[0].x as f64, pair[0].z as f64);
+        let (bx, bz) = (pair[1].x as f64, pair[1].z as f64);
+        let len = ((bx - ax).powi(2) + (bz - az).powi(2)).sqrt();
+        let n = ((len / LINE_SAMPLE_STEP) as usize).max(1);
+        for k in 0..n {
+            let t = k as f64 / n as f64;
+            out.push((ax + t * (bx - ax), az + t * (bz - az)));
+        }
+    }
+    let last = pts[pts.len() - 1];
+    out.push((last.x as f64, last.z as f64));
+    out
+}
+
+fn dist_to_segment((px, pz): (f64, f64), a: XZPoint, b: XZPoint) -> f64 {
+    let (ax, az, bx, bz) = (a.x as f64, a.z as f64, b.x as f64, b.z as f64);
+    let (dx, dz) = (bx - ax, bz - az);
+    let len2 = dx * dx + dz * dz;
+    let t = if len2 == 0.0 {
+        0.0
+    } else {
+        (((px - ax) * dx + (pz - az) * dz) / len2).clamp(0.0, 1.0)
+    };
+    ((px - (ax + t * dx)).powi(2) + (pz - (az + t * dz)).powi(2)).sqrt()
+}
+
+fn cells_around(a: XZPoint, b: XZPoint, pad: i32) -> impl Iterator<Item = (i32, i32)> {
+    let min_cx = (a.x.min(b.x) - pad).div_euclid(LINE_CELL);
+    let max_cx = (a.x.max(b.x) + pad).div_euclid(LINE_CELL);
+    let min_cz = (a.z.min(b.z) - pad).div_euclid(LINE_CELL);
+    let max_cz = (a.z.max(b.z) + pad).div_euclid(LINE_CELL);
+    (min_cx..=max_cx).flat_map(move |cx| (min_cz..=max_cz).map(move |cz| (cx, cz)))
+}
+
+enum LineMatch {
+    Distinct,
+    /// Linhas aceitas tocadas e quanto de cada uma a candidata cobre.
+    Duplicate(Vec<(usize, f64)>),
+}
+
+/// Segmentos das linhas aceitas, por célula de 32 blocos.
+#[derive(Default)]
+struct LineIndex {
+    cells: HashMap<(i32, i32), Vec<(usize, usize)>>,
+}
+
+impl LineIndex {
+    fn insert(&mut self, idx: usize, feature: &Feature) {
+        if let Some(pts) = line_points(feature) {
+            for (seg, w) in pts.windows(2).enumerate() {
+                for cell in cells_around(w[0], w[1], 0) {
+                    self.cells.entry(cell).or_default().push((idx, seg));
+                }
+            }
+        }
+    }
+
+    /// Mesma regra de precedência das áreas (outra fonte, prioridade
+    /// estritamente maior, mesmo grupo), com cobertura medida ao longo da linha
+    /// e somada sobre TODAS as linhas aceitas — uma via do OSM costuma correr
+    /// sobre vários trechos curtos do eixo do GDF.
+    fn conflate(
+        &self,
+        candidate: &Feature,
+        accepted: &[Feature],
+        removed: &HashSet<usize>,
+    ) -> LineMatch {
+        let pts = line_points(candidate).expect("conflate só recebe LineString");
+        let samples = samples_along(pts);
+        let pad = LINE_TOLERANCE.ceil() as i32;
+        let mut covered = 0usize;
+        let mut touched: HashSet<usize> = HashSet::new();
+        for &(sx, sz) in &samples {
+            let p = XZPoint::new(sx.round() as i32, sz.round() as i32);
+            let mut hit = false;
+            for cell in cells_around(p, p, pad) {
+                for &(idx, seg) in self.cells.get(&cell).into_iter().flatten() {
+                    let other = &accepted[idx];
+                    if removed.contains(&idx)
+                        || other.source == candidate.source
+                        || other.priority >= candidate.priority
+                        || other.semantic_group != candidate.semantic_group
+                    {
+                        continue;
+                    }
+                    let opts = line_points(other).expect("índice só guarda linhas");
+                    if dist_to_segment((sx, sz), opts[seg], opts[seg + 1]) <= LINE_TOLERANCE {
+                        hit = true;
+                        touched.insert(idx);
+                    }
+                }
+            }
+            covered += usize::from(hit);
+        }
+        if (covered as f64) < LINE_MIN_COVERAGE * samples.len() as f64 {
+            return LineMatch::Distinct;
+        }
+        let targets = touched
+            .into_iter()
+            .map(|idx| {
+                let target_samples = samples_along(line_points(&accepted[idx]).unwrap());
+                let near = target_samples
+                    .iter()
+                    .filter(|&&s| {
+                        pts.windows(2)
+                            .any(|w| dist_to_segment(s, w[0], w[1]) <= LINE_TOLERANCE)
+                    })
+                    .count();
+                (idx, near as f64 / target_samples.len() as f64)
+            })
+            .collect();
+        LineMatch::Duplicate(targets)
+    }
+}
+
+/// `inherit_missing_semantics` para linhas, com uma exceção: a classe
+/// `highway` que o tradutor do GDF INFERE do número de faixas (`gdf:nrfaixas`
+/// presente) é trocada pela classe curada da duplicata, e a inferida fica
+/// registrada em `gdf:highway_por_nrfaixas`. Classe inferida não é dado.
+fn inherit_line_semantics(winner: &mut Feature, loser: &Feature) {
+    if winner.attributes.contains_key("gdf:nrfaixas") {
+        if let Some(curated) = loser.attributes.get("highway") {
+            if let Some(inferred) = winner
+                .attributes
+                .insert("highway".to_string(), curated.clone())
+            {
+                if inferred != *curated {
+                    winner
+                        .attributes
+                        .insert("gdf:highway_por_nrfaixas".to_string(), inferred);
+                }
+            }
+        }
+    }
+    inherit_missing_semantics(winner, loser);
 }
 
 fn should_supersede(accepted: &Feature, candidate: &Feature) -> bool {
@@ -1052,5 +1293,193 @@ mod tests {
         ];
         let kept = manager.resolve_collisions(features);
         assert_eq!(ids(&kept), vec![1]);
+    }
+}
+
+#[cfg(test)]
+mod line_conflation_tests {
+    use super::*;
+
+    fn line(
+        id: u64,
+        source: &str,
+        priority: u8,
+        pts: &[(i32, i32)],
+        tags: &[(&str, &str)],
+    ) -> Feature {
+        Feature::new(
+            id,
+            SemanticGroup::Highway,
+            tags.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            GeometryType::LineString(pts.iter().map(|&(x, z)| XZPoint::new(x, z)).collect()),
+            source.to_string(),
+            priority,
+        )
+    }
+
+    fn resolve(features: Vec<Feature>) -> Vec<Feature> {
+        ProviderManager::new().resolve_collisions(features)
+    }
+
+    /// A mesma rua no OSM (1–2 blocos ao lado, sobre DOIS trechos do eixo do
+    /// GDF) sai uma vez só; os trechos do GDF recebem nome, sentido e a classe
+    /// curada, sem perder as faixas medidas.
+    #[test]
+    fn osm_street_over_several_gdf_segments_is_one_street() {
+        let out = resolve(vec![
+            line(
+                1,
+                "GDF_GeoJSON",
+                1,
+                &[(0, 0), (100, 0)],
+                &[
+                    ("highway", "tertiary"),
+                    ("lanes", "2"),
+                    ("gdf:nrfaixas", "2"),
+                ],
+            ),
+            line(
+                2,
+                "GDF_GeoJSON",
+                1,
+                &[(100, 0), (200, 0)],
+                &[
+                    ("highway", "tertiary"),
+                    ("lanes", "2"),
+                    ("gdf:nrfaixas", "2"),
+                ],
+            ),
+            line(
+                3,
+                "osm",
+                10,
+                &[(0, 2), (200, 1)],
+                &[
+                    ("highway", "residential"),
+                    ("name", "QE 38"),
+                    ("oneway", "yes"),
+                    ("lanes", "3"),
+                ],
+            ),
+        ]);
+        assert_eq!(out.len(), 2);
+        for gdf in &out {
+            assert_eq!(gdf.get_tag("name").unwrap(), "QE 38");
+            assert_eq!(gdf.get_tag("oneway").unwrap(), "yes");
+            assert_eq!(gdf.get_tag("lanes").unwrap(), "2");
+            assert_eq!(gdf.get_tag("highway").unwrap(), "residential");
+            assert_eq!(gdf.get_tag("gdf:highway_por_nrfaixas").unwrap(), "tertiary");
+        }
+    }
+
+    /// Regressão medida no Guará: a caixa de uma avenida DIAGONAL do GDF cobre
+    /// o quarteirão inteiro, e a regra por AABB descartava a rua de serviço e a
+    /// calçada do OSM que só estavam dentro da caixa.
+    #[test]
+    fn roads_inside_the_box_of_a_diagonal_avenue_survive() {
+        let out = resolve(vec![
+            line(
+                1,
+                "GDF_GeoJSON",
+                1,
+                &[(0, 0), (300, 300)],
+                &[("highway", "secondary")],
+            ),
+            line(
+                2,
+                "osm",
+                10,
+                &[(200, 40), (260, 40)],
+                &[("highway", "service")],
+            ),
+            line(
+                3,
+                "osm",
+                10,
+                &[(60, 200), (60, 260)],
+                &[("highway", "footway")],
+            ),
+        ]);
+        assert_eq!(out.len(), 3);
+        assert!(out[0].get_tag("service").is_none() && out[0].get_tag("footway").is_none());
+    }
+
+    #[test]
+    fn parallel_carriageway_and_crossing_street_are_kept() {
+        let out = resolve(vec![
+            line(
+                1,
+                "GDF_GeoJSON",
+                1,
+                &[(0, 0), (200, 0)],
+                &[("highway", "tertiary")],
+            ),
+            line(2, "osm", 10, &[(0, 15), (200, 15)], &[("highway", "trunk")]),
+            line(
+                3,
+                "osm",
+                10,
+                &[(100, -100), (100, 100)],
+                &[("highway", "residential"), ("name", "Rua X")],
+            ),
+        ]);
+        assert_eq!(out.len(), 3);
+        assert!(out
+            .iter()
+            .find(|f| f.id == 1)
+            .unwrap()
+            .get_tag("name")
+            .is_none());
+    }
+
+    #[test]
+    fn osm_bridge_replaces_the_gdf_axis_it_covers() {
+        let out = resolve(vec![
+            line(
+                1,
+                "GDF_GeoJSON",
+                1,
+                &[(0, 0), (80, 0)],
+                &[("highway", "secondary")],
+            ),
+            line(
+                2,
+                "osm",
+                10,
+                &[(0, 1), (80, 1)],
+                &[("highway", "secondary"), ("bridge", "yes"), ("layer", "1")],
+            ),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].get_tag("bridge").unwrap(), "yes");
+    }
+
+    /// Tags por nó são posicionais: herdadas por outra geometria, cairiam nos
+    /// nós errados (a travessia do nó 3 do OSM no nó 3 do eixo do GDF).
+    #[test]
+    fn per_node_tags_are_never_inherited() {
+        let out = resolve(vec![
+            line(
+                1,
+                "GDF_GeoJSON",
+                1,
+                &[(0, 0), (100, 0)],
+                &[("highway", "tertiary")],
+            ),
+            line(
+                2,
+                "osm",
+                10,
+                &[(0, 1), (50, 1), (100, 1)],
+                &[
+                    ("highway", "residential"),
+                    (NODE_TAGS_ATTR, "[null,{\"highway\":\"crossing\"},null]"),
+                ],
+            ),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].get_tag(NODE_TAGS_ATTR).is_none());
     }
 }

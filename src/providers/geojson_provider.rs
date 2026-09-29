@@ -66,9 +66,16 @@ impl GeoJsonProvider {
                 "arruamento" => {
                     tags.insert("highway".to_string(), "unclassified".to_string());
                 }
+                // A camada É de edificações: cada feição é um prédio mesmo sem
+                // `ED_NUM_PAV` preenchido (antes isso vinha do fallback abaixo, que
+                // não vale mais para camadas curadas).
+                "edificacao" => {
+                    tags.insert("building".to_string(), "yes".to_string());
+                }
                 _ => {}
             }
         }
+        let curated_layer = properties.get("_gdf_layer").is_some();
 
         let mut uso_raw: Option<String> = None;
         if let Some(obj) = properties.as_object() {
@@ -147,17 +154,79 @@ impl GeoJsonProvider {
                                 "unclassified"
                             };
                             tags.insert("highway".to_string(), refined.to_string());
+                            // Mesmo dialeto do OSM: `highways.rs` deriva a largura da
+                            // pista de `lanes`, qualquer que seja a fonte da via.
+                            if faixas > 0 {
+                                tags.insert("lanes".to_string(), faixas.to_string());
+                            }
                         }
+                        tags.insert("gdf:nrfaixas".to_string(), val_str);
+                    }
+                    // `NRPISTAS=2`: UMA linha representa uma via de pista dupla (há
+                    // canteiro entre as pistas). É o `dual_carriageway` do OSM.
+                    "NRPISTAS" => {
+                        if val_str == "2" {
+                            tags.insert("dual_carriageway".to_string(), "yes".to_string());
+                        }
+                        tags.insert("gdf:nrpistas".to_string(), val_str);
+                    }
+                    // Revestimento do eixo. Leito natural/solto vence qualquer
+                    // `TIPOPAVIMENTACAO`: as colunas chegam em ordem arbitrária, por
+                    // isso a pavimentação usa `or_insert` e o revestimento, `insert`.
+                    "REVESTIMENTO" => {
+                        let r = val_str.to_lowercase();
+                        if r.contains("leito natural") || r.starts_with("sem revestimento") {
+                            tags.insert("surface".to_string(), "ground".to_string());
+                        } else if r.contains("primário") || r.contains("solto") {
+                            tags.insert("surface".to_string(), "gravel".to_string());
+                        }
+                        tags.insert("gdf:revestimento".to_string(), val_str);
+                    }
+                    // `TIPOPAVIMENTACAO` (arruamento) e `PAVIMENTACAO` (calçadas),
+                    // valores reais do Guará: Asfalto, Paralelepípedo, Ladrilho de
+                    // concreto, Placa de concreto, Pedra irregular.
+                    "TIPOPAVIMENTACAO" | "PAVIMENTACAO" => {
+                        let p = val_str.to_lowercase();
+                        let surface = if p.contains("asfalto") {
+                            Some("asphalt")
+                        } else if p.contains("paralelep") {
+                            Some("sett")
+                        } else if p.contains("ladrilho") || p.contains("bloquete") {
+                            Some("paving_stones")
+                        } else if p.contains("placa de concreto") {
+                            Some("concrete:plates")
+                        } else if p.contains("pedra irregular") {
+                            Some("unhewn_cobblestone")
+                        } else {
+                            None
+                        };
+                        if let Some(surface) = surface {
+                            tags.entry("surface".to_string())
+                                .or_insert_with(|| surface.to_string());
+                        }
+                        tags.insert(format!("gdf:{}", col.to_lowercase()), val_str);
+                    }
+                    "MEIOFIO" => {
+                        if val_str.eq_ignore_ascii_case("não")
+                            || val_str.eq_ignore_ascii_case("nao")
+                        {
+                            tags.insert("kerb".to_string(), "no".to_string());
+                        }
+                        tags.insert("gdf:meiofio".to_string(), val_str);
                     }
                     // `CALCADA` (camada real "Passeio e ou Calçadas"): a camada mapeia a
                     // faixa ao longo da via mesmo onde NÃO há calçada construída — só
                     // "Sim" garante que a feição é uma calçada real; "Não" fica sem tag
                     // (área sem calçada, não deve virar `highway=footway` fantasma).
+                    // O polígono é o contorno da calçada: `area=yes` faz `highways.rs`
+                    // preencher a área em vez de riscar só o contorno.
                     "CALCADA" => {
                         if val_str.eq_ignore_ascii_case("sim") {
                             tags.insert("highway".to_string(), "footway".to_string());
                             tags.insert("footway".to_string(), "sidewalk".to_string());
+                            tags.insert("area".to_string(), "yes".to_string());
                         }
+                        tags.insert("gdf:calcada".to_string(), val_str);
                     }
                     "TIPO_VIA" | "CLASSE_VIA" | "HIGHWAY" => {
                         // 🚨 RECONEXÃO: ver `providers::classify_highway_from_tipo_via`
@@ -195,7 +264,14 @@ impl GeoJsonProvider {
         // `_gdf_layer` de base, sem nenhum campo próprio que batesse nos ramos
         // acima) tinha esse fallback cego sobrescrevendo o resultado correto,
         // virando "building=yes" por cima de um estacionamento ou jardim de verdade.
-        if !tags.contains_key("building")
+        //
+        // Camada curada (`_gdf_layer`) nunca cai aqui: a camada já diz o que a
+        // feição é. Sem isso, os 2.317 polígonos de "Passeio e ou Calçadas" do
+        // Guará com `calcada=Não`/"A SER PREENCHIDO" (faixa de passeio SEM calçada
+        // construída) viravam prédios enfileirados ao longo das ruas. Sem tag
+        // primária, a feição simplesmente não é desenhada.
+        if !curated_layer
+            && !tags.contains_key("building")
             && !tags.contains_key("highway")
             && !tags.contains_key("natural")
             && !tags.contains_key("landuse")
@@ -424,5 +500,72 @@ impl DataProvider for GeoJsonProvider {
             features.len()
         );
         Ok(features)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Faixa de passeio sem calçada construída não é prédio (eram 2.317 no Guará).
+    #[test]
+    fn sidewalk_strip_without_sidewalk_is_not_a_building() {
+        for calcada in ["Não", "A SER PREENCHIDO"] {
+            let tags = GeoJsonProvider::translate_attributes(&json!({
+                "_gdf_layer": "calcadas", "calcada": calcada, "pavimentacao": "Não aplicável"
+            }));
+            assert!(
+                !tags.contains_key("building"),
+                "calcada={calcada}: {tags:?}"
+            );
+            assert!(!tags.contains_key("highway"));
+        }
+    }
+
+    #[test]
+    fn built_sidewalk_is_a_filled_area_with_its_paving() {
+        let tags = GeoJsonProvider::translate_attributes(&json!({
+            "_gdf_layer": "calcadas", "calcada": "Sim", "pavimentacao": "Placa de concreto"
+        }));
+        assert_eq!(tags.get("highway").unwrap(), "footway");
+        assert_eq!(tags.get("area").unwrap(), "yes");
+        assert_eq!(tags.get("surface").unwrap(), "concrete:plates");
+    }
+
+    /// A camada de edificações continua gerando prédio mesmo sem pavimentos.
+    #[test]
+    fn building_layer_without_levels_is_still_a_building() {
+        let tags = GeoJsonProvider::translate_attributes(&json!({
+            "_gdf_layer": "edificacao", "ed_situacao": "DESCONHECIDO"
+        }));
+        assert_eq!(tags.get("building").unwrap(), "yes");
+    }
+
+    /// Sem `_gdf_layer` (footprint bruto da Codeplan), o fallback de prédio vale.
+    #[test]
+    fn uncurated_footprint_keeps_the_building_fallback() {
+        let tags = GeoJsonProvider::translate_attributes(&json!({ "objectid": 7 }));
+        assert_eq!(tags.get("building").unwrap(), "yes");
+    }
+
+    #[test]
+    fn road_axis_carries_lanes_surface_kerb_and_carriageways() {
+        let tags = GeoJsonProvider::translate_attributes(&json!({
+            "_gdf_layer": "arruamento", "nome": "RUA 11", "nrfaixas": 2, "nrpistas": 2,
+            "tipopavimentacao": "Paralelepípedo", "revestimento": "Pavimentado", "meiofio": "Não"
+        }));
+        assert_eq!(tags.get("lanes").unwrap(), "2");
+        assert_eq!(tags.get("gdf:nrfaixas").unwrap(), "2");
+        assert_eq!(tags.get("dual_carriageway").unwrap(), "yes");
+        assert_eq!(tags.get("surface").unwrap(), "sett");
+        assert_eq!(tags.get("kerb").unwrap(), "no");
+
+        // Leito natural vence a pavimentação declarada, qualquer que seja a ordem.
+        let terra = GeoJsonProvider::translate_attributes(&json!({
+            "_gdf_layer": "arruamento", "nrfaixas": 2, "tipopavimentacao": "Asfalto",
+            "revestimento": "Sem revestimento (leito natural)"
+        }));
+        assert_eq!(terra.get("surface").unwrap(), "ground");
     }
 }

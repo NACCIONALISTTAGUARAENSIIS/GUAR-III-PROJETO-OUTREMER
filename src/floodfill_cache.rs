@@ -438,9 +438,9 @@ pub fn rasterize_polygon_into(
             continue;
         }
         crossings.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        for pair in crossings.chunks_exact(2) {
-            let x_from = (pair[0] - 0.5).ceil() as i64;
-            let x_to = (pair[1] - 0.5).floor() as i64;
+        for [enter, exit] in crossings.as_chunks::<2>().0 {
+            let x_from = (enter - 0.5).ceil() as i64;
+            let x_to = (exit - 0.5).floor() as i64;
             let x_from = x_from.max(xzbbox.min_x() as i64);
             let x_to = x_to.min(xzbbox.max_x() as i64);
             for x in x_from..=x_to {

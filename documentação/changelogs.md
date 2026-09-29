@@ -1,5 +1,32 @@
 ATENÇÃO: aqui serão dispostos todos os changelogs, tudo o que foi mudado, por que, razão etc de forma extremamente documentada
 
+## 2026-09-29 — Vias entre provedores: conflação por linha, pistas duplicadas e sinalização
+
+Terceira rodada, feita no servidor Oracle sobre o trabalho da nuvem. Detalhes,
+números medidos e verificação em `docs/QUALIDADE_GERACAO.md` (Parte III, §16–§20).
+
+1. **Merge de linhas** (`providers/mod.rs`): vias, trilhos, cercas e cursos
+   d'água são deduplicados por comprimento coberto (≥70% a ≤6 blocos, somando
+   todos os trechos aceitos), não por caixa envolvente. No Guará a regra por
+   caixa descartava 1.711 vias do OSM que não eram a mesma rua (serviço,
+   calçadas, trechos da EPTG/EPIA) e deixava passar 457 duplicatas. A
+   duplicata empresta nome/sentido/classe só a quem ela cobre; ponte/túnel do
+   OSM substitui o eixo do GDF; tags por nó nunca são herdadas.
+2. **Pistas duplicadas** (`highways.rs`): via de mão única não tem canteiro
+   nem mureta próprios (o canteiro é o vão entre as duas pistas mapeadas);
+   `dual_carriageway` dá canteiro; canteiro soma à largura vinda de
+   `lanes`; `kerb=no` deixa a guia rente.
+3. **Sinalização** (`highways.rs`): eixo amarelo, divisórias, bordos e zebra
+   passam a ser pintados (whitelist = leito da própria via); antes a escrita
+   empatava com o leito e era descartada — nenhuma rua tinha eixo.
+4. **GDF** (`geojson_provider.rs`): camada curada nunca vira prédio pelo
+   fallback (2.317 faixas de passeio e 22 lotes sem uso viravam "prédios");
+   `edificacao` é prédio de base; eixo de arruamento traduz faixas, pistas,
+   revestimento e meio-fio; calçada construída é área preenchida, em
+   andesito/concreto claro.
+5. **Toolchain** (`floodfill_cache.rs`): `as_chunks` no lugar de
+   `chunks_exact` com tamanho constante.
+
 ## 2026-09-29 — Escala de roleplay: metrô, vias, quadras, comércio e auditoria dos providers
 
 Segunda rodada após a geração real do Guará I+II. Detalhes, causa e

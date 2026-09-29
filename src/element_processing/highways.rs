@@ -340,7 +340,20 @@ fn generate_highways_internal(
                 return;
             };
 
-            let mut surface_block: Block = GRAY_CONCRETE;
+            // Calçada mapeada como área (`footway=sidewalk`, ex.: camada "Passeio e
+            // ou Calçadas" do GDF) usa o mesmo andesito do passeio que as vias
+            // desenham ao lado da guia; o cinza padrão é o do leito e fazia a
+            // calçada se confundir com a pista.
+            let is_sidewalk = element
+                .tags()
+                .get("footway")
+                .is_some_and(|v: &String| v == "sidewalk");
+            let default_block = if is_sidewalk {
+                POLISHED_ANDESITE
+            } else {
+                GRAY_CONCRETE
+            };
+            let mut surface_block: Block = default_block;
 
             if let Some(surface) = element.tags().get("surface") {
                 surface_block = match surface.as_str() {
@@ -352,8 +365,10 @@ fn generate_highways_internal(
                     "grass" => GRASS_BLOCK,
                     "dirt" | "ground" | "earth" => DIRT,
                     "sand" => SAND,
-                    "concrete" => LIGHT_GRAY_CONCRETE,
-                    _ => GRAY_CONCRETE,
+                    // Placa de concreto (a calçada típica do DF) = mesmo cinza-claro
+                    // do leito de concreto das vias lineares.
+                    "concrete" | "concrete:plates" | "concrete:lanes" => LIGHT_GRAY_CONCRETE,
+                    _ => default_block,
                 };
             }
 
@@ -663,13 +678,57 @@ fn generate_highways_internal(
                 },
             }
 
+            // Guia (meio-fio) elevada junto ao asfalto; `kerb=no` (OSM, ou
+            // `meiofio=Não` do eixo de arruamento do GDF) deixa a borda rente.
+            let mut has_raised_kerb = true;
+
             if is_motor_road {
                 // Largura real do OSM (`width` em metros ou `lanes` × 3,3 m), quando
                 // existe, vale mais que o padrão da tipologia.
+                let mut width_from_data = true;
                 if let Some(w) = width_tag.filter(|w| *w >= 2.5 && *w <= 40.0) {
                     block_range = ((w * 1.33) / 2.0).round().clamp(1.0, 14.0) as i32;
                 } else if let Some(lanes) = lanes_tag {
                     block_range = lanes_to_half_width(lanes).round().clamp(2.0, 14.0) as i32;
+                } else {
+                    width_from_data = false;
+                }
+
+                // CANTEIRO × SENTIDO. Avenidas duplicadas do DF (EPTG, EPIA, Eixão,
+                // L2, marginais) estão no OSM como DUAS vias `oneway=yes`, uma por
+                // pista: o canteiro real é o vão entre elas. Pintar o canteiro da
+                // tipologia (ou a mureta New Jersey da expressa) dentro de cada via
+                // de mão única punha grama/mureta no meio da pista. Pela mesma razão
+                // a pista de mão única de uma tipologia com canteiro não ganha
+                // passeio: não se sabe de que lado fica o canteiro, e o passeio de
+                // um dos lados cairia dentro dele.
+                let divided_typology = physical_median_radius > 0;
+                let dual_carriageway = element
+                    .tags()
+                    .get("dual_carriageway")
+                    .is_some_and(|v: &String| v == "yes");
+                if is_oneway {
+                    physical_median_radius = 0;
+                    if divided_typology {
+                        sidewalk_width = 0;
+                        is_detached_sidewalk = false;
+                    }
+                } else if physical_median_radius == 0 && dual_carriageway {
+                    // `nrpistas=2` do GDF: uma linha só para uma via de pista dupla.
+                    physical_median_radius = 2;
+                }
+                // A largura vinda de `width`/`lanes` é só da pista de rolamento; o
+                // canteiro soma a ela em vez de comer as faixas centrais.
+                if width_from_data && physical_median_radius > 0 {
+                    block_range += physical_median_radius;
+                }
+
+                if element
+                    .tags()
+                    .get("kerb")
+                    .is_some_and(|v: &String| v == "no" || v == "flush")
+                {
+                    has_raised_kerb = false;
                 }
 
                 // Pavimento declarado
@@ -868,6 +927,7 @@ fn generate_highways_internal(
                                 dir_x,
                                 dir_z,
                                 block_range,
+                                block_type,
                             );
                         }
 
@@ -1180,6 +1240,7 @@ fn generate_highways_internal(
                                     } else if sidewalk_width > 0 {
                                         if dist_from_center == block_range + 1 {
                                             // Meio-fio (guia): meia laje acima do asfalto
+                                            // (rente quando a via não tem guia).
                                             editor.set_block_absolute(
                                                 POLISHED_ANDESITE,
                                                 set_x,
@@ -1188,14 +1249,16 @@ fn generate_highways_internal(
                                                 None,
                                                 None,
                                             );
-                                            editor.set_block_absolute(
-                                                SMOOTH_STONE_SLAB,
-                                                set_x,
-                                                final_paint_y + 1,
-                                                set_z,
-                                                None,
-                                                None,
-                                            );
+                                            if has_raised_kerb {
+                                                editor.set_block_absolute(
+                                                    SMOOTH_STONE_SLAB,
+                                                    set_x,
+                                                    final_paint_y + 1,
+                                                    set_z,
+                                                    None,
+                                                    None,
+                                                );
+                                            }
                                         } else if dist_from_center
                                             <= block_range + 1 + sidewalk_width
                                         {
@@ -1262,38 +1325,8 @@ fn generate_highways_internal(
                             let y1 = paint_y_at(editor, out_x1, out_z1, current_y, use_absolute_y);
                             let y2 = paint_y_at(editor, out_x2, out_z2, current_y, use_absolute_y);
 
-                            if !editor.check_for_block_absolute(
-                                out_x1,
-                                y1,
-                                out_z1,
-                                Some(PROTECTED_BLOCKS),
-                                None,
-                            ) {
-                                editor.set_block_absolute(
-                                    outline_block,
-                                    out_x1,
-                                    y1,
-                                    out_z1,
-                                    None,
-                                    None,
-                                );
-                            }
-                            if !editor.check_for_block_absolute(
-                                out_x2,
-                                y2,
-                                out_z2,
-                                Some(PROTECTED_BLOCKS),
-                                None,
-                            ) {
-                                editor.set_block_absolute(
-                                    outline_block,
-                                    out_x2,
-                                    y2,
-                                    out_z2,
-                                    None,
-                                    None,
-                                );
-                            }
+                            paint_marking(editor, outline_block, (out_x1, y1, out_z1), block_type);
+                            paint_marking(editor, outline_block, (out_x2, y2, out_z2), block_type);
                         }
 
                         if add_stripe {
@@ -1310,22 +1343,12 @@ fn generate_highways_internal(
                                             as i32;
                                         let dy =
                                             paint_y_at(editor, dx, dz, current_y, use_absolute_y);
-                                        if editor.check_for_block_absolute(
-                                            dx,
-                                            dy,
-                                            dz,
-                                            Some(&[block_type]),
-                                            None,
-                                        ) {
-                                            editor.set_block_absolute(
-                                                WHITE_CONCRETE,
-                                                dx,
-                                                dy,
-                                                dz,
-                                                None,
-                                                None,
-                                            );
-                                        }
+                                        paint_marking(
+                                            editor,
+                                            WHITE_CONCRETE,
+                                            (dx, dy, dz),
+                                            block_type,
+                                        );
                                     }
                                 }
                             }
@@ -1343,22 +1366,12 @@ fn generate_highways_internal(
                                         (*bz as f64 + dist_faixa as f64 * norm_z).round() as i32;
                                     let y_f1 =
                                         paint_y_at(editor, fx1, fz1, current_y, use_absolute_y);
-                                    if !editor.check_for_block_absolute(
-                                        fx1,
-                                        y_f1,
-                                        fz1,
-                                        Some(PROTECTED_BLOCKS),
-                                        None,
-                                    ) {
-                                        editor.set_block_absolute(
-                                            WHITE_CONCRETE,
-                                            fx1,
-                                            y_f1,
-                                            fz1,
-                                            None,
-                                            None,
-                                        );
-                                    }
+                                    paint_marking(
+                                        editor,
+                                        WHITE_CONCRETE,
+                                        (fx1, y_f1, fz1),
+                                        block_type,
+                                    );
 
                                     let fx2 =
                                         (*bx as f64 - dist_faixa as f64 * norm_x).round() as i32;
@@ -1366,22 +1379,12 @@ fn generate_highways_internal(
                                         (*bz as f64 - dist_faixa as f64 * norm_z).round() as i32;
                                     let y_f2 =
                                         paint_y_at(editor, fx2, fz2, current_y, use_absolute_y);
-                                    if !editor.check_for_block_absolute(
-                                        fx2,
-                                        y_f2,
-                                        fz2,
-                                        Some(PROTECTED_BLOCKS),
-                                        None,
-                                    ) {
-                                        editor.set_block_absolute(
-                                            WHITE_CONCRETE,
-                                            fx2,
-                                            y_f2,
-                                            fz2,
-                                            None,
-                                            None,
-                                        );
-                                    }
+                                    paint_marking(
+                                        editor,
+                                        WHITE_CONCRETE,
+                                        (fx2, y_f2, fz2),
+                                        block_type,
+                                    );
                                 } else {
                                     // Via Simples (eixo bem no centro; amarelo em mão dupla,
                                     // branco como divisória em mão única). Só pinta sobre o
@@ -1397,22 +1400,12 @@ fn generate_highways_internal(
                                         use_absolute_y,
                                     );
 
-                                    if editor.check_for_block_absolute(
-                                        center_x,
-                                        y_center,
-                                        center_z,
-                                        Some(&[block_type]),
-                                        None,
-                                    ) {
-                                        editor.set_block_absolute(
-                                            stripe_block,
-                                            center_x,
-                                            y_center,
-                                            center_z,
-                                            None,
-                                            None,
-                                        );
-                                    }
+                                    paint_marking(
+                                        editor,
+                                        stripe_block,
+                                        (center_x, y_center, center_z),
+                                        block_type,
+                                    );
                                 }
                             } else if stripe_length <= dash_length + gap_length {
                                 // gap
@@ -1443,6 +1436,23 @@ fn paint_y_at(editor: &WorldEditor, x: i32, z: i32, current_y: i32, use_absolute
     }
 }
 
+/// Sinalização horizontal (eixo, divisórias, bordos, zebra) pintada SOBRE o
+/// leito da própria via. O leito é escrito antes da tinta, pelo mesmo
+/// elemento e com a mesma precedência, e o editor não sobrescreve bloco já
+/// escrito sem whitelist ("empate = o primeiro fica") — sem declarar que a
+/// tinta pode cobrir o leito, o eixo amarelo e as divisórias nunca apareciam
+/// (só a demarcação de vaga, que é escolhida como o próprio bloco do leito).
+/// A whitelist restrita ao leito também impede a tinta de cair em calçada,
+/// meio-fio, prédio ou via de outro revestimento.
+fn paint_marking(
+    editor: &mut WorldEditor,
+    block: Block,
+    (x, y, z): (i32, i32, i32),
+    road_surface: Block,
+) {
+    editor.set_block_absolute(block, x, y, z, Some(&[road_surface]), None);
+}
+
 /// Pinta uma faixa de pedestre (zebra) centrada em `(cx, cz)`, com listras alternadas
 /// perpendiculares à via (eixo `norm`) e alongadas na direção do tráfego (eixo `dir`).
 #[allow(clippy::too_many_arguments)]
@@ -1455,6 +1465,7 @@ fn paint_zebra_crossing(
     dir_x: f64,
     dir_z: f64,
     road_half_width: i32,
+    road_surface: Block,
 ) {
     for w in -road_half_width..=road_half_width {
         // Listras de ~1 bloco separadas por ~1 bloco de vão, atravessando a via inteira.
@@ -1466,9 +1477,7 @@ fn paint_zebra_crossing(
             let pz = (cz as f64 + w as f64 * norm_z + along as f64 * dir_z).round() as i32;
             let py = editor.get_ground_level(px, pz);
 
-            if !editor.check_for_block_absolute(px, py, pz, Some(PROTECTED_BLOCKS), None) {
-                editor.set_block_absolute(WHITE_CONCRETE, px, py, pz, None, None);
-            }
+            paint_marking(editor, WHITE_CONCRETE, (px, py, pz), road_surface);
         }
     }
 }
