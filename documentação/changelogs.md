@@ -11,7 +11,9 @@ verificação em `docs/QUALIDADE_GERACAO.md` (Parte II). Resumo:
    `railway=station|subway_entrance`, antes descartados) ganham plataformas
    alinhadas ao trilho, cobertura, placas e poços de acesso; terminais de
    ônibus reutilizam a Rodoviária de `landmarks.rs`; paradas usam o abrigo
-   existente.
+   existente; o leito passa a ser contínuo (Bresenham entre os vértices da
+   clotoide — antes só os vértices eram pintados e os viadutos de 2 nós da
+   Feira/Shopping não existiam).
 2. **Vias** (`highways.rs`): asfalto real, largura por `width`/`lanes`,
    `surface` respeitado, faixas (branca tracejada em mão única, dupla amarela
    em duas mãos), meio-fio + calçada, iluminação pública com o poste

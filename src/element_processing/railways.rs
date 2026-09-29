@@ -1,4 +1,5 @@
 use crate::block_definitions::*;
+use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::osm_parser::ProcessedWay;
 use crate::world_editor::WorldEditor;
@@ -6,6 +7,30 @@ use crate::world_editor::WorldEditor;
 // ============================================================================
 // ?? BESM-6 TWEAKS: ENGENHARIA METROVIARIA E FERROVI�RIA PARAM�TRICA (NATM)
 // ============================================================================
+
+/// Densifica uma polilinha em pontos 8-conexos (Bresenham entre vértices
+/// consecutivos, sem repetir o vértice compartilhado).
+///
+/// 🚨 CORREÇÃO (medida no Guará v7): o laço de desenho de `generate_railways`
+/// pinta um disco de leito POR PONTO da polilinha, e `compute_clothoid_transition`
+/// devolve só os vértices (2 pontos numa via reta; amostras espaçadas de Bézier
+/// nas curvas). Resultado: o Metrô-DF saía pontilhado e os viadutos de 2 nós da
+/// Feira e do Shopping (`bridge=yes`, `layer=1`) não existiam — a seção
+/// transversal no meio deles era chão urbano puro.
+fn densify_polyline(points: &[(i32, i32)]) -> Vec<(i32, i32)> {
+    let mut out: Vec<(i32, i32)> = Vec::with_capacity(points.len() * 8);
+    for (i, &(x, z)) in points.iter().enumerate() {
+        if i == 0 {
+            out.push((x, z));
+            continue;
+        }
+        let (px, pz) = points[i - 1];
+        for (bx, _, bz) in bresenham_line(px, 0, pz, x, 0, z).into_iter().skip(1) {
+            out.push((bx, bz));
+        }
+    }
+    out
+}
 
 /// Calcula uma transi��o suave baseada numa aproxima��o de Curva Clotoide (Espiral de Euler).
 /// Diferente de uma Spline comum que apenas arredonda cantos, a Clotoide garante
@@ -201,7 +226,7 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
             .iter()
             .map(|n| XZPoint::new(n.x, n.z))
             .collect();
-        let smoothed_points = compute_clothoid_transition(&raw_points, 6);
+        let smoothed_points = densify_polyline(&compute_clothoid_transition(&raw_points, 6));
 
         if smoothed_points.is_empty() {
             return;
@@ -622,7 +647,7 @@ pub fn generate_roller_coaster(editor: &mut WorldEditor, element: &ProcessedWay)
                 .iter()
                 .map(|n| XZPoint::new(n.x, n.z))
                 .collect();
-            let smoothed_points = compute_clothoid_transition(&raw_points, 4);
+            let smoothed_points = densify_polyline(&compute_clothoid_transition(&raw_points, 4));
 
             if smoothed_points.is_empty() {
                 return;
@@ -674,6 +699,25 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn densified_polyline_is_eight_connected_and_keeps_vertices() {
+        let dense = densify_polyline(&[(0, 0), (10, 4), (10, 20)]);
+        assert_eq!(dense.first(), Some(&(0, 0)));
+        assert_eq!(dense.last(), Some(&(10, 20)));
+        assert!(dense.contains(&(10, 4)));
+        for w in dense.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            assert!(
+                (a.0 - b.0).abs() <= 1 && (a.1 - b.1).abs() <= 1,
+                "salto {:?}->{:?}",
+                a,
+                b
+            );
+        }
+        // Via reta de 2 nós (o caso dos viadutos da Feira): um ponto por bloco.
+        assert_eq!(densify_polyline(&[(0, 0), (50, 0)]).len(), 51);
     }
 
     #[test]

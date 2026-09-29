@@ -306,6 +306,13 @@ quase toda de superfície/elevada. As estações são **nós** (`railway=station
   estação tem nome conhecido (mesma lógica de marcos), cobertura genérica
   caso contrário; placas "METRÔ-DF"; acessos (`subway_entrance`) ligados por
   poço com escada + corredor até a plataforma. `buffer_stop` e `halt` também.
+- **Leito contínuo.** Medido no mundo v7: o laço de `generate_railways`
+  pinta um disco de leito por PONTO da polilinha, e a clotoide devolve só os
+  vértices (2 pontos numa reta, amostras espaçadas nas curvas) — o metrô saía
+  pontilhado e os viadutos de 2 nós da Feira e do Shopping não existiam (a
+  seção transversal no meio deles era chão urbano). `densify_polyline`
+  (Bresenham entre vértices) alimenta os dois laços de desenho; pilares e
+  luminárias passam a ser espaçados em blocos, como o comentário já dizia.
 - Terminais de ônibus (`amenity=bus_station`, `public_transport=station` em
   way/relation) reutilizam `landmarks::generate_terminal_rodoviario` (a
   Rodoviária do Plano já existia; só foi parametrizada em altura).
