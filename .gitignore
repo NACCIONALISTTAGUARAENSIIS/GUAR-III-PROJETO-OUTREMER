@@ -50,3 +50,6 @@ gen/
 /flake/*
 !/flake/flake.nix
 !/flake/flake.lock
+
+# Espaço de trabalho de gerações locais (mundos/OSM baixado — nunca versionar)
+/geracao_guara/
