@@ -157,6 +157,13 @@ pub fn generate_amenities(
     }
 
     // 🚨 BESM-6: Corrigido o acesso a .tags()
+    //
+    // Toda cota neste módulo sai de `get_ground_level` — já ABSOLUTA — e por
+    // isso só se escreve com a API `*_absolute`. A API relativa (`set_block`,
+    // `get_absolute_y`, `set_block_entity_with_items`) soma o chão de novo:
+    // com relevo real (Guará: chão em Y≈25) os estacionamentos, com vagas e
+    // postes, saíam a Y≈50, 25 blocos no ar. Com o chão plano antigo (-62) o
+    // erro caía abaixo do mundo e ficava invisível.
     if let Some(amenity_type) = element.tags().get("amenity") {
         let first_node: Option<XZPoint> = element
             .nodes()
@@ -183,12 +190,12 @@ pub fn generate_amenities(
 
                     // TWEAK TERRENO: Usa a elevação real para o barrel
                     let ground_y = editor.get_ground_level(pt.x, pt.z);
-                    let absolute_y = editor.get_absolute_y(pt.x, ground_y + 1, pt.z);
+                    let absolute_y = ground_y + 1;
 
-                    editor.set_block_entity_with_items(
+                    editor.set_block_entity_with_items_absolute(
                         barrel_block,
                         pt.x,
-                        ground_y + 1, // Assenta sobre o chão real
+                        absolute_y, // Assenta sobre o chão real
                         pt.z,
                         "minecraft:barrel",
                         items,
@@ -214,15 +221,22 @@ pub fn generate_amenities(
                 if let Some(pt) = first_node {
                     let ground_y = editor.get_ground_level(pt.x, pt.z);
                     // Composter dá a cara urbana e verde, posicionado no nível do terreno exato
-                    editor.set_block(COMPOSTER, pt.x, ground_y + 1, pt.z, None, None);
+                    editor.set_block_absolute(COMPOSTER, pt.x, ground_y + 1, pt.z, None, None);
                 }
             }
             "vending_machine" | "atm" => {
                 // TWEAK: ATM do BRB (Banco de Brasília) / Vending
                 if let Some(pt) = first_node {
                     let ground_y = editor.get_ground_level(pt.x, pt.z);
-                    editor.set_block(LIGHT_BLUE_CONCRETE, pt.x, ground_y + 1, pt.z, None, None);
-                    editor.set_block(IRON_BLOCK, pt.x, ground_y + 2, pt.z, None, None); // Tela
+                    editor.set_block_absolute(
+                        LIGHT_BLUE_CONCRETE,
+                        pt.x,
+                        ground_y + 1,
+                        pt.z,
+                        None,
+                        None,
+                    );
+                    editor.set_block_absolute(IRON_BLOCK, pt.x, ground_y + 2, pt.z, None, None); // Tela
 
                     // TWEAK RP: Adiciona botões nas laterais vazias para interação no jogo
                     let dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)];
@@ -253,10 +267,10 @@ pub fn generate_amenities(
 
                 for (x, z) in floor_area.iter() {
                     let ground_y = editor.get_ground_level(*x, *z);
-                    editor.set_block(ground_block, *x, ground_y, *z, None, None);
+                    editor.set_block_absolute(ground_block, *x, ground_y, *z, None, None);
                     // Racks de metal para bikes
                     if (*x + *z) % 2 == 0 {
-                        editor.set_block(IRON_BARS, *x, ground_y + 1, *z, None, None);
+                        editor.set_block_absolute(IRON_BARS, *x, ground_y + 1, *z, None, None);
                     }
                 }
 
@@ -266,17 +280,17 @@ pub fn generate_amenities(
                     let z: i32 = node.z;
                     let ground_y = editor.get_ground_level(x, z);
 
-                    editor.set_block(ground_block, x, ground_y, z, None, None);
+                    editor.set_block_absolute(ground_block, x, ground_y, z, None, None);
                     // Altura ajustada (Escala 1.15V)
                     for y in 1i32..=4i32 {
-                        editor.set_block(IRON_BARS, x, ground_y + y, z, None, None);
+                        editor.set_block_absolute(IRON_BARS, x, ground_y + y, z, None, None);
                     }
-                    editor.set_block(roof_block, x, ground_y + 5, z, None, None);
+                    editor.set_block_absolute(roof_block, x, ground_y + 5, z, None, None);
                 }
 
                 for (x, z) in floor_area.iter() {
                     let ground_y = editor.get_ground_level(*x, *z);
-                    editor.set_block(roof_block, *x, ground_y + 5, *z, None, None);
+                    editor.set_block_absolute(roof_block, *x, ground_y + 5, *z, None, None);
                 }
             }
             "bench" => {
@@ -285,8 +299,15 @@ pub fn generate_amenities(
                     let ground_y = editor.get_ground_level(pt.x, pt.z);
                     let mut rng = element_rng(element.id());
                     if rng.random_bool(0.5) {
-                        editor.set_block(SMOOTH_STONE_SLAB, pt.x, ground_y + 1, pt.z, None, None);
-                        editor.set_block(
+                        editor.set_block_absolute(
+                            SMOOTH_STONE_SLAB,
+                            pt.x,
+                            ground_y + 1,
+                            pt.z,
+                            None,
+                            None,
+                        );
+                        editor.set_block_absolute(
                             SMOOTH_STONE_SLAB,
                             pt.x + 1,
                             ground_y + 1,
@@ -294,7 +315,7 @@ pub fn generate_amenities(
                             None,
                             None,
                         );
-                        editor.set_block(
+                        editor.set_block_absolute(
                             SMOOTH_STONE_SLAB,
                             pt.x - 1,
                             ground_y + 1,
@@ -303,8 +324,15 @@ pub fn generate_amenities(
                             None,
                         );
                     } else {
-                        editor.set_block(SMOOTH_STONE_SLAB, pt.x, ground_y + 1, pt.z, None, None);
-                        editor.set_block(
+                        editor.set_block_absolute(
+                            SMOOTH_STONE_SLAB,
+                            pt.x,
+                            ground_y + 1,
+                            pt.z,
+                            None,
+                            None,
+                        );
+                        editor.set_block_absolute(
                             SMOOTH_STONE_SLAB,
                             pt.x,
                             ground_y + 1,
@@ -312,7 +340,7 @@ pub fn generate_amenities(
                             None,
                             None,
                         );
-                        editor.set_block(
+                        editor.set_block_absolute(
                             SMOOTH_STONE_SLAB,
                             pt.x,
                             ground_y + 1,
@@ -339,17 +367,24 @@ pub fn generate_amenities(
                     // TWEAK: Apenas sobe pilar se o índice for par, criando laterais abertas
                     if i % 2 == 0 {
                         for fence_height in 1i32..=4i32 {
-                            editor.set_block(wall_block, x, ground_y + fence_height, z, None, None);
+                            editor.set_block_absolute(
+                                wall_block,
+                                x,
+                                ground_y + fence_height,
+                                z,
+                                None,
+                                None,
+                            );
                         }
                     }
-                    editor.set_block(roof_block, x, ground_y + 5, z, None, None);
+                    editor.set_block_absolute(roof_block, x, ground_y + 5, z, None, None);
                 }
 
                 for (x, z) in roof_area.iter() {
                     let ground_y = editor.get_ground_level(*x, *z);
-                    editor.set_block(roof_block, *x, ground_y + 5, *z, None, None);
+                    editor.set_block_absolute(roof_block, *x, ground_y + 5, *z, None, None);
                     // Chão da parada concretado
-                    editor.set_block(POLISHED_ANDESITE, *x, ground_y, *z, None, None);
+                    editor.set_block_absolute(POLISHED_ANDESITE, *x, ground_y, *z, None, None);
                 }
             }
             "parking" | "fountain" => {
@@ -377,7 +412,7 @@ pub fn generate_amenities(
                             bresenham_line(prev.x, 0, prev.z, pt.x, 0, pt.z);
                         for (bx, _, bz) in bresenham_points {
                             let ground_y = editor.get_ground_level(bx, bz);
-                            editor.set_block(
+                            editor.set_block_absolute(
                                 block_type,
                                 bx,
                                 ground_y,
@@ -390,7 +425,7 @@ pub fn generate_amenities(
                                 for dx in [-1, 0, 1].iter() {
                                     for dz in [-1, 0, 1].iter() {
                                         if (*dx, *dz) != (0, 0) {
-                                            editor.set_block(
+                                            editor.set_block_absolute(
                                                 SMOOTH_QUARTZ,
                                                 bx + dx,
                                                 ground_y,
@@ -420,7 +455,7 @@ pub fn generate_amenities(
                     for (x, z) in flood_area {
                         let ground_y = editor.get_ground_level(x, z);
 
-                        editor.set_block(
+                        editor.set_block_absolute(
                             block_type,
                             x,
                             ground_y,
@@ -430,6 +465,13 @@ pub fn generate_amenities(
                         );
 
                         if amenity_type == "parking" {
+                            // Árvore que chegou antes (floresta, `natural=tree`,
+                            // Halo) perde a base para o piso — vegetação cede a
+                            // estrutura —, mas o resto do tronco e a copa ficavam
+                            // flutuando sobre as vagas. Mesma limpeza que as vias
+                            // fazem sobre o leito (`highways.rs`).
+                            editor.clear_vegetation_above(x, ground_y, z, 14);
+
                             let space_width = 4;
                             let space_length = 7;
                             let lane_width = 8;
@@ -445,7 +487,7 @@ pub fn generate_amenities(
 
                             if local_z < space_length {
                                 if local_x == 0 || local_z == 0 {
-                                    editor.set_block(
+                                    editor.set_block_absolute(
                                         WHITE_CONCRETE,
                                         x,
                                         ground_y,
@@ -455,7 +497,7 @@ pub fn generate_amenities(
                                     );
                                 }
                             } else if local_z == space_length {
-                                editor.set_block(
+                                editor.set_block_absolute(
                                     WHITE_CONCRETE,
                                     x,
                                     ground_y,
@@ -465,7 +507,7 @@ pub fn generate_amenities(
                                 );
                             } else if local_z > space_length && local_z < space_length + lane_width
                             {
-                                editor.set_block(
+                                editor.set_block_absolute(
                                     GRAY_CONCRETE,
                                     x,
                                     ground_y,
@@ -477,8 +519,7 @@ pub fn generate_amenities(
 
                             // TWEAK BRUTALISTA: Poste Padrão Neoenergia
                             if local_x == 0 && local_z == 0 && zone_x % 4 == 0 && zone_z % 2 == 0 {
-                                let abs_y = editor.get_absolute_y(x, ground_y, z);
-                                place_neoenergia_pole(editor, x, abs_y, z);
+                                place_neoenergia_pole(editor, x, ground_y, z);
                             }
                         }
                     }

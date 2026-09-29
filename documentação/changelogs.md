@@ -1,5 +1,29 @@
 ATENÇÃO: aqui serão dispostos todos os changelogs, tudo o que foi mudado, por que, razão etc de forma extremamente documentada
 
+## 2026-09-29 — Auditoria do Guará I+II completo: inconsistências entre módulos
+
+Detalhes, medições e verificação em `docs/QUALIDADE_GERACAO.md` (Parte IV,
+§21–§27). Com o relevo real funcionando, apareceram defeitos que o chão plano
+escondia. Medido no Guará completo antes → depois: buracos na cota do chão
+19.448 → 443; asfalto flutuando (amostra) 12.053 → 207.
+
+1. **Linha aérea enterrada** (`data_processing.rs`): `power=line` deixa de
+   ganhar duto de cobre subterrâneo; `is_buried_network` decide por
+   `location`/túnel/`layer` e pelo tipo (cabo e adutora enterram).
+2. **Equipamentos 25 blocos no ar** (`amenities.rs`): 28 escritas com cota
+   absoluta passada à API relativa (Y = 2 × chão); todas para `*_absolute`.
+3. **Lajes na caixa envolvente** (`world_editor/mod.rs`, `buildings.rs`):
+   máscara de escrita = contorno real do prédio durante o interior.
+4. **Prédio de encosta flutuando** (`buildings.rs`): embasamento sólido até o
+   chão (o ramo de "vão livre" escrevia ar e apagava o chão).
+5. **Merge de infraestrutura** (`providers/mod.rs`): estacionamentos, cercas e
+   equipamentos deduplicados entre provedores comparando o mesmo tipo de objeto
+   e de geometria, com sobreposição real de polígono; cercas com tolerância de
+   4 blocos.
+6. **Trilho em encosta** (`railways.rs`): aterro por célula até o leito dela.
+7. **Árvore cortada pelo estacionamento** (`amenities.rs`): limpa a vegetação
+   acima das vagas.
+
 ## 2026-09-29 — Vias entre provedores: conflação por linha, pistas duplicadas e sinalização
 
 Terceira rodada, feita no servidor Oracle sobre o trabalho da nuvem. Detalhes,

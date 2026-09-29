@@ -36,7 +36,7 @@ use crate::progress::emit_gui_progress_update;
 use colored::Colorize;
 use fastnbt::{IntArray, Value};
 use serde::Serialize;
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
@@ -176,6 +176,8 @@ pub struct WorldEditor<'a> {
     /// registro acima não existe mais, e a superfície de terreno é reconhecida
     /// pela heurística (bloco de chão do passe de terreno na cota do `Ground`).
     replaying_sealed_region: bool,
+    /// Ver `set_write_mask`.
+    write_mask: Option<Arc<HashSet<(i32, i32)>>>,
 
     xzbbox: &'a XZBBox,
     llbbox: LLBBox,
@@ -204,6 +206,7 @@ impl<'a> WorldEditor<'a> {
             surface_writer_priority: vec![TERRAIN_WRITE_PRIORITY; TERRAIN_SURFACE_CELLS],
             current_write_priority: DEFAULT_WRITE_PRIORITY,
             replaying_sealed_region: false,
+            write_mask: None,
             xzbbox,
             llbbox,
             ground: None,
@@ -241,6 +244,7 @@ impl<'a> WorldEditor<'a> {
             surface_writer_priority: vec![TERRAIN_WRITE_PRIORITY; TERRAIN_SURFACE_CELLS],
             current_write_priority: DEFAULT_WRITE_PRIORITY,
             replaying_sealed_region: false,
+            write_mask: None,
             xzbbox,
             llbbox,
             ground: None,
@@ -263,6 +267,29 @@ impl<'a> WorldEditor<'a> {
         self.active_region_z = rz;
         self.terrain_surface_y.fill(i32::MIN);
         self.surface_writer_priority.fill(TERRAIN_WRITE_PRIORITY);
+    }
+
+    /// Restringe as próximas escritas às colunas `(x, z)` do conjunto (`None`
+    /// desliga). Existe para geradores que trabalham sobre a caixa envolvente
+    /// de um polígono — o interior dos prédios (`buildings_interior.rs`: lajes,
+    /// cômodos, corredores, mobília) varre `min..max` em X e Z. Num prédio
+    /// inclinado a caixa é bem maior que o prédio, e as lajes de cada andar
+    /// vazavam para fora da parede: no SIA, um anel de pisos soltos de ~8
+    /// blocos em volta da torre, visível de cima como um retângulo
+    /// quadriculado. Com a máscara = contorno real do prédio, a caixa continua
+    /// servindo para o layout, mas nada é escrito fora dele.
+    pub fn set_write_mask(&mut self, mask: Option<Arc<HashSet<(i32, i32)>>>) {
+        self.write_mask = mask;
+    }
+
+    /// Coluna dentro do mundo e, se houver máscara ativa, dentro dela.
+    #[inline(always)]
+    fn accepts_column(&self, x: i32, z: i32) -> bool {
+        self.xzbbox.contains(&XZPoint::new(x, z))
+            && self
+                .write_mask
+                .as_ref()
+                .is_none_or(|mask| mask.contains(&(x, z)))
     }
 
     /// Define a precedência das próximas escritas (o elemento em despacho).
@@ -650,7 +677,7 @@ impl<'a> WorldEditor<'a> {
         override_whitelist: Option<&[Block]>,
         override_blacklist: Option<&[Block]>,
     ) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+        if !self.accepts_column(x, z) {
             return;
         }
 
@@ -702,7 +729,7 @@ impl<'a> WorldEditor<'a> {
     /// Fast-path para blocos sem blacklist/whitelist
     #[inline]
     pub fn set_block_if_absent_absolute(&mut self, block: Block, x: i32, absolute_y: i32, z: i32) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+        if !self.accepts_column(x, z) {
             return;
         }
 
@@ -750,7 +777,7 @@ impl<'a> WorldEditor<'a> {
         override_whitelist: Option<&[Block]>,
         override_blacklist: Option<&[Block]>,
     ) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+        if !self.accepts_column(x, z) {
             return;
         }
 
@@ -903,7 +930,7 @@ impl<'a> WorldEditor<'a> {
         y_max: i32,
         skip_existing: bool,
     ) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+        if !self.accepts_column(x, z) {
             return;
         }
 
@@ -1105,7 +1132,7 @@ impl<'a> WorldEditor<'a> {
         z: i32,
         extra_data: Option<HashMap<String, Value>>,
     ) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+        if !self.accepts_column(x, z) {
             return;
         }
 
@@ -1193,7 +1220,7 @@ impl<'a> WorldEditor<'a> {
         z: i32,
         items: Vec<HashMap<String, Value>>,
     ) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+        if !self.accepts_column(x, z) {
             return;
         }
 
@@ -1269,7 +1296,7 @@ impl<'a> WorldEditor<'a> {
         block_entity_id: &str,
         items: Vec<HashMap<String, Value>>,
     ) {
-        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+        if !self.accepts_column(x, z) {
             return;
         }
 
@@ -1608,5 +1635,42 @@ mod halo_tests {
         fn flush_active_region_for_test(&mut self) {
             self.world = WorldToModify::default();
         }
+    }
+}
+
+#[cfg(test)]
+mod write_mask_tests {
+    use super::*;
+    use crate::coordinate_system::geographic::LLBBox;
+
+    /// Interior gerado sobre a caixa envolvente de um prédio: com a máscara do
+    /// contorno real, nada é escrito fora dele — nem in-core nem no Halo.
+    #[test]
+    fn write_mask_confines_writes_to_the_footprint() {
+        let xzbbox = XZBBox::new(0, 1023, 0, 511);
+        let llbbox = LLBBox::new(-15.83, -47.98, -15.82, -47.97).unwrap();
+        let mut editor = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+        editor.set_ground(Arc::new(Ground::new_flat(-62)));
+        editor.set_active_region(0, 0);
+
+        let footprint: HashSet<(i32, i32)> = [(10, 10), (11, 10)].into_iter().collect();
+        editor.set_write_mask(Some(Arc::new(footprint)));
+        for x in 9..=12 {
+            editor.set_block_absolute(POLISHED_ANDESITE, x, -50, 10, None, None);
+        }
+        editor.set_block_absolute(POLISHED_ANDESITE, 600, -50, 10, None, None); // região vizinha
+        editor.set_write_mask(None);
+        editor.set_block_absolute(STONE, 12, -49, 10, None, None);
+
+        assert_eq!(editor.world.get_block(9, -50, 10), None);
+        assert_eq!(editor.world.get_block(10, -50, 10), Some(POLISHED_ANDESITE));
+        assert_eq!(editor.world.get_block(11, -50, 10), Some(POLISHED_ANDESITE));
+        assert_eq!(editor.world.get_block(12, -50, 10), None);
+        assert!(
+            editor.halo_cache.is_empty(),
+            "máscara também vale para o Halo"
+        );
+        // Sem máscara, volta ao normal.
+        assert_eq!(editor.world.get_block(12, -49, 10), Some(STONE));
     }
 }

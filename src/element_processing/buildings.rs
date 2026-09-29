@@ -1838,43 +1838,26 @@ fn build_wall_ring(
                         args.ground_level
                     };
 
-                    // 🚨 BESM-6 Tweak: Pilares Inteligentes para Vãos Livres (MASP, Catedral)
-                    // Apenas se o start_y for maior que o chão
-                    if config.start_y_offset > local_ground_level {
-                        for y in local_ground_level..=config.start_y_offset {
-                            // Deixa ar livre debaixo, a não ser nas bordas onde pomos um pilar espaçado
-                            if (bx + bz) % 8 == 0 {
-                                editor.set_block_absolute(
-                                    POLISHED_ANDESITE,
-                                    bx,
-                                    y + config.abs_terrain_offset,
-                                    bz,
-                                    None,
-                                    None,
-                                );
-                            } else {
-                                editor.set_block_absolute(
-                                    AIR,
-                                    bx,
-                                    y + config.abs_terrain_offset,
-                                    bz,
-                                    None,
-                                    None,
-                                );
-                            }
-                        }
-                    } else {
-                        // Fundação normal aterrada
-                        for y in local_ground_level..config.start_y_offset + 1 {
-                            editor.set_block_absolute(
-                                config.wall_block,
-                                bx,
-                                y + config.abs_terrain_offset,
-                                bz,
-                                None,
-                                None,
-                            );
-                        }
+                    // Embasamento: a parede desce até o chão local. O prédio assenta na
+                    // cota MAIS ALTA do lote (`calculate_start_y_offset`), então num
+                    // terreno inclinado o lado de baixo precisa de alvenaria até o
+                    // solo. Antes, sempre que `start_y` ficava acima do chão entrava
+                    // um ramo de "pilares para vão livre (MASP, Catedral)" que
+                    // escrevia AR do chão até a parede, com um pilar a cada 8 blocos
+                    // — mas este bloco só roda com `min_level == 0` (prédio que
+                    // começa no chão), então vão livre de verdade nunca passava por
+                    // ele: com o relevo real, todo prédio de encosta do Guará saía
+                    // flutuando no lado de baixo, com o bloco de chão apagado
+                    // (24.783 colunas de "buraco" na geração completa).
+                    for y in local_ground_level..config.start_y_offset + 1 {
+                        editor.set_block_absolute(
+                            config.wall_block,
+                            bx,
+                            y + config.abs_terrain_offset,
+                            bz,
+                            None,
+                            None,
+                        );
                     }
                 }
 
@@ -3246,6 +3229,12 @@ pub fn generate_buildings(
                 // reconciliada com o que já está disponível neste escopo (`bounds`,
                 // `config`, `element`) — estava desativada por divergir da versão
                 // atual da função em `buildings_interior.rs`.
+                // O layout interno é calculado sobre a caixa envolvente; a
+                // máscara (piso + contorno da parede) impede que ele escreva
+                // fora do prédio real — ver `WorldEditor::set_write_mask`.
+                editor.set_write_mask(Some(std::sync::Arc::new(
+                    roof_area.iter().copied().collect(),
+                )));
                 crate::element_processing::subprocessor::buildings_interior::generate_building_interior(
                     editor,
                     bounds.min_x,
@@ -3258,6 +3247,7 @@ pub fn generate_buildings(
                     element,
                     abs_terrain_offset,
                 );
+                editor.set_write_mask(None);
             }
         }
     }

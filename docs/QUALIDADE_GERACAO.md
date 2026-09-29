@@ -691,3 +691,159 @@ warnings` e `--no-default-features`; `cargo test` nos dois (133 e 126
 testes). Mundos do recorte gerados pelas duas versões e medidos lendo as
 regiões `.mca` (material no nível do chão por coluna) e o
 `provenance_summary.json`.
+
+---
+
+# Parte IV — Auditoria do Guará I+II completo: inconsistências entre módulos
+
+Geração completa (`--bbox -15.86,-47.99,-15.80,-47.95`, OSM + GDF + KML de
+tombamento + CSV de mobiliário + relevo real, 113 m → 130 blocos) inspecionada
+de três formas: log e `provenance_summary.json`; a vista top-down em resolução
+total, trecho por trecho; e uma varredura dos `.mca` coluna a coluna (1 em
+cada 9 chunks) contra a cota do terreno, que a Scanline sempre grava como
+terracota vermelha → terra grossa → chão. Com o relevo real funcionando (Parte
+I), apareceram defeitos que o chão plano antigo escondia.
+
+Mesmo scanner nas duas gerações (v1 = commit 466cc6c; v4 = esta rodada):
+
+| defeito medido | v1 | v4 |
+|---|---|---|
+| buraco na cota do chão | 19.448 | 443 |
+| piso a céu aberto sem nada embaixo (inclui telhados de térreos) | 214.142 | 33.262 |
+| asfalto/eixo amarelo nessa condição (amostra de 1/36 dos chunks) | 12.053 | 207 |
+| tronco de árvore sobre leito de rua | 388 | 572 |
+
+## 21. Linha de energia aérea também enterrada
+
+**Sintoma.** Sob cada linha de transmissão (cabos `chain` a ~19 blocos do
+chão) havia um duto de `copper_block` 5–7 blocos abaixo: a proveniência
+listava as 16 `power=line` do Guará como "mistas" (`power` +
+`underground_infrastructure`).
+
+**Causa.** `generate_underground_infrastructure` enterrava toda
+`power=line|cable` e `man_made=pipeline`, sem olhar `location`. No OSM,
+`power=line` é por definição a linha aérea; o cabo enterrado é `power=cable`.
+
+**Correção (`data_processing.rs`).** `is_buried_network`: `location`
+explícito vence (underground/underwater enterra; overground/overhead não);
+túnel ou `layer<0` enterra; senão `power=cable` e adutora enterram por padrão,
+`power=line|minor_line` nunca. O despacho só registra o módulo na
+proveniência quando algo é de fato enterrado. Testes
+`buried_network_tests` (3).
+
+## 22. Estacionamentos, bancos, abrigos e lixeiras 25 blocos no ar
+
+**Sintoma.** Os estacionamentos do SIA/Guará inteiros — piso, vagas e postes —
+em Y≈50 com o chão em Y≈25.
+
+**Causa.** Em `amenities.rs` toda cota vem de `get_ground_level` (absoluta) e
+era escrita pela API RELATIVA (`set_block`, `get_absolute_y`,
+`set_block_entity_with_items`), que soma o chão de novo: Y = 2 × chão. Com o
+chão plano antigo (-62) caía abaixo do mundo e ficava invisível. Uma
+varredura de todo o `src/` (chamadas da API relativa cujo argumento de altura
+deriva de uma cota absoluta) achou o padrão só em `amenities.rs` (28 pontos).
+
+**Correção.** Os 28 pontos passam para a API `*_absolute`; comentário no
+módulo explica a regra.
+
+## 23. Lajes do interior preenchendo a caixa envolvente
+
+**Sintoma.** No SIA e no centro do Guará II, em volta de cada prédio
+inclinado, um retângulo quadriculado alinhado aos eixos: lajes de andesito a
+cada 4 blocos saindo ~8 blocos para fora da parede, sem cobertura.
+
+**Causa.** `buildings_interior.rs` gera lajes, cômodos e corredores varrendo
+`min..max` em X e Z (a caixa); num prédio inclinado a caixa é bem maior que o
+prédio.
+
+**Correção.** `WorldEditor::set_write_mask`: enquanto o interior é gerado, só
+colunas do contorno real (piso + parede, `roof_area` em `buildings.rs`)
+aceitam escrita — in-core e no Halo. Todo escritor absoluto passa por
+`accepts_column`; o passe de chão da Scanline nunca é mascarado. Teste
+`write_mask_tests`.
+
+## 24. Prédios de encosta flutuando no lado de baixo
+
+**Sintoma.** 19.448 colunas com ar na cota do chão: a parede começava 3+
+blocos acima do terreno no lado baixo do lote, e o próprio bloco de grama
+tinha sido apagado.
+
+**Causa.** O prédio assenta na cota mais alta do lote; um ramo de "pilares
+para vão livre (MASP, Catedral)" escrevia AR do chão até a parede (com um
+pilar a cada 8 blocos) sempre que a base ficava acima do chão — mas o bloco só
+roda para prédios com `min_level == 0`, que começam no chão, então vão livre
+de verdade nunca passava por ele. Com relevo, todo prédio de encosta caía ali.
+
+**Correção (`buildings.rs`).** Embasamento sólido na alvenaria da parede, do
+chão local até a base, para todos.
+
+## 25. Merge de estacionamentos, cercas e equipamentos
+
+**Sintoma.** Estacionamentos com duas grades de vagas defasadas sobrepostas
+(listras densas); 76 dos 105 estacionamentos do OSM repetiam um do GDF (62%
+da área).
+
+**Causa.** `resolve_collisions` isentava o grupo `Infrastructure`
+(estacionamento, cerca/muro, poste, escola...) de deduplicação — porque, pela
+regra de caixa, a caixa de um estacionamento engoliria o poste dentro dele.
+
+**Correção (`providers/mod.rs`).** O grupo deixa de ser isento, e
+`should_supersede` passa a comparar só o mesmo tipo de geometria (ponto com
+ponto a ≤2 blocos; área com área) e o mesmo tipo de objeto (`same_object_kind`:
+mesmo valor de `amenity`/`barrier`/`power`/`man_made`). Para áreas, a caixa é
+só o filtro: a decisão é a sobreposição real dos polígonos
+(`polygon_coverage`, grade de 24×24 pontos), porque lote em L ou diagonal
+engana a caixa. Linhas que não são vias (cercas, muros) usam tolerância de 4
+blocos — medido: o mesmo muro no OSM e no GDF fica a 0–2 blocos (mediana
+2,5). Testes `same_object_merge_tests` (5).
+
+## 26. Trilho em encosta com leito sobre o vazio
+
+**Sintoma.** Bordas de paralelepípedo do ramal ferroviário 2 blocos acima do
+chão, com ar embaixo.
+
+**Causa.** `railways.rs` preenchia o aterro do chão do EIXO até o leito para o
+disco inteiro da seção; células do lado de baixo (e a borda de curva, com
+superelevação +1) ficavam sem apoio.
+
+**Correção.** Aterro do chão de cada célula até o leito daquela célula.
+
+## 27. Árvore cortada pelo estacionamento
+
+**Sintoma.** Tronco e copa flutuando sobre as vagas.
+
+**Causa.** O piso do estacionamento substitui a base do tronco (vegetação cede
+a estrutura, §14), mas nada limpava o resto — as vias já chamavam
+`clear_vegetation_above`, o estacionamento não.
+
+**Correção.** O estacionamento limpa a vegetação acima de cada vaga.
+
+## O que foi verificado e NÃO é defeito
+
+- **Riscos diagonais cinza sobre a grama:** a camada "Cercas e Muros" do GDF
+  (47 mil trechos reais), grade de ferro sobre base de pedra.
+- **Linhas finas cruzando a cidade:** cabos das linhas de transmissão (`chain`).
+- **Quadrilátero salpicado de azul ao sul da EPTG:** `natural=wetland` do OSM
+  (musgo e poças).
+- **Córrego pontilhado no Parque do Guará:** a água é contínua; a mata de
+  galeria cobre trechos dela.
+
+## Resíduos abertos (medidos, causa não isolada)
+
+- **572 troncos sobre leito de rua/estacionamento**, concentrados junto a
+  bordas de região. Hipótese não verificada: árvores escritas pela segunda
+  passada do Halo depois que o piso da região já tinha sido gravado. A
+  limpeza de §27 só remove a coluna da vaga; copa sobre a grama vizinha fica.
+- **443 colunas com a camada de subsolo gravada duas vezes** em cotas
+  diferentes, deixando a cota superior sem bloco de chão.
+- **~33 mil pisos a céu aberto sem nada embaixo** restantes são telhados de
+  construções térreas, abrigos e marquises (4–7 blocos acima do chão, em
+  concreto claro/andesito/pedra lisa); o scanner não distingue telhado de
+  piso, mas não resta asfalto nessa condição além de 207 amostras.
+
+## Validação da Parte IV
+
+`cargo fmt --check`; `clippy -D warnings` (`--all-targets --all-features` e
+`--no-default-features`); `cargo test` (142 e 135). Quatro gerações completas
+do Guará I+II (v1–v4) sobre os mesmos arquivos; o scanner usado está descrito
+no começo desta parte.

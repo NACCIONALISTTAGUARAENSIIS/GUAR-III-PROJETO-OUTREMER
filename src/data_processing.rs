@@ -50,6 +50,40 @@ pub struct GenerationOptions {
 // 🚨 INFRAESTRUTURA SUBTERRÂNEA (WFS) - GERAÇÃO 🚨
 // ============================================================================
 
+/// Se uma rede linear (energia, adutora, gasoduto) passa ENTERRADA — a
+/// contraparte exata do que `power.rs` desenha na superfície.
+///
+/// Antes, toda `power=line` recebia também um duto de cobre enterrado: no
+/// Guará I+II as 16 linhas de transmissão do OSM saíam aéreas (cabos a ~19
+/// blocos do chão, `power::generate_power_line`) E com uma vala de cobre 5–7
+/// blocos abaixo, a mesma feature desenhada nos dois lugares. No OSM,
+/// `power=line`/`minor_line` é por definição a linha aérea; o cabo enterrado é
+/// `power=cable`. Tags explícitas vencem o padrão do tipo.
+fn is_buried_network(tags: &HashMap<String, String>) -> bool {
+    let tag = |k: &str| tags.get(k).map(|s| s.as_str());
+    match tag("location") {
+        Some("underground") | Some("underwater") => return true,
+        Some("overground") | Some("overhead") | Some("outdoor") | Some("roof") | Some("indoor") => {
+            return false
+        }
+        _ => {}
+    }
+    if tag("tunnel").is_some_and(|v| v != "no")
+        || tag("layer")
+            .and_then(|l| l.parse::<i32>().ok())
+            .is_some_and(|l| l < 0)
+    {
+        return true;
+    }
+    match tag("power") {
+        Some("line") | Some("minor_line") => false,
+        // Cabo: subterrâneo por padrão (OSM); a adutora/rede de esgoto da CAESB
+        // também chega sem `location` e é enterrada.
+        Some("cable") => true,
+        _ => tag("man_made") == Some("pipeline"),
+    }
+}
+
 pub fn generate_underground_infrastructure(
     editor: &mut WorldEditor,
     element: &ProcessedWay,
@@ -59,6 +93,9 @@ pub fn generate_underground_infrastructure(
     let power = element.tags.get("power").map(|s: &String| s.as_str());
 
     if man_made != Some("pipeline") && power != Some("cable") && power != Some("line") {
+        return;
+    }
+    if !is_buried_network(&element.tags) {
         return;
     }
 
@@ -394,7 +431,13 @@ fn dispatch_element(
             }
 
             // Infra Subterrânea WFS (Saneamento/Energia)
-            if way.tags.contains_key("man_made") || way.tags.contains_key("power") {
+            // Só conta na proveniência quando algo é de fato enterrado — antes toda
+            // `power=*`/`man_made=*` aparecia como "mistura" com este módulo.
+            let is_network = matches!(
+                way.tags.get("power").map(|s| s.as_str()),
+                Some("line") | Some("cable")
+            ) || way.tags.get("man_made").map(|s| s.as_str()) == Some("pipeline");
+            if is_network && is_buried_network(&way.tags) {
                 generate_underground_infrastructure(editor, way, args);
                 dispatched_modules.push("underground_infrastructure");
             }
@@ -1262,5 +1305,52 @@ mod anchor_tests {
             let (rx, rz) = ((x >> 9).clamp(RX.0, RX.1), (z >> 9).clamp(RZ.0, RZ.1));
             assert!(sweep_index(arx, arz) <= sweep_index(rx, rz));
         }
+    }
+}
+
+#[cfg(test)]
+mod buried_network_tests {
+    use super::is_buried_network;
+    use std::collections::HashMap;
+
+    fn tags(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// Linha de transmissão é aérea: não ganha duto de cobre enterrado (as 16
+    /// linhas do Guará saíam nos dois lugares).
+    #[test]
+    fn overhead_power_line_is_not_buried() {
+        assert!(!is_buried_network(&tags(&[("power", "line")])));
+        assert!(!is_buried_network(&tags(&[("power", "minor_line")])));
+    }
+
+    #[test]
+    fn cable_and_pipeline_are_buried_by_default() {
+        assert!(is_buried_network(&tags(&[("power", "cable")])));
+        assert!(is_buried_network(&tags(&[("man_made", "pipeline")])));
+    }
+
+    #[test]
+    fn explicit_location_wins_over_the_type_default() {
+        assert!(is_buried_network(&tags(&[
+            ("power", "line"),
+            ("location", "underground")
+        ])));
+        assert!(!is_buried_network(&tags(&[
+            ("man_made", "pipeline"),
+            ("location", "overground")
+        ])));
+        assert!(!is_buried_network(&tags(&[
+            ("power", "cable"),
+            ("location", "overhead")
+        ])));
+        assert!(is_buried_network(&tags(&[
+            ("man_made", "pipeline"),
+            ("layer", "-1")
+        ])));
     }
 }

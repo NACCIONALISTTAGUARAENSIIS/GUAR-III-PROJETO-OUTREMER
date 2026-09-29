@@ -314,9 +314,21 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                     let build_x = bx + wx;
                     let build_z = bz + wz;
 
-                    // Aterro do terreno (Embankment) abaixo dos trilhos de superfície
+                    // Aterro do terreno (Embankment) abaixo dos trilhos de superfície.
+                    // Sobe do chão DESTA célula até o leito DESTA célula (a borda de
+                    // curva tem superelevação de +1, ver "LEITO DE VIA" abaixo). Antes
+                    // partia do chão do EIXO para o disco inteiro: com o relevo real,
+                    // o lado de baixo de um trilho em encosta e toda borda de curva
+                    // ficavam com brita/paralelepípedo sobre um vão de ar.
                     if !is_tunnel && !is_elevated && dist_sq <= radius * radius {
-                        for fill_y in local_ground..final_y {
+                        let is_edge_cell = dist_sq >= (radius - 1) * (radius - 1);
+                        let bed_y = if is_curve && is_edge_cell {
+                            final_y + 1
+                        } else {
+                            final_y
+                        };
+                        let cell_ground = editor.get_ground_level(build_x, build_z);
+                        for fill_y in cell_ground..bed_y {
                             editor.set_block_absolute(DIRT, build_x, fill_y, build_z, None, None);
                         }
                     }

@@ -505,8 +505,14 @@ impl ProviderManager {
         let mut removed: HashSet<usize> = HashSet::new();
 
         for new_feature in features {
-            let dedup_eligible = new_feature.semantic_group != SemanticGroup::Terrain
-                && new_feature.semantic_group != SemanticGroup::Infrastructure;
+            // `Infrastructure` (estacionamento, cerca/muro, poste, equipamento)
+            // era isenta — a regra por AABB faria a caixa de um estacionamento
+            // engolir o poste dentro dele. Com linhas à parte e a comparação
+            // restrita ao MESMO tipo de objeto e de geometria
+            // (`should_supersede`), ela deduplica como os outros grupos: no
+            // Guará, 76 dos 105 estacionamentos do OSM repetiam um do GDF (62%
+            // da área), e as duas grades de vagas, defasadas, viravam listras.
+            let dedup_eligible = new_feature.semantic_group != SemanticGroup::Terrain;
 
             // LINHAS (vias, trilhos, cercas, cursos d'água): a regra por AABB não
             // serve. A caixa de uma avenida diagonal cobre um bairro inteiro —
@@ -703,6 +709,18 @@ fn inherit_missing_semantics(winner: &mut Feature, loser: &Feature) {
 /// paralelas distintas (as duas pistas da EPTG, marginal × expressa) ficam a
 /// 10+ blocos; EPTG/EPIA/serviço/calçadas, que não existem no GDF, a 20–50.
 const LINE_TOLERANCE: f64 = 6.0;
+/// Mesma ideia para linhas que não são vias (cercas, muros, cabos). Medido no
+/// Guará (barreiras do OSM × "Cercas e Muros" do GDF): o mesmo muro fica a
+/// 0–2 blocos (mediana 2,5); muros paralelos de lotes vizinhos podem estar a
+/// poucos metros, então a tolerância é menor que a das vias.
+const LINE_TOLERANCE_OTHER: f64 = 4.0;
+
+fn line_tolerance(group: SemanticGroup) -> f64 {
+    match group {
+        SemanticGroup::Highway | SemanticGroup::Railway | SemanticGroup::Waterway => LINE_TOLERANCE,
+        _ => LINE_TOLERANCE_OTHER,
+    }
+}
 /// Fração mínima do comprimento da candidata junto de linhas aceitas para ela
 /// ser a mesma (uma rua que só CRUZA outra fica junto dela em poucas amostras).
 const LINE_MIN_COVERAGE: f64 = 0.7;
@@ -798,7 +816,8 @@ impl LineIndex {
     ) -> LineMatch {
         let pts = line_points(candidate).expect("conflate só recebe LineString");
         let samples = samples_along(pts);
-        let pad = LINE_TOLERANCE.ceil() as i32;
+        let tolerance = line_tolerance(candidate.semantic_group);
+        let pad = tolerance.ceil() as i32;
         let mut covered = 0usize;
         let mut touched: HashSet<usize> = HashSet::new();
         for &(sx, sz) in &samples {
@@ -811,11 +830,12 @@ impl LineIndex {
                         || other.source == candidate.source
                         || other.priority >= candidate.priority
                         || other.semantic_group != candidate.semantic_group
+                        || !same_object_kind(other, candidate)
                     {
                         continue;
                     }
                     let opts = line_points(other).expect("índice só guarda linhas");
-                    if dist_to_segment((sx, sz), opts[seg], opts[seg + 1]) <= LINE_TOLERANCE {
+                    if dist_to_segment((sx, sz), opts[seg], opts[seg + 1]) <= tolerance {
                         hit = true;
                         touched.insert(idx);
                     }
@@ -834,7 +854,7 @@ impl LineIndex {
                     .iter()
                     .filter(|&&s| {
                         pts.windows(2)
-                            .any(|w| dist_to_segment(s, w[0], w[1]) <= LINE_TOLERANCE)
+                            .any(|w| dist_to_segment(s, w[0], w[1]) <= tolerance)
                     })
                     .count();
                 (idx, near as f64 / target_samples.len() as f64)
@@ -867,11 +887,101 @@ fn inherit_line_semantics(winner: &mut Feature, loser: &Feature) {
 }
 
 fn should_supersede(accepted: &Feature, candidate: &Feature) -> bool {
-    accepted.source != candidate.source
-        && accepted.priority < candidate.priority
-        && accepted.semantic_group == candidate.semantic_group
-        && accepted.intersects_aabb(candidate)
-        && aabb_coverage_ratio(candidate.aabb, accepted.aabb) >= MIN_COVERAGE_TO_SUPERSEDE
+    if accepted.source == candidate.source
+        || accepted.priority >= candidate.priority
+        || accepted.semantic_group != candidate.semantic_group
+        || !accepted.intersects_aabb(candidate)
+        || !same_object_kind(accepted, candidate)
+    {
+        return false;
+    }
+    match (&accepted.geometry, &candidate.geometry) {
+        // Ponto só substitui ponto (um poste não some por estar dentro da
+        // caixa de um estacionamento).
+        (GeometryType::Point(a), GeometryType::Point(b)) => {
+            (a.x - b.x).abs() <= 2 && (a.z - b.z).abs() <= 2
+        }
+        (a, b) if is_area(a) && is_area(b) => {
+            // A caixa é só o filtro barato; a decisão é a sobreposição REAL dos
+            // polígonos — um lote em L ou diagonal tem a caixa bem maior que ele.
+            aabb_coverage_ratio(candidate.aabb, accepted.aabb) >= MIN_COVERAGE_TO_SUPERSEDE
+                && polygon_coverage(candidate, accepted) >= MIN_COVERAGE_TO_SUPERSEDE
+        }
+        _ => false,
+    }
+}
+
+fn is_area(geometry: &GeometryType) -> bool {
+    matches!(
+        geometry,
+        GeometryType::Polygon(_) | GeometryType::MultiPolygon { .. }
+    )
+}
+
+/// Chaves que dizem QUE objeto uma feature de infraestrutura é. O grupo
+/// `Infrastructure` junta estacionamento, escola, cerca e poste; duas features
+/// só são "o mesmo objeto" se a primeira dessas chaves presente tiver o mesmo
+/// valor nas duas (estacionamento com estacionamento, muro com muro).
+const OBJECT_KIND_KEYS: &[&str] = &["amenity", "barrier", "power", "man_made"];
+
+fn same_object_kind(a: &Feature, b: &Feature) -> bool {
+    if a.semantic_group != SemanticGroup::Infrastructure {
+        return true;
+    }
+    OBJECT_KIND_KEYS
+        .iter()
+        .find_map(|k| a.get_tag(k).map(|v| (k, v)))
+        .is_none_or(|(k, v)| b.get_tag(k) == Some(v))
+}
+
+fn outer_rings(geometry: &GeometryType) -> Vec<&[XZPoint]> {
+    match geometry {
+        GeometryType::Polygon(ring) => vec![ring.as_slice()],
+        GeometryType::MultiPolygon { outer, .. } => outer.iter().map(|r| r.as_slice()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn point_in_rings(x: f64, z: f64, rings: &[&[XZPoint]]) -> bool {
+    rings.iter().any(|ring| {
+        let mut inside = false;
+        let n = ring.len();
+        for i in 0..n {
+            let (a, b) = (ring[i], ring[(i + n - 1) % n]);
+            let (ax, az, bx, bz) = (a.x as f64, a.z as f64, b.x as f64, b.z as f64);
+            if (az > z) != (bz > z) && x < (bx - ax) * (z - az) / (bz - az) + ax {
+                inside = !inside;
+            }
+        }
+        inside
+    })
+}
+
+/// Fração da área da candidata que cai dentro dos polígonos da aceita,
+/// amostrada numa grade de até 24×24 pontos sobre a caixa da candidata.
+fn polygon_coverage(candidate: &Feature, accepted: &Feature) -> f64 {
+    let own = outer_rings(&candidate.geometry);
+    let other = outer_rings(&accepted.geometry);
+    let (min_x, max_x, min_z, max_z) = candidate.aabb;
+    let steps = 24;
+    let (mut inside_own, mut inside_both) = (0usize, 0usize);
+    for i in 0..steps {
+        for j in 0..steps {
+            let x = min_x as f64 + (i as f64 + 0.5) * (max_x - min_x + 1) as f64 / steps as f64;
+            let z = min_z as f64 + (j as f64 + 0.5) * (max_z - min_z + 1) as f64 / steps as f64;
+            if point_in_rings(x, z, &own) {
+                inside_own += 1;
+                if point_in_rings(x, z, &other) {
+                    inside_both += 1;
+                }
+            }
+        }
+    }
+    if inside_own == 0 {
+        // Polígono degenerado (fino demais para a grade): cai na medida da caixa.
+        return aabb_coverage_ratio(candidate.aabb, accepted.aabb);
+    }
+    inside_both as f64 / inside_own as f64
 }
 
 // ============================================================================
@@ -1481,5 +1591,157 @@ mod line_conflation_tests {
         ]);
         assert_eq!(out.len(), 1);
         assert!(out[0].get_tag(NODE_TAGS_ATTR).is_none());
+    }
+}
+
+#[cfg(test)]
+mod same_object_merge_tests {
+    use super::*;
+
+    fn area(
+        id: u64,
+        source: &str,
+        priority: u8,
+        ring: &[(i32, i32)],
+        tags: &[(&str, &str)],
+    ) -> Feature {
+        let mut pts: Vec<XZPoint> = ring.iter().map(|&(x, z)| XZPoint::new(x, z)).collect();
+        pts.push(pts[0]);
+        Feature::new(
+            id,
+            semantic_group_from_tags(
+                &tags
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            ),
+            tags.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            GeometryType::Polygon(pts),
+            source.to_string(),
+            priority,
+        )
+    }
+
+    fn resolve(features: Vec<Feature>) -> Vec<u64> {
+        let mut ids: Vec<u64> = ProviderManager::new()
+            .resolve_collisions(features)
+            .iter()
+            .map(|f| f.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// O mesmo estacionamento no GDF e no OSM (76 de 105 no Guará) vira um só.
+    #[test]
+    fn duplicated_parking_lot_is_merged() {
+        let square = [(0, 0), (60, 0), (60, 40), (0, 40)];
+        let ids = resolve(vec![
+            area(1, "GDF_GeoJSON", 1, &square, &[("amenity", "parking")]),
+            area(
+                2,
+                "osm",
+                10,
+                &[(2, 1), (59, 1), (59, 39), (2, 39)],
+                &[("amenity", "parking")],
+            ),
+        ]);
+        assert_eq!(ids, vec![1]);
+    }
+
+    /// Escola e estacionamento são do mesmo grupo (`Infrastructure`) mas não
+    /// são o mesmo objeto.
+    #[test]
+    fn school_is_not_swallowed_by_parking_lot() {
+        let ids = resolve(vec![
+            area(
+                1,
+                "GDF_GeoJSON",
+                1,
+                &[(0, 0), (60, 0), (60, 40), (0, 40)],
+                &[("amenity", "parking")],
+            ),
+            area(
+                2,
+                "osm",
+                10,
+                &[(5, 5), (40, 5), (40, 30), (5, 30)],
+                &[("amenity", "school")],
+            ),
+        ]);
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn lamp_inside_parking_lot_survives() {
+        let lamp = Feature::new(
+            3,
+            SemanticGroup::Infrastructure,
+            [("amenity".to_string(), "parking".to_string())]
+                .into_iter()
+                .collect(),
+            GeometryType::Point(XZPoint::new(20, 20)),
+            "osm".to_string(),
+            10,
+        );
+        let ids = resolve(vec![
+            area(
+                1,
+                "GDF_GeoJSON",
+                1,
+                &[(0, 0), (60, 0), (60, 40), (0, 40)],
+                &[("amenity", "parking")],
+            ),
+            lamp,
+        ]);
+        assert_eq!(ids, vec![1, 3]);
+    }
+
+    /// Lote diagonal: a caixa dele cobre a caixa do vizinho, o polígono não.
+    #[test]
+    fn diagonal_polygon_does_not_supersede_by_box_alone() {
+        let ids = resolve(vec![
+            area(
+                1,
+                "GDF_GeoJSON",
+                1,
+                &[(0, 0), (10, 0), (100, 90), (100, 100), (90, 100), (0, 10)],
+                &[("amenity", "parking")],
+            ),
+            area(
+                2,
+                "osm",
+                10,
+                &[(60, 5), (95, 5), (95, 35), (60, 35)],
+                &[("amenity", "parking")],
+            ),
+        ]);
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    /// Muro do OSM a 2 blocos da "Cerca e Muro" do GDF é o mesmo muro; um muro
+    /// paralelo a 8 blocos (lote vizinho) não é.
+    #[test]
+    fn walls_use_the_tighter_line_tolerance() {
+        let wall = |id, src: &str, prio, z: i32| {
+            Feature::new(
+                id,
+                SemanticGroup::Infrastructure,
+                [("barrier".to_string(), "wall".to_string())]
+                    .into_iter()
+                    .collect(),
+                GeometryType::LineString(vec![XZPoint::new(0, z), XZPoint::new(80, z)]),
+                src.to_string(),
+                prio,
+            )
+        };
+        let ids = resolve(vec![
+            wall(1, "GDF_GeoJSON", 1, 0),
+            wall(2, "osm", 10, 2),
+            wall(3, "osm", 10, 8),
+        ]);
+        assert_eq!(ids, vec![1, 3]);
     }
 }
