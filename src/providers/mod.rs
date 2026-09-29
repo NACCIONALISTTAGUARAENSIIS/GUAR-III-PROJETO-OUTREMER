@@ -290,6 +290,19 @@ pub trait DataProvider: Send + Sync {
     // registrado) mesmo sem um chamador interno agora.
     #[allow(dead_code)]
     fn priority(&self) -> u8;
+    // 🚨 BESM-6: Auditoria de fontes de dados — pedido explícito do usuário
+    // pra saber não só QUAL provider gerou algo (ver `provenance.rs`), mas o
+    // NOME EXATO do arquivo (ou endpoint, pra provedores de rede) usado.
+    // Default vazio: providers que não sobrescrevem simplesmente não
+    // reportam nada (nunca um erro de compilação por não implementar isto).
+    // Providers baseados em arquivo local devolvem o caminho exato (o mesmo
+    // que já guardam internamente pra abrir o arquivo); providers de rede
+    // devolvem o endpoint configurado — ver o comentário em cada override
+    // pra limitações reais (ex.: `OSMProvider` tenta vários servidores
+    // Overpass em sequência; não rastreamos qual deles respondeu de fato).
+    fn describe_sources(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 // ============================================================================
