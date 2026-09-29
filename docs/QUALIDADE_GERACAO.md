@@ -463,7 +463,12 @@ com a mesma cor de superfície do chão urbano; e uma rua da Candangolândia
   paralelas vizinhas nunca é amostrada), que apareciam como grama no meio do
   asfalto; o pincel agora sub-amostra a meio bloco na largura e ao longo da
   via apenas nas diagonais (raio de cobertura do reticulado 0,5 ≈ 0,35 <
-  0,5, logo toda célula do retângulo varrido é atingida).
+  0,5, logo toda célula do retângulo varrido é atingida). (c) A Zona 2
+  (asfalto) começava em `dist > raio do canteiro`, que com raio 0 exclui a
+  coluna do eixo — a linha central ficava sem pavimento (grama, depois
+  andesito do chão urbano); sem canteiro o eixo agora é asfalto. (d) As
+  linhas de vaga junto à guia eram pintadas a cada 4 blocos (zebra contínua);
+  agora a cada 7 (≈5,5 m, o comprimento de uma vaga paralela).
 - Testes: `untouched_terrain_surface_is_replaceable_exactly_once` (quatro
   modos, fast-path, replay pelo Halo e o caso QE 17 landuse-via) e
   `floor_precedence_puts_specific_before_generic`.

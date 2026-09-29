@@ -1054,14 +1054,20 @@ fn generate_highways_internal(
                                 continue; // Pula pintura de asfalto aqui
                             }
 
-                            // ZONA 2: ASFALTO E VAGAS (Ignorando o Canteiro Central)
-                            if dist_from_center > physical_median_radius
+                            // ZONA 2: ASFALTO E VAGAS (Ignorando o Canteiro Central).
+                            // Sem canteiro (raio 0) o eixo (dist 0) também é asfalto —
+                            // `dist > 0` deixava a coluna central sem pavimento.
+                            if (physical_median_radius == 0
+                                || dist_from_center > physical_median_radius)
                                 && dist_from_center <= block_range
                             {
                                 let mut final_block = block_type;
 
+                                // Demarcação das vagas junto à guia: uma linha branca a cada
+                                // ~5,5 m (7 blocos na escala 1,33), o comprimento real de uma
+                                // vaga paralela — a cada 4 virava uma zebra contínua.
                                 if parking_lane && dist_from_center >= block_range - 2 {
-                                    let is_parking_line = distance_accumulator % 4 == 0;
+                                    let is_parking_line = distance_accumulator % 7 == 0;
                                     final_block = if is_parking_line {
                                         WHITE_CONCRETE
                                     } else {
