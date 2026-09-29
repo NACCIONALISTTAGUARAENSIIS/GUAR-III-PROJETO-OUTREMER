@@ -1011,6 +1011,12 @@ fn generate_highways_internal(
                                 local_ground + current_y
                             };
 
+                            // Copa/tronco que chegou antes (Halo, LiDAR, landuse) não fica
+                            // em cima da pista nem do passeio.
+                            if !is_bridge && dist_from_center <= block_range + 1 + sidewalk_width {
+                                editor.clear_vegetation_above(set_x, final_paint_y, set_z, 14);
+                            }
+
                             // ZONA 1: CANTEIRO FÍSICO CENTRAL (Impede asfalto de invadir).
                             // Só existe com raio > 0 — com raio 0 a condição `<= 0`
                             // pintava uma linha de grama no eixo de TODA via.

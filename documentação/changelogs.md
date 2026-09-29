@@ -33,6 +33,12 @@ verificação em `docs/QUALIDADE_GERACAO.md` (Parte II). Resumo:
    `CoordTransformer` do mundo; `uso_to_tag` impede que lotes virem prédios
    (e substituam os prédios reais do OSM no merge); grupos semânticos
    canônicos (`semantic_group_from_tags`, `railway` → `Railway`).
+7. **Árvores × estruturas** (`block_definitions.rs`, `world_editor/mod.rs`,
+   `tree.rs`, `highways.rs`): vegetação existente cede a escritores
+   estruturais (prédio, via, trilho...) em vez de deixar paredes com buracos;
+   a semente da árvore só pega em solo natural (lista positiva); a via limpa
+   a copa acima da pista e do passeio. Resolve o caso clássico do LiDAR, que
+   não distingue copa de telhado.
 6. **Chão × elementos** (`world_editor/mod.rs`, `data_processing.rs`,
    `highways.rs`): o passe de chão por região escrevia a superfície antes
    dos elementos e a escrita padrão é "só se vazio", então asfalto, pisos de

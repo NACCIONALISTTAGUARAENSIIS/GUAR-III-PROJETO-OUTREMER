@@ -297,6 +297,22 @@ impl Tree<'_> {
             y
         };
 
+        // 🚨 A semente só pega em SOLO NATURAL (lista positiva), nunca sobre
+        // asfalto, calçada, piso de prédio, quadra, ballast ou água. A regra
+        // antiga era uma lista negativa de blocos proibidos e deixava passar
+        // tudo que não estivesse nela (andesito de calçada, cascalho, laje) —
+        // era por aí que as árvores de `landuse`, `natural=wood` e da nuvem
+        // LiDAR (que não distingue copa de telhado) brotavam no meio da rua.
+        // Coluna ainda sem bloco (região vizinha, só no Halo) é terreno por
+        // vir: permitida, senão as copas de borda de região sumiam.
+        if editor.block_at_absolute(x, ground_y, z)
+            && !editor.check_for_block_absolute(x, ground_y, z, Some(NATURAL_GROUND), None)
+        {
+            return;
+        }
+
+        // Blocos de estrutura que a COPA não pode invadir ao crescer (as
+        // conferências laterais/radiculares abaixo continuam usando a lista).
         let mut blacklist: Vec<Block> = Vec::new();
         blacklist.extend(Self::get_building_wall_blocks());
         blacklist.extend(Self::get_building_floor_blocks());
@@ -308,11 +324,6 @@ impl Tree<'_> {
         blacklist.push(WHITE_CONCRETE);
         blacklist.push(RED_CONCRETE);
         blacklist.push(POLISHED_BASALT);
-
-        // Se a semente principal bateu no prédio, cancela.
-        if editor.check_for_block_absolute(x, ground_y, z, Some(&blacklist), None) {
-            return;
-        }
 
         let mut tree = Self::get_tree(tree_type);
         let mut rng = coord_rng(x, ground_y, z, 0);
@@ -1050,6 +1061,9 @@ const BUILDING_CLEARANCE: i32 = 2;
 /// Antes a regra era o inverso (uma lista curta de superfícies PROIBIDAS), e a
 /// mata brotava em quintais de quadra residencial, campos de futebol,
 /// estacionamentos de terra, cemitérios e pátios industriais.
+/// Superfícies em que uma árvore pode nascer (ver `Tree::create_of_type_with_height`).
+pub const NATURAL_GROUND: &[Block] = &[GRASS_BLOCK, DIRT, COARSE_DIRT, PODZOL, SAND, MOSS_BLOCK];
+
 pub fn is_wild_ground(
     editor: &WorldEditor,
     x: i32,

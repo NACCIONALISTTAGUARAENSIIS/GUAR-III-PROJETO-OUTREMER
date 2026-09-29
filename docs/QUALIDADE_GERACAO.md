@@ -483,6 +483,34 @@ com a mesma cor de superfície do chão urbano; e uma rua da Candangolândia
   modos, fast-path, replay pelo Halo e o caso QE 17 landuse-via) e
   `floor_precedence_puts_specific_before_generic`.
 
+## 14. Árvores "comendo" prédios e ruas (LiDAR, `landuse`, `natural`)
+
+**Sintoma.** Copas atravessando telhados, troncos no meio do asfalto, paredes
+com buracos onde uma árvore chegou antes — típico onde a vegetação vem da
+nuvem LiDAR, que não distingue copa de telhado, mas também de `landuse` e
+`natural=wood` do OSM.
+
+**Causa.** Três mecanismos somados: (1) a árvore chega antes da estrutura
+(pelo Halo de uma região vizinha, ou porque a feature de provedor é
+despachada depois e o prédio do OSM "só se vazio" já não consegue ocupar o
+espaço da copa); (2) a semente da árvore usava uma lista NEGATIVA de blocos
+proibidos, e brotava em qualquer superfície fora dela (andesito de calçada,
+laje, cascalho); (3) nada removia a copa que ficava sobre a pista.
+
+**Correção.**
+- `Block::is_vegetation` (copa, tronco, arbusto, capim) e a regra em
+  `WorldEditor::existing_for_write`: para um escritor ESTRUTURAL
+  (`get_priority` ≤ 8: prédio, via, trilho, água, cerca, piso esportivo,
+  equipamento) a vegetação existente conta como vazia — a parede atravessa a
+  copa em vez de nascer com buraco. Vegetação sobre vegetação segue "o
+  primeiro fica". Vale in-core e no replay do Halo.
+- `Tree::create_*`: a semente só pega em solo natural (lista positiva
+  `NATURAL_GROUND`: grama, terra, podzol, areia, musgo); coluna ainda sem
+  bloco (região vizinha) continua permitida para não perder copas de borda.
+- `highways.rs` chama `clear_vegetation_above` sobre pista e passeio (até 14
+  blocos, tolerando vãos de copa).
+- Teste em `halo_tests` (copa × parede por prioridade, limpeza sobre a via).
+
 ## Validação da Parte II
 
 Mesmos comandos da seção "Como reproduzir a validação". Testes novos:

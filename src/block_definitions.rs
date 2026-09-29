@@ -385,6 +385,31 @@ impl Block {
     /// Inverso de `name()`: resolve `"minecraft:oak_stairs"`/`"oak_stairs"`
     /// para o `Block` correspondente. Usado ao RELER uma região já gravada em
     /// disco (segunda passada do Halo, ver `WorldEditor::flush_pending_halo`).
+    /// Bloco de VEGETAÇÃO (copa, tronco, arbusto, capim): tudo que uma árvore
+    /// ou a floresta ambiente escreve acima do solo. Elementos estruturais
+    /// (prédio, via, trilho, cerca...) podem atravessá-la — ver
+    /// `WorldEditor::existing_for_write` — em vez de nascerem com buracos
+    /// onde uma copa chegou antes (o caso clássico do LiDAR, que não sabe o
+    /// que é árvore e o que é telhado).
+    pub fn is_vegetation(&self) -> bool {
+        let Some(n) = self.name_opt() else {
+            return false;
+        };
+        n == "leaves"
+            || n.ends_with("_leaves")
+            || n.ends_with("_log")
+            || n.ends_with("_wood")
+            || n == "short_grass"
+            || n == "tall_grass"
+            || n.starts_with("tall_grass")
+            || n.contains("fern")
+            || n == "dead_bush"
+            || n == "moss_carpet"
+            || n.contains("azalea")
+            || n == "vine"
+            || n.ends_with("_sapling")
+    }
+
     pub fn from_name(name: &str) -> Option<Block> {
         let bare = name.strip_prefix("minecraft:").unwrap_or(name);
         NAME_TO_BLOCK.get(bare).copied()

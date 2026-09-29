@@ -105,6 +105,10 @@ struct HaloOp {
 
 /// Precedência do passe de chão: qualquer elemento vence sobre ele.
 pub const TERRAIN_WRITE_PRIORITY: u8 = u8::MAX;
+/// Maior precedência (inclusive) que ainda conta como ESTRUTURA mapeada
+/// (`osm_parser::get_priority`: prédio, via, trilho, água, cerca, piso
+/// esportivo, equipamento). Escritas até aqui atravessam vegetação existente.
+pub const STRUCTURAL_WRITE_PRIORITY_MAX: u8 = 8;
 /// Precedência de escritas que não vêm de um elemento OSM despachado
 /// (floresta ambiente, features de provedor, HUD): abaixo de todo elemento
 /// mapeado, acima do terreno.
@@ -341,9 +345,45 @@ impl<'a> WorldEditor<'a> {
     fn existing_for_write(&self, x: i32, absolute_y: i32, z: i32, writer: u8) -> Option<Block> {
         let existing = self.world.get_block(x, absolute_y, z)?;
         if self.surface_yields_to(x, absolute_y, z, existing, writer) {
-            None
-        } else {
-            Some(existing)
+            return None;
+        }
+        // 🚨 Vegetação cede a estrutura. Árvores de `landuse`/`natural`/LiDAR
+        // chegam com frequência ANTES do prédio ou da via (pelo Halo, ou porque
+        // a nuvem LiDAR não distingue copa de telhado) e, como toda escrita é
+        // "só se vazio", o prédio nascia com buracos e a rua com troncos. A
+        // copa/tronco/capim existente conta como vazio para um escritor
+        // estrutural; vegetação sobre vegetação segue "o primeiro fica".
+        if writer <= STRUCTURAL_WRITE_PRIORITY_MAX && existing.is_vegetation() {
+            return None;
+        }
+        Some(existing)
+    }
+
+    /// Remove a vegetação (copa, tronco, capim) da coluna acima de `from_y`
+    /// até o primeiro bloco que não seja vegetação nem ar, no máximo
+    /// `max_height` blocos — para o asfalto/calçada não ficarem debaixo de uma
+    /// copa que chegou antes. Só na região ativa (na borda, o replay do Halo
+    /// já aplica a regra de precedência acima).
+    pub fn clear_vegetation_above(&mut self, x: i32, from_y: i32, z: i32, max_height: i32) {
+        if (x >> 9) != self.active_region_x || (z >> 9) != self.active_region_z {
+            return;
+        }
+        let mut gap = 0;
+        for y in (from_y + 1)..=(from_y + max_height) {
+            match self.world.get_block(x, y, z) {
+                Some(b) if b.is_vegetation() => {
+                    self.world.set_block(x, y, z, AIR);
+                    gap = 0;
+                }
+                Some(_) => break,
+                // copas têm vãos: tolera até 2 blocos de ar antes de desistir
+                None => {
+                    gap += 1;
+                    if gap > 2 {
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -1451,6 +1491,27 @@ mod halo_tests {
         editor.set_write_priority(1);
         editor.set_block_absolute(SMOOTH_STONE, 15, -62, 20, None, None);
         assert_eq!(block_at(&editor, 15, -62, 20), Some(SMOOTH_STONE));
+        editor.reset_write_priority();
+        // Vegetação cede a estrutura: copa de uma árvore de landuse (10) onde
+        // depois nasce a parede de um prédio (1); outro landuse (10) não passa;
+        // e a via limpa a copa acima do asfalto.
+        editor.set_write_priority(10);
+        editor.set_block_absolute(OAK_LEAVES, 16, -58, 20, None, None);
+        editor.set_block_absolute(OAK_LEAVES, 16, -57, 20, None, None);
+        editor.set_block_absolute(OAK_LOG, 17, -61, 20, None, None);
+        editor.set_block_absolute(OAK_LEAVES, 17, -60, 20, None, None);
+        editor.set_block_absolute(OAK_LEAVES, 17, -58, 20, None, None); // vão de 1 em -59
+        editor.set_write_priority(10);
+        editor.set_block_absolute(BRICK, 16, -58, 20, None, None);
+        assert_eq!(block_at(&editor, 16, -58, 20), Some(OAK_LEAVES));
+        editor.set_write_priority(1);
+        editor.set_block_absolute(BRICK, 16, -58, 20, None, None);
+        assert_eq!(block_at(&editor, 16, -58, 20), Some(BRICK));
+        editor.set_write_priority(2);
+        editor.clear_vegetation_above(17, -62, 20, 14);
+        assert!(block_at(&editor, 17, -61, 20).is_none());
+        assert!(block_at(&editor, 17, -60, 20).is_none());
+        assert!(block_at(&editor, 17, -58, 20).is_none());
         editor.reset_write_priority();
 
         // Pelo Halo: região 1 recebe uma escrita if-absent de asfalto antes de
