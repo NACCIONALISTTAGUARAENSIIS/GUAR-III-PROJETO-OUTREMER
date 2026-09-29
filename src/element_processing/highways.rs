@@ -50,6 +50,7 @@ const PROTECTED_BLOCKS: &[Block] = &[
 
 const SAFE_FOR_SIDEWALK: &[Block] = &[
     GRASS_BLOCK,
+    POLISHED_ANDESITE, // chão urbano do passe de terreno (`city_boundaries`)
     DIRT,
     COARSE_DIRT,
     PODZOL,
@@ -915,9 +916,17 @@ fn generate_highways_internal(
                             (y, false)
                         };
 
+                        // 🚨 `current_y` é RELATIVO ao solo local (0 = no nível da rua,
+                        // >0 = rampa/elevado), exceto em ponte de vale, onde é a cota
+                        // absoluta do tabuleiro. O código antigo fazia
+                        // `ground.max(current_y)` misturando os dois: com o terreno real
+                        // (positivo no Guará) a via era pintada NA cota do chão já
+                        // preenchido e descartada; onde o terreno é negativo ela
+                        // flutuava na cota 0. `paint_y_at` resolve a cota de pintura
+                        // de cada coluna de forma consistente para todos os pincéis.
                         if effective_elevation > 0 && !use_absolute_y {
                             let ground_y = editor.get_ground_level(*bx, *bz);
-                            for fill_y in ground_y..current_y {
+                            for fill_y in (ground_y + 1)..(ground_y + current_y) {
                                 let fill_block = if fill_y % 2 == 0 { STONE } else { COARSE_DIRT };
                                 editor.set_block_absolute(fill_block, *bx, fill_y, *bz, None, None);
                             }
@@ -934,12 +943,13 @@ fn generate_highways_internal(
                                     if dist_sq <= total_brush_range * total_brush_range {
                                         let set_x = bx + wx;
                                         let set_z = bz + wz;
-                                        let final_paint_y =
-                                            if use_absolute_y || effective_elevation > 0 {
-                                                current_y
-                                            } else {
-                                                editor.get_ground_level(set_x, set_z).max(current_y)
-                                            };
+                                        let final_paint_y = paint_y_at(
+                                            editor,
+                                            set_x,
+                                            set_z,
+                                            current_y,
+                                            use_absolute_y,
+                                        );
 
                                         if dist_sq <= block_range * block_range
                                             && !editor.check_for_block_absolute(
@@ -973,10 +983,10 @@ fn generate_highways_internal(
 
                             // OTIMIZAÇÃO: Um único lookup por Célula Local
                             let local_ground = editor.get_ground_level(set_x, set_z);
-                            let final_paint_y = if use_absolute_y || effective_elevation > 0 {
+                            let final_paint_y = if use_absolute_y {
                                 current_y
                             } else {
-                                local_ground.max(current_y)
+                                local_ground + current_y
                             };
 
                             // ZONA 1: CANTEIRO FÍSICO CENTRAL (Impede asfalto de invadir)
@@ -1051,11 +1061,11 @@ fn generate_highways_internal(
                                     );
                                 }
 
-                                if (effective_elevation > 0 || use_absolute_y) && current_y > 0 {
+                                if final_paint_y > local_ground {
                                     editor.set_block_absolute(
                                         POLISHED_ANDESITE,
                                         set_x,
-                                        current_y - 1,
+                                        final_paint_y - 1,
                                         set_z,
                                         None,
                                         None,
@@ -1063,7 +1073,7 @@ fn generate_highways_internal(
                                     add_highway_support_pillar_absolute(
                                         editor,
                                         set_x,
-                                        current_y,
+                                        final_paint_y,
                                         set_z,
                                         w,
                                         0,
@@ -1212,8 +1222,8 @@ fn generate_highways_internal(
                             let out_x2 = (*bx as f64 - outline_w as f64 * norm_x).round() as i32;
                             let out_z2 = (*bz as f64 - outline_w as f64 * norm_z).round() as i32;
 
-                            let y1 = editor.get_ground_level(out_x1, out_z1);
-                            let y2 = editor.get_ground_level(out_x2, out_z2);
+                            let y1 = paint_y_at(editor, out_x1, out_z1, current_y, use_absolute_y);
+                            let y2 = paint_y_at(editor, out_x2, out_z2, current_y, use_absolute_y);
 
                             if !editor.check_for_block_absolute(
                                 out_x1,
@@ -1261,7 +1271,8 @@ fn generate_highways_internal(
                                             as i32;
                                         let dz = (*bz as f64 + off as f64 * norm_z * side).round()
                                             as i32;
-                                        let dy = editor.get_ground_level(dx, dz).max(current_y);
+                                        let dy =
+                                            paint_y_at(editor, dx, dz, current_y, use_absolute_y);
                                         if editor.check_for_block_absolute(
                                             dx,
                                             dy,
@@ -1293,7 +1304,8 @@ fn generate_highways_internal(
                                         (*bx as f64 + dist_faixa as f64 * norm_x).round() as i32;
                                     let fz1 =
                                         (*bz as f64 + dist_faixa as f64 * norm_z).round() as i32;
-                                    let y_f1 = editor.get_ground_level(fx1, fz1);
+                                    let y_f1 =
+                                        paint_y_at(editor, fx1, fz1, current_y, use_absolute_y);
                                     if !editor.check_for_block_absolute(
                                         fx1,
                                         y_f1,
@@ -1315,7 +1327,8 @@ fn generate_highways_internal(
                                         (*bx as f64 - dist_faixa as f64 * norm_x).round() as i32;
                                     let fz2 =
                                         (*bz as f64 - dist_faixa as f64 * norm_z).round() as i32;
-                                    let y_f2 = editor.get_ground_level(fx2, fz2);
+                                    let y_f2 =
+                                        paint_y_at(editor, fx2, fz2, current_y, use_absolute_y);
                                     if !editor.check_for_block_absolute(
                                         fx2,
                                         y_f2,
@@ -1339,8 +1352,13 @@ fn generate_highways_internal(
                                     // calçada ou obra que já esteja ali.
                                     let center_x = *bx;
                                     let center_z = *bz;
-                                    let y_center =
-                                        editor.get_ground_level(center_x, center_z).max(current_y);
+                                    let y_center = paint_y_at(
+                                        editor,
+                                        center_x,
+                                        center_z,
+                                        current_y,
+                                        use_absolute_y,
+                                    );
 
                                     if editor.check_for_block_absolute(
                                         center_x,
@@ -1370,6 +1388,21 @@ fn generate_highways_internal(
                 previous_node = Some((node.x, node.z));
             }
         }
+    }
+}
+
+/// Cota ABSOLUTA de pintura da via na coluna `(x, z)`: o solo local mais o
+/// deslocamento relativo da rampa/elevado (`current_y`), ou a cota absoluta do
+/// tabuleiro quando a via é uma ponte de vale (`use_absolute_y`). Única fonte
+/// de verdade para asfalto, bordas, faixas e divisórias — todos os pincéis
+/// precisam cair na MESMA camada para as whitelists de "só sobre o próprio
+/// pavimento" funcionarem.
+#[inline]
+fn paint_y_at(editor: &WorldEditor, x: i32, z: i32, current_y: i32, use_absolute_y: bool) -> i32 {
+    if use_absolute_y {
+        current_y
+    } else {
+        editor.get_ground_level(x, z) + current_y
     }
 }
 

@@ -467,41 +467,6 @@ impl WorldToModify {
         );
     }
 
-    /// Set a block only if the position is currently empty (AIR / absent).
-    ///
-    /// This avoids the double HashMap traversal of `get_block()` + `set_block()`
-    /// which is the hot path in ground generation and many element processors.
-    #[inline]
-    pub fn set_block_if_absent(&mut self, x: i32, y: i32, z: i32, block: Block) {
-        let chunk_x: i32 = x >> 4;
-        let chunk_z: i32 = z >> 4;
-        let region_x: i32 = chunk_x >> 5;
-        let region_z: i32 = chunk_z >> 5;
-
-        let region = self.regions.entry((region_x, region_z)).or_default();
-        let chunk = region
-            .chunks
-            .entry((chunk_x & 31, chunk_z & 31))
-            .or_default();
-
-        // Clamp Y
-        let y = y.clamp(MIN_Y, MAX_Y);
-        let section_idx: i8 = (y >> 4) as i8;
-        let section = chunk.sections.entry(section_idx).or_default();
-
-        let local_x = (x & 15) as u8;
-        let local_y = (y & 15) as u8;
-        let local_z = (z & 15) as u8;
-        let idx = SectionToModify::index(local_x, local_y, local_z);
-
-        // Only write if the current block is AIR
-        if section.storage.get(idx) == AIR {
-            section.storage.set(idx, block);
-            // Clear any stale properties from a previous block at this position
-            section.properties.remove(&idx);
-        }
-    }
-
     /// Fill an entire column (single x, z) from y_min to y_max with the same block,
     /// resolving region/chunk only once.  Used by ground generation.
     #[inline]

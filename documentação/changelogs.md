@@ -31,6 +31,14 @@ verificação em `docs/QUALIDADE_GERACAO.md` (Parte II). Resumo:
    `CoordTransformer` do mundo; `uso_to_tag` impede que lotes virem prédios
    (e substituam os prédios reais do OSM no merge); grupos semânticos
    canônicos (`semantic_group_from_tags`, `railway` → `Railway`).
+6. **Chão × elementos** (`world_editor/mod.rs`, `data_processing.rs`,
+   `highways.rs`): o passe de chão por região escrevia a superfície antes
+   dos elementos e a escrita padrão é "só se vazio", então asfalto, pisos de
+   quadra/pátio/landuse e água eram descartados em silêncio; e `highways`
+   misturava Y relativo com absoluto (`ground.max(current_y)`), enterrando
+   ruas em terreno positivo e fazendo-as flutuar em terreno negativo.
+   Superfície de terreno intocada agora conta como vazia para a primeira
+   escrita de elemento; `paint_y_at` unifica a cota de pintura das vias.
 
 ## 2026-09-29 — Qualidade da geração: sete defeitos sistêmicos corrigidos
 

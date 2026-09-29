@@ -21,6 +21,10 @@ pub(crate) use common::WorldToModify;
 /// de terreno/superfície do motor é limitada por ele — ver `ground.rs`.
 pub(crate) use common::MAX_Y as WORLD_MAX_Y;
 
+/// Colunas de uma região Anvil (512 × 512) — tamanho do registro de
+/// superfície de terreno intocada (`WorldEditor::terrain_surface_y`).
+const TERRAIN_SURFACE_CELLS: usize = 512 * 512;
+
 #[cfg(feature = "bedrock")]
 pub(crate) use bedrock::{BedrockSaveError, BedrockWriter};
 
@@ -129,6 +133,26 @@ pub struct WorldEditor<'a> {
     halo_block_lists: Vec<Vec<Block>>,
     halo_block_list_index: HashMap<Vec<Block>, u16>,
 
+    /// Cota Y da superfície de TERRENO ainda intocada em cada coluna da região
+    /// ativa (`i32::MIN` = sem registro), indexada por `surface_idx`.
+    ///
+    /// 🚨 CORREÇÃO ESTRUTURAL (a causa de "as ruas não são geradas"): o
+    /// Scanline preenche o chão da região ANTES de despachar os elementos, e a
+    /// escrita padrão do motor (`set_block(..., None, None)`) é "só se vazio".
+    /// No Arnis original o chão nasce DEPOIS dos elementos, então toda pintura
+    /// de piso — asfalto, calçada, quadra, pátio, gramado de `landuse`, água —
+    /// vencia o terreno; aqui ela batia no bloco do chão e era descartada em
+    /// silêncio (19 pontos de escrita em 8 módulos). O registro abaixo devolve a
+    /// semântica original: enquanto uma coluna ainda tem só o bloco de terreno
+    /// do passe de chão, ela conta como VAZIA para qualquer escrita de
+    /// elemento (if-absent, whitelist ou blacklist), e a primeira escrita a
+    /// consome. Blocos postos por elementos continuam protegidos como antes.
+    terrain_surface_y: Vec<i32>,
+    /// Ligado durante `flush_pending_halo`: a região foi relida do disco, o
+    /// registro acima não existe mais, e a superfície de terreno é reconhecida
+    /// pela heurística (bloco de chão do passe de terreno na cota do `Ground`).
+    replaying_sealed_region: bool,
+
     xzbbox: &'a XZBBox,
     llbbox: LLBBox,
     ground: Option<Arc<Ground>>,
@@ -152,6 +176,8 @@ impl<'a> WorldEditor<'a> {
             halo_cache: HashMap::new(),
             halo_block_lists: Vec::new(),
             halo_block_list_index: HashMap::new(),
+            terrain_surface_y: vec![i32::MIN; TERRAIN_SURFACE_CELLS],
+            replaying_sealed_region: false,
             xzbbox,
             llbbox,
             ground: None,
@@ -185,6 +211,8 @@ impl<'a> WorldEditor<'a> {
             halo_cache: HashMap::new(),
             halo_block_lists: Vec::new(),
             halo_block_list_index: HashMap::new(),
+            terrain_surface_y: vec![i32::MIN; TERRAIN_SURFACE_CELLS],
+            replaying_sealed_region: false,
             xzbbox,
             llbbox,
             ground: None,
@@ -205,6 +233,78 @@ impl<'a> WorldEditor<'a> {
     pub fn set_active_region(&mut self, rx: i32, rz: i32) {
         self.active_region_x = rx;
         self.active_region_z = rz;
+        self.terrain_surface_y.fill(i32::MIN);
+    }
+
+    #[inline(always)]
+    fn surface_idx(x: i32, z: i32) -> usize {
+        (((x & 511) as usize) << 9) | ((z & 511) as usize)
+    }
+
+    /// Escreve o bloco de SUPERFÍCIE do passe de chão da região ativa e o marca
+    /// como terreno intocado (ver `terrain_surface_y`). Só o passe de terreno
+    /// de `data_processing.rs` chama isto; qualquer outra escrita usa
+    /// `set_block*` e consome a marca.
+    pub fn set_terrain_surface_absolute(&mut self, block: Block, x: i32, absolute_y: i32, z: i32) {
+        if !self.xzbbox.contains(&XZPoint::new(x, z)) {
+            return;
+        }
+        let rx = x >> 9;
+        let rz = z >> 9;
+        if rx != self.active_region_x || rz != self.active_region_z {
+            self.push_halo_op(rx, rz, x, absolute_y, z, block, None, HaloMode::IfAbsent);
+            return;
+        }
+        if self.world.get_block(x, absolute_y, z).is_none() {
+            self.world.set_block(x, absolute_y, z, block);
+            self.terrain_surface_y[Self::surface_idx(x, z)] = absolute_y;
+        }
+    }
+
+    /// `true` se `(x, y, z)` ainda é a superfície de terreno intocada do passe
+    /// de chão — para efeito de escrita de elementos, conta como VAZIO.
+    #[inline]
+    fn is_untouched_terrain_surface(
+        &self,
+        x: i32,
+        absolute_y: i32,
+        z: i32,
+        existing: Block,
+    ) -> bool {
+        if self.terrain_surface_y[Self::surface_idx(x, z)] == absolute_y {
+            return true;
+        }
+        // Região relida do disco (2ª passada do Halo): o registro se perdeu, mas
+        // o bloco de chão do passe de terreno na cota exata do `Ground` só pode
+        // ter vindo dele — elementos não põem GRASS/ANDESITO POLIDO exatamente
+        // ali sem também terem consumido a coluna (calçadas e gramados de
+        // elementos ficam a salvo porque o replay tardio só traz vazamentos
+        // "para trás", que a âncora por canto mínimo já torna raros).
+        self.replaying_sealed_region
+            && (existing == GRASS_BLOCK || existing == POLISHED_ANDESITE)
+            && self.get_ground_level(x, z) == absolute_y
+    }
+
+    /// Consome a marca de terreno intocado de `(x, z)` quando um elemento
+    /// escreve na cota da superfície.
+    #[inline]
+    fn consume_terrain_surface(&mut self, x: i32, absolute_y: i32, z: i32) {
+        let idx = Self::surface_idx(x, z);
+        if self.terrain_surface_y[idx] == absolute_y {
+            self.terrain_surface_y[idx] = i32::MIN;
+        }
+    }
+
+    /// Bloco existente na região ativa do ponto de vista de um ELEMENTO: a
+    /// superfície de terreno intocada é reportada como ausente.
+    #[inline]
+    fn existing_for_element_write(&self, x: i32, absolute_y: i32, z: i32) -> Option<Block> {
+        let existing = self.world.get_block(x, absolute_y, z)?;
+        if self.is_untouched_terrain_surface(x, absolute_y, z, existing) {
+            None
+        } else {
+            Some(existing)
+        }
     }
 
     /// Replaya, na região agora ativa, as escritas que elementos de regiões
@@ -230,7 +330,7 @@ impl<'a> WorldEditor<'a> {
     }
 
     fn apply_halo_op(&mut self, op: HaloOp) {
-        let existing = self.world.get_block(op.x, op.y, op.z);
+        let existing = self.existing_for_element_write(op.x, op.y, op.z);
         let should_insert = match (op.mode, existing) {
             (HaloMode::Force, _) => true,
             (_, None) => true,
@@ -252,6 +352,7 @@ impl<'a> WorldEditor<'a> {
                 ),
                 None => self.world.set_block(op.x, op.y, op.z, op.block),
             }
+            self.consume_terrain_surface(op.x, op.y, op.z);
         }
     }
 
@@ -338,7 +439,9 @@ impl<'a> WorldEditor<'a> {
             self.set_active_region(*rx, *rz);
             self.world = WorldToModify::default();
             self.load_java_region_from_disk(*rx, *rz)?;
+            self.replaying_sealed_region = true;
             self.load_halo_to_core();
+            self.replaying_sealed_region = false;
             self.flush_active_region();
             applied += ops;
         }
@@ -463,21 +566,22 @@ impl<'a> WorldEditor<'a> {
 
         // Se o bloco pertencer � regi�o ativamente processada, ele vai pro Core.
         if rx == self.active_region_x && rz == self.active_region_z {
-            let should_insert = if let Some(existing_block) = self.world.get_block(x, absolute_y, z)
-            {
-                if let Some(whitelist) = override_whitelist {
-                    whitelist.iter().any(|b| b.id() == existing_block.id())
-                } else if let Some(blacklist) = override_blacklist {
-                    !blacklist.iter().any(|b| b.id() == existing_block.id())
+            let should_insert =
+                if let Some(existing_block) = self.existing_for_element_write(x, absolute_y, z) {
+                    if let Some(whitelist) = override_whitelist {
+                        whitelist.iter().any(|b| b.id() == existing_block.id())
+                    } else if let Some(blacklist) = override_blacklist {
+                        !blacklist.iter().any(|b| b.id() == existing_block.id())
+                    } else {
+                        false
+                    }
                 } else {
-                    false
-                }
-            } else {
-                true
-            };
+                    true
+                };
 
             if should_insert {
                 self.world.set_block(x, absolute_y, z, block);
+                self.consume_terrain_surface(x, absolute_y, z);
             }
         }
         // Se o bloco pertencer a uma regi�o vizinha (vazamento), ele vai pro Halo
@@ -513,7 +617,10 @@ impl<'a> WorldEditor<'a> {
         let rz = z >> 9;
 
         if rx == self.active_region_x && rz == self.active_region_z {
-            self.world.set_block_if_absent(x, absolute_y, z, block);
+            if self.existing_for_element_write(x, absolute_y, z).is_none() {
+                self.world.set_block(x, absolute_y, z, block);
+                self.consume_terrain_surface(x, absolute_y, z);
+            }
         } else {
             self.push_halo_op(rx, rz, x, absolute_y, z, block, None, HaloMode::IfAbsent);
         }
@@ -558,22 +665,23 @@ impl<'a> WorldEditor<'a> {
         let rz = z >> 9;
 
         if rx == self.active_region_x && rz == self.active_region_z {
-            let should_insert = if let Some(existing_block) = self.world.get_block(x, absolute_y, z)
-            {
-                if let Some(whitelist) = override_whitelist {
-                    whitelist.iter().any(|b| b.id() == existing_block.id())
-                } else if let Some(blacklist) = override_blacklist {
-                    !blacklist.iter().any(|b| b.id() == existing_block.id())
+            let should_insert =
+                if let Some(existing_block) = self.existing_for_element_write(x, absolute_y, z) {
+                    if let Some(whitelist) = override_whitelist {
+                        whitelist.iter().any(|b| b.id() == existing_block.id())
+                    } else if let Some(blacklist) = override_blacklist {
+                        !blacklist.iter().any(|b| b.id() == existing_block.id())
+                    } else {
+                        false
+                    }
                 } else {
-                    false
-                }
-            } else {
-                true
-            };
+                    true
+                };
 
             if should_insert {
                 self.world
                     .set_block_with_properties(x, absolute_y, z, block_with_props);
+                self.consume_terrain_surface(x, absolute_y, z);
             }
         } else {
             // Propriedades (orientação de escada, meia-laje em cima, etc.) são
@@ -1240,6 +1348,50 @@ mod halo_tests {
         // Whitelist que bate: shadow atualizado.
         editor.set_block_absolute(STONE, 700, -62, 5, Some(&[GRASS_BLOCK]), None);
         assert!(editor.check_for_block_absolute(700, -62, 5, Some(&[STONE]), None));
+    }
+
+    /// O chão do passe de terreno conta como VAZIO para a primeira escrita de
+    /// elemento (qualquer modo) — e só para ela; blocos de elementos seguem
+    /// protegidos, e o mesmo vale para o que chega pelo Halo.
+    #[test]
+    fn untouched_terrain_surface_is_replaceable_exactly_once() {
+        let xzbbox = XZBBox::new(0, 1023, 0, 511);
+        let mut editor = editor_for(&xzbbox);
+        editor.set_active_region(0, 0);
+        for x in 10..=16 {
+            editor.set_terrain_surface_absolute(POLISHED_ANDESITE, x, -62, 20);
+        }
+        // Lê como andesito (as whitelists dos módulos enxergam o terreno real)…
+        assert!(editor.check_for_block_absolute(10, -62, 20, Some(&[POLISHED_ANDESITE]), None));
+        // …mas a pintura de piso if-absent (asfalto) substitui.
+        editor.set_block_absolute(BLACK_CONCRETE, 10, -62, 20, None, None);
+        assert_eq!(block_at(&editor, 10, -62, 20), Some(BLACK_CONCRETE));
+        // Uma segunda escrita if-absent já não vence: a coluna foi consumida.
+        editor.set_block_absolute(SMOOTH_QUARTZ, 10, -62, 20, None, None);
+        assert_eq!(block_at(&editor, 10, -62, 20), Some(BLACK_CONCRETE));
+        // Whitelist que não inclui o terreno também vence sobre terreno intocado
+        // (era o que acontecia no Arnis, onde o chão ainda não existia)…
+        editor.set_block_absolute(RED_CONCRETE, 11, -62, 20, Some(&[GRASS_BLOCK]), None);
+        assert_eq!(block_at(&editor, 11, -62, 20), Some(RED_CONCRETE));
+        // …e a blacklist idem.
+        editor.set_block_absolute(WATER, 12, -62, 20, None, Some(&[POLISHED_ANDESITE]));
+        assert_eq!(block_at(&editor, 12, -62, 20), Some(WATER));
+        // Fast-path if-absent também.
+        editor.set_block_if_absent_absolute(SAND, 13, -62, 20);
+        assert_eq!(block_at(&editor, 13, -62, 20), Some(SAND));
+        // Fora da cota da superfície nada muda: um bloco de elemento acima segue protegido.
+        editor.set_block_absolute(BRICK, 14, -61, 20, None, None);
+        editor.set_block_absolute(STONE, 14, -61, 20, None, None);
+        assert_eq!(block_at(&editor, 14, -61, 20), Some(BRICK));
+
+        // Pelo Halo: região 1 recebe uma escrita if-absent de asfalto antes de
+        // existir; quando vira ativa, o chão de terreno nasce e o replay vence.
+        editor.set_block_absolute(BLACK_CONCRETE, 700, -62, 20, None, None);
+        editor.flush_active_region_for_test();
+        editor.set_active_region(1, 0);
+        editor.set_terrain_surface_absolute(GRASS_BLOCK, 700, -62, 20);
+        editor.load_halo_to_core();
+        assert_eq!(block_at(&editor, 700, -62, 20), Some(BLACK_CONCRETE));
     }
 
     /// Vazamento "para trás" (para uma região já gravada em disco): a segunda

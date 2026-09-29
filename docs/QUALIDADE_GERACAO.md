@@ -401,6 +401,48 @@ Indoor/Utility = **1**; WFS, KML, 3D Tiles = **2**; CSV, MVT = **5**;
 OSM, PBF = **10**. Regra: o dado governamental/levantado vence o
 crowdsourced no mesmo grupo semântico e com ≥50% de sobreposição de AABB.
 
+## 13. O chão nascia antes dos elementos e engolia toda pintura de piso
+
+**Sintoma.** Depois de tudo acima, a geração real do Guará v2 ainda mostrava
+as ruas da QE 17 como uma faixa contínua de andesito polido — sem asfalto — e
+quadras/pátios sem piso. Medido no mundo gerado (seção transversal de uma
+`highway=residential`, via o endpoint `/chunk` do visualizador): 20 colunas
+com a mesma cor de superfície do chão urbano; e uma rua da Candangolândia
+(terreno a −11) com asfalto **flutuando na cota 0**.
+
+**Causa (duas, anteriores a este branch).**
+1. O Scanline preenche o chão de cada região (passo 2) ANTES de despachar os
+   elementos (passo 4), e a escrita padrão do motor,
+   `set_block(..., None, None)`, é "só se vazio". No Arnis original o chão
+   nasce DEPOIS dos elementos, então toda pintura de piso vencia o terreno;
+   aqui ela batia no bloco de chão e era descartada em silêncio — 19 pontos
+   de escrita em 8 módulos (asfalto e faixas de `highways`, pisos de
+   `landuse`/`leisure`/`sports`/`stations`, água, pátios). Enquanto o mundo
+   era plano (defeito 2), o problema ficou mascarado; com terreno real ele
+   apareceu em todo lugar.
+2. `highways.rs` calculava a cota de pintura como `ground.max(current_y)`,
+   com `current_y` RELATIVO (0 no nível da rua, >0 em rampa): com terreno
+   positivo a via caía exatamente na cota do chão já preenchido (e era
+   descartada pelo item 1); com terreno negativo a via ficava na cota 0,
+   flutuando.
+
+**Correção.**
+- `WorldEditor` ganha um registro de **superfície de terreno intocada**
+  (`terrain_surface_y`, 512×512 por região): o passe de chão escreve por
+  `set_terrain_surface_absolute`, e para qualquer escrita de ELEMENTO
+  (if-absent, whitelist, blacklist, com propriedades, replay do Halo) essa
+  coluna conta como VAZIA até a primeira escrita consumi-la. Blocos postos por
+  elementos continuam protegidos exatamente como antes. Na 2ª passada do Halo
+  (região relida do disco) a superfície é reconhecida pela heurística "bloco
+  de chão do passe de terreno na cota exata do `Ground`".
+- `highways.rs`: `paint_y_at(x, z) = solo local + current_y` (ou a cota
+  absoluta do tabuleiro em ponte de vale) é a única fonte de verdade para
+  asfalto, bordas, faixas, divisórias e pilares; o aterro de rampas é
+  relativo ao solo. `SAFE_FOR_SIDEWALK` inclui o andesito do chão urbano para
+  meio-fio e calçada existirem também dentro da mancha urbana.
+- Teste `untouched_terrain_surface_is_replaceable_exactly_once` cobre os
+  quatro modos, o fast-path e o replay pelo Halo.
+
 ## Validação da Parte II
 
 Mesmos comandos da seção "Como reproduzir a validação". Testes novos:

@@ -853,21 +853,17 @@ pub fn generate_world_with_options(
                                 Some(&[STONE]),
                                 None,
                             ) {
-                                if is_urban {
-                                    editor.set_block_if_absent_absolute(
-                                        POLISHED_ANDESITE,
-                                        x,
-                                        ground_y,
-                                        z,
-                                    );
+                                // Superfície marcada como TERRENO INTOCADO: a primeira
+                                // pintura de piso de um elemento (asfalto, quadra, pátio,
+                                // gramado de landuse, água) a substitui, como no Arnis,
+                                // onde o chão nascia depois dos elementos. Ver
+                                // `WorldEditor::terrain_surface_y`.
+                                let surface = if is_urban {
+                                    POLISHED_ANDESITE
                                 } else {
-                                    editor.set_block_if_absent_absolute(
-                                        GRASS_BLOCK,
-                                        x,
-                                        ground_y,
-                                        z,
-                                    );
-                                }
+                                    GRASS_BLOCK
+                                };
+                                editor.set_terrain_surface_absolute(surface, x, ground_y, z);
                                 editor.set_block_if_absent_absolute(
                                     COARSE_DIRT,
                                     x,
