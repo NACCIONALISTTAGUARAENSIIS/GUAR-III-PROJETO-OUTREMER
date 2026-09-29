@@ -975,10 +975,32 @@ fn generate_highways_internal(
                             continue; // Pula o brush ortogonal
                         }
 
-                        // Brush Chato (Ortogonal) para Vias Normais
-                        for w in -total_brush_range..=total_brush_range {
-                            let set_x = (*bx as f64 + w as f64 * norm_x).round() as i32;
-                            let set_z = (*bz as f64 + w as f64 * norm_z).round() as i32;
+                        // Brush Chato (Ortogonal) para Vias Normais.
+                        //
+                        // 🚨 Em trechos diagonais, pincéis perpendiculares saindo de
+                        // pontos de Bresenham 8-conexos deixam buracos em xadrez (a
+                        // célula entre duas linhas paralelas vizinhas nunca é
+                        // amostrada). Antes eram invisíveis (o chão pré-preenchido
+                        // tapava tudo); agora apareciam como grama no meio do asfalto.
+                        // Sub-amostrar a meio bloco na largura E ao longo da via cobre
+                        // toda célula do retângulo varrido (raio de cobertura do
+                        // reticulado 0,5 ≈ 0,35 < 0,5). Só nas diagonais — em trechos
+                        // alinhados aos eixos o pincel já é exato.
+                        let diagonal = norm_x.abs() > 0.05 && norm_z.abs() > 0.05;
+                        let sub_steps: &[(f64, f64)] = if diagonal {
+                            &[(0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.5, 0.5)]
+                        } else {
+                            &[(0.0, 0.0)]
+                        };
+                        for (w, &(dw, da)) in (-total_brush_range..=total_brush_range)
+                            .flat_map(|w| sub_steps.iter().map(move |s| (w, s)))
+                        {
+                            if w == total_brush_range && dw > 0.0 {
+                                continue; // não alarga a borda externa
+                            }
+                            let wf = w as f64 + dw;
+                            let set_x = (*bx as f64 + wf * norm_x + da * dir_x).round() as i32;
+                            let set_z = (*bz as f64 + wf * norm_z + da * dir_z).round() as i32;
                             let dist_from_center = w.abs();
 
                             // OTIMIZAÇÃO: Um único lookup por Célula Local
@@ -989,8 +1011,11 @@ fn generate_highways_internal(
                                 local_ground + current_y
                             };
 
-                            // ZONA 1: CANTEIRO FÍSICO CENTRAL (Impede asfalto de invadir)
-                            if dist_from_center <= physical_median_radius
+                            // ZONA 1: CANTEIRO FÍSICO CENTRAL (Impede asfalto de invadir).
+                            // Só existe com raio > 0 — com raio 0 a condição `<= 0`
+                            // pintava uma linha de grama no eixo de TODA via.
+                            if physical_median_radius > 0
+                                && dist_from_center <= physical_median_radius
                                 && !is_bridge
                                 && effective_elevation == 0
                             {

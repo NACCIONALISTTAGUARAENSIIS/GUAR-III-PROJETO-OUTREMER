@@ -43,7 +43,9 @@ verificação em `docs/QUALIDADE_GERACAO.md` (Parte II). Resumo:
    equipamento > lazer/natural > landuse > place) decide quem repinta o piso
    mesmo entre regiões (o `landuse` da QE 17 chegava pelo Halo antes do
    asfalto das ruas da região vizinha); `paint_y_at` unifica a cota de
-   pintura das vias.
+   pintura das vias; o canteiro central só é pintado com raio > 0 (antes
+   deixava uma linha de grama no eixo de toda via) e o pincel sub-amostra
+   as diagonais para não deixar buracos em xadrez no asfalto.
 
 ## 2026-09-29 — Qualidade da geração: sete defeitos sistêmicos corrigidos
 

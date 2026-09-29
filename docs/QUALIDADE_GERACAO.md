@@ -455,6 +455,15 @@ com a mesma cor de superfície do chão urbano; e uma rua da Candangolândia
   cerca > piso esportivo/estacionamento > equipamento (`amenity`,
   `man_made`, ...) > lazer e natural > `landuse` > `place` (antes toda ÁREA
   empatava em 6).
+- **Dois artefatos do pincel de via que o chão pré-preenchido escondia.**
+  (a) A Zona 1 ("canteiro central") era pintada com `dist <= raio` mesmo com
+  raio 0 — uma linha de grama no eixo de TODA via; agora só com raio > 0.
+  (b) Em trechos diagonais, pincéis perpendiculares saindo de pontos de
+  Bresenham 8-conexos deixam buracos em xadrez (a célula entre duas linhas
+  paralelas vizinhas nunca é amostrada), que apareciam como grama no meio do
+  asfalto; o pincel agora sub-amostra a meio bloco na largura e ao longo da
+  via apenas nas diagonais (raio de cobertura do reticulado 0,5 ≈ 0,35 <
+  0,5, logo toda célula do retângulo varrido é atingida).
 - Testes: `untouched_terrain_surface_is_replaceable_exactly_once` (quatro
   modos, fast-path, replay pelo Halo e o caso QE 17 landuse-via) e
   `floor_precedence_puts_specific_before_generic`.
