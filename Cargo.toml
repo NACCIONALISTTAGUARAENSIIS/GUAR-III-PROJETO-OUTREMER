@@ -35,7 +35,7 @@ tauri-build = { version = "2", optional = true }
 las = { version = "0.8", features = ["laz"] }   # LiDAR (.las / .laz)
 osmpbf = "0.3.3"                                 # OSM Binário Local
 shapefile = "0.3.0"                              # GDF / IBGE / SICAR
-tiff = "0.9.0"                                   # GeoTIFF (MapBiomas, DEM, DSM)
+tiff = "0.10.3"                                   # GeoTIFF (MapBiomas, DEM, DSM)
 tobj = "4.0.0"                                   # Malhas 3D (.obj)
 csv = "1.3.0"
 lru = "0.12.3"
