@@ -20,6 +20,7 @@ mod ground;
 mod map_renderer;
 mod master_control;
 mod osm_parser;
+mod poi_enrichment;
 #[cfg(feature = "gui")]
 mod progress;
 mod provenance;

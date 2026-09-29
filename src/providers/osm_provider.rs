@@ -43,10 +43,13 @@ impl OSMProvider {
         {
             return SemanticGroup::Building;
         }
-        if tags.contains_key("highway")
-            || tags.contains_key("railway")
-            || tags.contains_key("aeroway")
-        {
+        // Ferrovia tem grupo próprio (alinhado ao KML e ao classificador
+        // canônico `providers::semantic_group_from_tags`) para o merge entre
+        // providers reconhecer a mesma linha de metrô vinda de fontes distintas.
+        if tags.contains_key("railway") {
+            return SemanticGroup::Railway;
+        }
+        if tags.contains_key("highway") || tags.contains_key("aeroway") {
             return SemanticGroup::Highway;
         }
         if tags.contains_key("waterway")

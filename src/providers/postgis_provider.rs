@@ -7,7 +7,7 @@
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::coordinate_system::geographic::{LLBBox, LLPoint};
 use crate::coordinate_system::transformation::CoordTransformer;
-use crate::providers::{DataProvider, Feature, GeometryType, SemanticGroup};
+use crate::providers::{DataProvider, Feature, GeometryType};
 use postgres::Client;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -42,6 +42,7 @@ impl PostGisProvider {
         let mut tags = HashMap::new();
         tags.insert("source".to_string(), "GDF_PostGIS_Live".to_string());
 
+        let mut uso_raw: Option<String> = None;
         for column in row.columns() {
             let col_name = column.name();
             // Ignoramos a coluna de geometria pois ela é tratada separadamente
@@ -88,19 +89,7 @@ impl PostGisProvider {
                     tags.insert("height".to_string(), val_str);
                 }
                 "USO_SOLO" | "DESTINACAO" | "TIPO_LOTE" => {
-                    let uso = val_str.to_lowercase();
-                    let mapped_uso = if uso.contains("comercial") {
-                        "commercial"
-                    } else if uso.contains("residencial") {
-                        "residential"
-                    } else if uso.contains("institucional") {
-                        "civic"
-                    } else if uso.contains("industrial") {
-                        "industrial"
-                    } else {
-                        "yes"
-                    };
-                    tags.insert("building".to_string(), mapped_uso.to_string());
+                    uso_raw = Some(val_str.clone());
                 }
                 "NOME" | "LOGRADOURO" => {
                     tags.insert("name".to_string(), val_str.clone());
@@ -120,8 +109,21 @@ impl PostGisProvider {
             }
         }
 
+        if let Some(uso) = uso_raw {
+            let has_structure = tags.contains_key("building:levels")
+                || tags.contains_key("height")
+                || tags.contains_key("building");
+            let (key, value) = crate::providers::uso_to_tag(&uso, has_structure);
+            if !tags.contains_key(key) {
+                tags.insert(key.to_string(), value.to_string());
+            }
+        }
+
         // Fallback genérico
-        if !tags.contains_key("building") && !tags.contains_key("highway") {
+        if !tags.contains_key("building")
+            && !tags.contains_key("highway")
+            && !tags.contains_key("landuse")
+        {
             tags.insert("building".to_string(), "yes".to_string());
         }
 
@@ -212,13 +214,7 @@ impl DataProvider for PostGisProvider {
 
             let tags = Self::translate_sql_attributes(&row);
 
-            let semantic_group = if tags.contains_key("building") {
-                SemanticGroup::Building
-            } else if tags.contains_key("highway") {
-                SemanticGroup::Highway
-            } else {
-                SemanticGroup::Other
-            };
+            let semantic_group = crate::providers::semantic_group_from_tags(&tags);
 
             let mut is_completely_outside = true;
 

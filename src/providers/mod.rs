@@ -192,6 +192,101 @@ pub fn classify_highway_from_tipo_via(raw: &str) -> &'static str {
     }
 }
 
+/// Classificador semântico CANÔNICO a partir de tags no dialeto OSM.
+///
+/// Cada provider mantém o SEU tradutor de atributos (o dialeto do DBF do
+/// SITURB, do GeoJSON curado, do GeoPackage, do PostGIS — são conhecimento
+/// de domínio de cada fonte e ficam onde estão). O que precisa ser comum é a
+/// resposta a "que TIPO de objeto essas tags descrevem": o
+/// `ProviderManager::resolve_collisions` só deduplica entre providers quando o
+/// grupo semântico coincide, então uma via férrea do KML e a mesma via no OSM
+/// precisam cair no MESMO grupo para o dado prioritário substituir o outro.
+/// Antes cada provider tinha sua própria tabela (o OSM punha `railway` em
+/// `Highway`, o KML em `Railway`, o PBF punha `natural` em `Terrain` e o
+/// GeoJSON em `Natural`) e o merge nunca os enxergava como o mesmo objeto.
+pub fn semantic_group_from_tags(tags: &HashMap<String, String>) -> SemanticGroup {
+    if tags.contains_key("building")
+        || tags.contains_key("building:part")
+        || tags.contains_key("historic")
+    {
+        return SemanticGroup::Building;
+    }
+    if tags.contains_key("railway") {
+        return SemanticGroup::Railway;
+    }
+    if tags.contains_key("highway") || tags.contains_key("aeroway") {
+        return SemanticGroup::Highway;
+    }
+    if tags.contains_key("waterway")
+        || tags.contains_key("water")
+        || tags
+            .get("natural")
+            .is_some_and(|v| v == "water" || v == "bay" || v == "wetland")
+    {
+        return SemanticGroup::Waterway;
+    }
+    if tags.contains_key("natural") {
+        return SemanticGroup::Natural;
+    }
+    if tags.contains_key("landuse") || tags.contains_key("leisure") {
+        return SemanticGroup::Landuse;
+    }
+    if tags.contains_key("advertising") {
+        return SemanticGroup::Advertising;
+    }
+    if tags.contains_key("power")
+        || tags.contains_key("amenity")
+        || tags.contains_key("barrier")
+        || tags.contains_key("man_made")
+    {
+        return SemanticGroup::Infrastructure;
+    }
+    SemanticGroup::Other
+}
+
+/// Decide o que uma coluna de USO DO SOLO (`USO`, `USO_SOLO`, `DESTINACAO`,
+/// `PN_USO`, `TIPO_LOTE`…) significa: um **prédio** só quando há evidência
+/// estrutural no mesmo registro (pavimentos/altura) ou a camada é de
+/// edificações; caso contrário é um **lote** — `landuse=*`.
+///
+/// 🚨 CONFLITO REAL ENTRE PROVIDERS: os quatro tradutores GDF (Shapefile,
+/// GeoJSON, GeoPackage, PostGIS) mapeavam `USO=Residencial` direto para
+/// `building=residential`. A camada "Lotes Registrados" do SITURB (a mais comum
+/// de todas) virava um prédio por LOTE — quadras inteiras de caixas — e, com
+/// prioridade 1 e grupo `Building`, esses lotes ainda substituíam no merge os
+/// prédios reais do OSM que cobriam. Devolve `(chave, valor)`.
+pub fn uso_to_tag(uso_raw: &str, has_structure: bool) -> (&'static str, &'static str) {
+    let uso = uso_raw.to_lowercase();
+    let is_building = has_structure || uso.contains("edific") || uso.contains("constru");
+    let key = if is_building { "building" } else { "landuse" };
+    let value = if uso.contains("comercial") || uso.contains("commercial") {
+        if is_building {
+            "commercial"
+        } else {
+            "retail"
+        }
+    } else if uso.contains("residencial") || uso.contains("residential") {
+        "residential"
+    } else if uso.contains("institucional")
+        || uso.contains("equipamento")
+        || uso.contains("civic")
+        || uso.starts_with("inst")
+    {
+        if is_building {
+            "civic"
+        } else {
+            "institutional"
+        }
+    } else if uso.contains("industrial") {
+        "industrial"
+    } else if is_building {
+        "yes"
+    } else {
+        "residential"
+    };
+    (key, value)
+}
+
 /// 🚨 RECONEXÃO: canal lateral para tags POR NÓ dentro de uma `Feature` (way/anel).
 /// `GeometryType::LineString`/`Polygon`/`MultiPolygon` só guardam coordenadas
 /// (`Vec<XZPoint>`) — não há onde armazenar a tag individual de um nó (`entrance=yes`,
@@ -763,6 +858,57 @@ mod tests {
         assert_eq!(aabb_coverage_ratio((5, 5, 5, 5), (0, 10, 0, 10)), 1.0);
         assert_eq!(aabb_coverage_ratio((5, 5, 5, 5), (6, 10, 6, 10)), 0.0);
         assert!((aabb_coverage_ratio((0, 9, 0, 9), (5, 20, 0, 9)) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn uso_column_means_lot_unless_structure_is_present() {
+        assert_eq!(uso_to_tag("Residencial", false), ("landuse", "residential"));
+        assert_eq!(uso_to_tag("Comercial", false), ("landuse", "retail"));
+        assert_eq!(uso_to_tag("Inst EP", false), ("landuse", "institutional"));
+        assert_eq!(uso_to_tag("Residencial", true), ("building", "residential"));
+        assert_eq!(
+            uso_to_tag("Edificação Comercial", false),
+            ("building", "commercial")
+        );
+        assert_eq!(uso_to_tag("Industrial", true), ("building", "industrial"));
+    }
+
+    #[test]
+    fn canonical_semantic_groups_align_providers() {
+        let t = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        assert_eq!(
+            semantic_group_from_tags(&t(&[("railway", "subway")])),
+            SemanticGroup::Railway
+        );
+        assert_eq!(
+            semantic_group_from_tags(&t(&[("highway", "residential")])),
+            SemanticGroup::Highway
+        );
+        assert_eq!(
+            semantic_group_from_tags(&t(&[("natural", "water")])),
+            SemanticGroup::Waterway
+        );
+        assert_eq!(
+            semantic_group_from_tags(&t(&[("natural", "wood")])),
+            SemanticGroup::Natural
+        );
+        assert_eq!(
+            semantic_group_from_tags(&t(&[("landuse", "residential")])),
+            SemanticGroup::Landuse
+        );
+        assert_eq!(
+            semantic_group_from_tags(&t(&[("building", "yes"), ("shop", "x")])),
+            SemanticGroup::Building
+        );
+        assert_eq!(
+            semantic_group_from_tags(&t(&[("name", "x")])),
+            SemanticGroup::Other
+        );
     }
 
     #[test]

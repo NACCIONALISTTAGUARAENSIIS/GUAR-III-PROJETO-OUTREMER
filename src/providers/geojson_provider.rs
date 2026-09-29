@@ -70,6 +70,7 @@ impl GeoJsonProvider {
             }
         }
 
+        let mut uso_raw: Option<String> = None;
         if let Some(obj) = properties.as_object() {
             for (key, value) in obj {
                 if key == "_gdf_layer" {
@@ -111,24 +112,9 @@ impl GeoJsonProvider {
                     // além do `contains("institucional")` já existente (que nunca bate
                     // contra a forma abreviada real).
                     "USO" | "USO_SOLO" | "DESTINACAO" | "LANDUSE" | "TIPO" | "PN_USO" => {
-                        let uso = val_str.to_lowercase();
-                        let mapped_uso = if uso.contains("comercial") || uso.contains("commercial")
-                        {
-                            "commercial"
-                        } else if uso.contains("residencial") || uso.contains("residential") {
-                            "residential"
-                        } else if uso.contains("institucional")
-                            || uso.contains("equipamento")
-                            || uso.contains("civic")
-                            || uso.starts_with("inst")
-                        {
-                            "civic"
-                        } else if uso.contains("industrial") {
-                            "industrial"
-                        } else {
-                            "yes"
-                        };
-                        tags.insert("building".to_string(), mapped_uso.to_string());
+                        // Decidido DEPOIS do loop (`providers::uso_to_tag`): prédio só
+                        // com evidência estrutural no registro; senão é lote (landuse).
+                        uso_raw = Some(val_str.clone());
                     }
                     "NOME" | "DESC" | "LOGRADOURO" | "NAME" | "ED_NOME" => {
                         tags.insert("name".to_string(), val_str.clone());
@@ -190,6 +176,16 @@ impl GeoJsonProvider {
                         tags.insert(format!("gdf:{}", col.to_lowercase()), val_str);
                     }
                 }
+            }
+        }
+
+        if let Some(uso) = uso_raw {
+            let has_structure = tags.contains_key("building:levels")
+                || tags.contains_key("height")
+                || tags.contains_key("building");
+            let (key, value) = crate::providers::uso_to_tag(&uso, has_structure);
+            if !tags.contains_key(key) {
+                tags.insert(key.to_string(), value.to_string());
             }
         }
 
@@ -296,17 +292,9 @@ impl DataProvider for GeoJsonProvider {
 
             let tags = Self::translate_attributes(properties);
 
-            let semantic_group = self.semantic_override.unwrap_or_else(|| {
-                if tags.contains_key("building") {
-                    SemanticGroup::Building
-                } else if tags.contains_key("highway") {
-                    SemanticGroup::Highway
-                } else if tags.contains_key("natural") {
-                    SemanticGroup::Natural
-                } else {
-                    SemanticGroup::Other
-                }
-            });
+            let semantic_group = self
+                .semantic_override
+                .unwrap_or_else(|| crate::providers::semantic_group_from_tags(&tags));
 
             let mut is_completely_outside = true;
 

@@ -19,6 +19,100 @@ use std::collections::{HashMap, HashSet};
 // Assumindo que o Arnis já suporta a escrita por nome no set_block se não houver constante.
 const COMPOSTER: Block = Block::new(249); // Placeholder temporário, se o seu block_definitions não tiver.
 
+/// Poste padrão Neoenergia/CEB (base de andesito polido, fuste de muro de
+/// andesito, luminária de lanterna do mar com fotocélula): o ÚNICO poste de
+/// iluminação do motor — usado nos estacionamentos (aqui), na iluminação
+/// pública das vias (`highways.rs`) e nas quadras esportivas (`sports.rs`).
+/// `ground_y` é a cota ABSOLUTA do chão.
+pub fn place_neoenergia_pole(editor: &mut WorldEditor, x: i32, ground_y: i32, z: i32) {
+    editor.set_block_absolute(POLISHED_ANDESITE, x, ground_y + 1, z, None, None);
+    for dy in 2i32..=7i32 {
+        editor.set_block_absolute(ANDESITE_WALL, x, ground_y + dy, z, None, None);
+    }
+    editor.set_block_absolute(SEA_LANTERN, x, ground_y + 8, z, None, None);
+    editor.set_block_absolute(DAYLIGHT_DETECTOR, x, ground_y + 9, z, None, None);
+}
+
+/// Terrenos institucionais mapeados como ÁREA de `amenity=*` sem `building`
+/// (pátio de escola, campus, terreno de hospital/quartel/igreja). No Guará
+/// real são 50+ polígonos (36 escolas) que caíam no `_ => {}` abaixo e não
+/// geravam nada — o prédio ficava solto num gramado.
+///
+/// Reaproveita a lógica já existente em vez de reinventar: o piso sai de
+/// `landuse::generate_landuse` com o estilo institucional que ele já tem
+/// (`education`/`religious` → quartzo/concreto claro brutalista) e o
+/// alambrado sai de `barriers` via `sports::place_fence` (escola → alambrado
+/// de segurança de 4 m, que `barriers` já reconhece por `amenity=school`).
+/// Devolve `false` quando o amenity não é institucional (o chamador segue
+/// para `generate_amenities`).
+pub fn generate_institutional_grounds(
+    editor: &mut WorldEditor,
+    way: &crate::osm_parser::ProcessedWay,
+    args: &Args,
+    flood_fill_cache: &FloodFillCache,
+    building_footprints: &crate::floodfill_cache::BuildingFootprintBitmap,
+) -> bool {
+    let Some(landuse_style) = institutional_landuse_style(&way.tags) else {
+        return false;
+    };
+    if way.tags.contains_key("building") || way.tags.contains_key("building:part") {
+        return false;
+    }
+    let closed = way.nodes.len() >= 4
+        && way
+            .nodes
+            .first()
+            .zip(way.nodes.last())
+            .is_some_and(|(a, b)| (a.x, a.z) == (b.x, b.z));
+    if !closed {
+        return false;
+    }
+
+    // 1. Piso do pátio (mesmo desenho de `landuse=education|religious`)
+    let mut tags: HashMap<String, String> = way.tags.clone();
+    tags.insert("landuse".to_string(), landuse_style.to_string());
+    let ground_way = crate::osm_parser::ProcessedWay {
+        id: way.id,
+        nodes: way.nodes.clone(),
+        tags,
+    };
+    crate::element_processing::landuse::generate_landuse(
+        editor,
+        &ground_way,
+        args,
+        flood_fill_cache,
+        building_footprints,
+    );
+
+    // 2. Cerca perimetral — só quando o mapeador não desenhou uma cerca própria
+    // (`barrier=*` no mesmo contorno) e para usos que realmente são cercados.
+    if way.tags.contains_key("barrier") {
+        return true;
+    }
+    let fence_height = match way.tags.get("amenity").map(String::as_str) {
+        Some("school" | "kindergarten" | "college" | "university") => Some(4),
+        Some("police" | "fire_station" | "prison") => Some(3),
+        Some("hospital" | "clinic") => Some(2),
+        _ => None,
+    };
+    if let Some(h) = fence_height {
+        crate::element_processing::sports::place_fence(editor, way, h);
+    }
+    true
+}
+
+/// Mapeia um `amenity=*` de área para o estilo de piso institucional que
+/// `landuse::generate_landuse` já sabe desenhar.
+pub fn institutional_landuse_style(tags: &HashMap<String, String>) -> Option<&'static str> {
+    match tags.get("amenity").map(String::as_str)? {
+        "school" | "kindergarten" | "college" | "university" | "library" | "hospital"
+        | "clinic" | "police" | "fire_station" | "townhall" | "courthouse" | "prison"
+        | "social_facility" | "community_centre" | "public_building" => Some("education"),
+        "place_of_worship" | "monastery" => Some("religious"),
+        _ => None,
+    }
+}
+
 pub fn generate_amenities(
     editor: &mut WorldEditor,
     element: &ProcessedElement,
@@ -361,19 +455,8 @@ pub fn generate_amenities(
 
                             // TWEAK BRUTALISTA: Poste Padrão Neoenergia
                             if local_x == 0 && local_z == 0 && zone_x % 4 == 0 && zone_z % 2 == 0 {
-                                editor.set_block(POLISHED_ANDESITE, x, ground_y + 1, z, None, None);
-                                for dy in 2i32..=7i32 {
-                                    editor.set_block(
-                                        ANDESITE_WALL,
-                                        x,
-                                        ground_y + dy,
-                                        z,
-                                        None,
-                                        None,
-                                    );
-                                }
-                                editor.set_block(SEA_LANTERN, x, ground_y + 8, z, None, None);
-                                editor.set_block(DAYLIGHT_DETECTOR, x, ground_y + 9, z, None, None);
+                                let abs_y = editor.get_absolute_y(x, ground_y, z);
+                                place_neoenergia_pole(editor, x, abs_y, z);
                             }
                         }
                     }

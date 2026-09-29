@@ -35,10 +35,10 @@ impl PbfProvider {
         if tags.contains_key("building") || tags.contains_key("building:part") {
             return SemanticGroup::Building;
         }
-        if tags.contains_key("highway")
-            || tags.contains_key("aeroway")
-            || tags.contains_key("railway")
-        {
+        if tags.contains_key("railway") {
+            return SemanticGroup::Railway;
+        }
+        if tags.contains_key("highway") || tags.contains_key("aeroway") {
             return SemanticGroup::Highway;
         }
         if tags.contains_key("natural")

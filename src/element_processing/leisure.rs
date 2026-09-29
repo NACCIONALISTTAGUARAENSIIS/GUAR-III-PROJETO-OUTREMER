@@ -2,6 +2,7 @@ use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::deterministic_rng::{coord_rng, element_rng};
+use crate::element_processing::sports;
 use crate::element_processing::tree::Tree;
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation, ProcessedWay};
@@ -73,6 +74,24 @@ pub fn generate_leisure(
         let mut previous_node: Option<(i32, i32)> = None;
         let mut corner_addup: (i32, i32, i32) = (0, 0, 0);
 
+        // Modalidade da quadra/campo (para piso padrão e marcação — ver `sports.rs`).
+        // Área estimada pelo polígono (shoelace) antes do flood-fill.
+        let polygon_area_blocks = {
+            let n = element.nodes.len();
+            let mut twice = 0i64;
+            for i in 0..n {
+                let a = &element.nodes[i];
+                let b = &element.nodes[(i + 1) % n];
+                twice += a.x as i64 * b.z as i64 - b.x as i64 * a.z as i64;
+            }
+            (twice.abs() / 2) as usize
+        };
+        let pitch_kind = if leisure_type == "pitch" {
+            Some(sports::classify(element, polygon_area_blocks))
+        } else {
+            None
+        };
+
         // Definição de materiais rígida (Brasília Architectural Specs)
         let block_type: Block = match leisure_type.as_str() {
             "park" | "nature_reserve" | "garden" | "disc_golf_course" | "golf_course" => {
@@ -111,8 +130,8 @@ pub fn generate_leisure(
                         _ => LIGHT_BLUE_CONCRETE,
                     }
                 } else {
-                    if leisure_type == "pitch" {
-                        GREEN_TERRACOTTA
+                    if let Some(kind) = pitch_kind {
+                        sports::default_surface(kind, element)
                     } else if leisure_type == "playground" {
                         SAND
                     } else {
@@ -562,6 +581,12 @@ pub fn generate_leisure(
                         _ => {}
                     }
                 }
+            }
+
+            // 🚨 Quadras esportivas: marcação por modalidade, traves/cestas/redes,
+            // alambrado e iluminação sobre o piso recém-preenchido (ver `sports.rs`).
+            if let Some(kind) = pitch_kind {
+                sports::generate_pitch(editor, element, &filled_area, kind);
             }
         }
     }

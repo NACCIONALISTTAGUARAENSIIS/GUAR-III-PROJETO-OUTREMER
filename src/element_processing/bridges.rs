@@ -47,7 +47,8 @@ pub fn generate_bridges(editor: &mut WorldEditor, element: &ProcessedWay) {
 
         // Cada faixa real (3.6m) vira ~2.7 blocos na escala 1.33.
         // 5.5 é o raio para 2 faixas + acostamento (sua medida original aprovada).
-        let road_radius = (lanes * 1.35 + 2.8).clamp(4.0, 12.0);
+        let road_radius =
+            crate::element_processing::highways::lanes_to_half_width(lanes).clamp(4.0, 12.0);
         let structure_radius = road_radius + 2.0;
 
         // Ponto de cota máxima para manter o tabuleiro nivelado (Evita "montanha-russa")

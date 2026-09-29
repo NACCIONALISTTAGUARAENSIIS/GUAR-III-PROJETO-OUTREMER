@@ -2,6 +2,7 @@ use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::clipping::clip_way_to_bbox;
+use crate::element_processing::subprocessor::buildings_interior::VITRINE_COLORS;
 // 🚨 BESM-6: Importações de cores e spatial_seed corrigidas
 use crate::colors::{
     apply_micro_variation, apply_weathering, color_text_to_rgb_tuple, resolve_roof_color,
@@ -394,6 +395,68 @@ impl BuildingCategory {
 
         if is_government_building || is_government_amenity || is_government_office {
             return BuildingCategory::Government;
+        }
+
+        // 🚨 Comércio/serviço declarado por OUTRAS tags no mesmo prédio (o caso
+        // real do Guará: 24.410 `building=yes` e o uso vem de `shop=*`,
+        // `amenity=*`, `office=*`, `craft=*`, `healthcare=*` — no próprio way ou
+        // injetado pelo pré-passe de POIs de `data_processing.rs`). Sem isto,
+        // toda loja de rua virava casa genérica.
+        if matches!(building_type, "yes" | "commercial" | "retail") {
+            let amenity = element
+                .tags
+                .get("amenity")
+                .map(|s: &String| s.as_str())
+                .unwrap_or("");
+            let healthcare = element.tags.get("healthcare").map(|s: &String| s.as_str());
+            if matches!(amenity, "hospital" | "clinic" | "doctors")
+                || matches!(healthcare, Some("hospital") | Some("clinic"))
+            {
+                return BuildingCategory::Hospital;
+            }
+            if matches!(
+                amenity,
+                "school" | "kindergarten" | "college" | "university"
+            ) {
+                return BuildingCategory::School;
+            }
+            if element.tags.contains_key("office") {
+                return BuildingCategory::Office;
+            }
+            if element
+                .tags
+                .get("tourism")
+                .is_some_and(|t| t == "hotel" || t == "motel")
+            {
+                return BuildingCategory::Hotel;
+            }
+            let commercial_amenity = matches!(
+                amenity,
+                "restaurant"
+                    | "fast_food"
+                    | "cafe"
+                    | "bar"
+                    | "pub"
+                    | "bank"
+                    | "pharmacy"
+                    | "marketplace"
+                    | "fuel"
+                    | "car_wash"
+                    | "car_rental"
+                    | "dentist"
+                    | "veterinary"
+                    | "ice_cream"
+                    | "food_court"
+                    | "cinema"
+                    | "nightclub"
+            );
+            if element.tags.contains_key("shop")
+                || element.tags.contains_key("craft")
+                || healthcare.is_some()
+                || commercial_amenity
+            {
+                return BuildingCategory::Commercial;
+            }
         }
 
         match building_type {
@@ -2212,6 +2275,23 @@ fn determine_wall_block_at_position(bx: i32, h: i32, bz: i32, config: &BuildingC
         } else {
             AIR
         };
+    }
+
+    // 🚨 Fachada de loja de rua (categoria Commercial, prédios baixos): térreo
+    // em vitrine de vidro entre pilares, testeira colorida (letreiro) na fiada
+    // acima da vitrine — a mesma paleta `VITRINE_COLORS` das galerias internas
+    // dos shoppings, escolhida por prédio. Os andares de cima seguem a grade
+    // comercial normal (uso misto: loja embaixo, escritório/apartamento em cima).
+    if config.category == BuildingCategory::Commercial && !config.is_tall_building {
+        let rel_h = h - config.start_y_offset;
+        if (1..=3).contains(&rel_h) {
+            let is_pier = (bx + bz).rem_euclid(5) == 0;
+            return if is_pier { config.wall_block } else { GLASS };
+        }
+        if rel_h == 4 {
+            let idx = (config.element_id % VITRINE_COLORS.len() as u64) as usize;
+            return VITRINE_COLORS[idx];
+        }
     }
 
     if !config.has_windows {

@@ -193,6 +193,13 @@ fn build_overpass_query(bbox: &LLBBox) -> String {
         nwr["advertising"];
         nwr["man_made"];
         nwr["aeroway"];
+        nwr["shop"];
+        nwr["office"];
+        nwr["craft"];
+        nwr["healthcare"];
+        nwr["public_transport"];
+        nwr["sport"];
+        nwr["playground"];
         way["place"];
         way;
     )->.relsinbbox;

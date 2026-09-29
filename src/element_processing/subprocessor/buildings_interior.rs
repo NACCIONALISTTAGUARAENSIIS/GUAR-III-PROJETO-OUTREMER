@@ -150,7 +150,19 @@ fn eh_casa_terrea_ou_sobrado(element: &crate::osm_parser::ProcessedWay) -> bool 
 /// combinação de uma tag residencial (`building=apartments|residential`) com uma tag de
 /// comércio (`shop=*`/`office=*`) no MESMO way — sinal imperfeito, mas real e
 /// determinístico, em vez de arriscar um heurístico sem base na tag.
-fn eh_uso_misto_comercio_terreo(element: &crate::osm_parser::ProcessedWay) -> bool {
+/// Testeiras/letreiros de loja: a paleta única do motor para identidade visual
+/// de comércio — usada nas galerias internas dos shoppings (abaixo) e nas
+/// fachadas de loja de rua (`buildings.rs`, faixa acima da vitrine).
+pub const VITRINE_COLORS: [Block; 6] = [
+    ORANGE_TERRACOTTA,
+    RED_TERRACOTTA,
+    YELLOW_TERRACOTTA,
+    CYAN_TERRACOTTA,
+    BLUE_TERRACOTTA,
+    GREEN_TERRACOTTA,
+];
+
+pub fn eh_uso_misto_comercio_terreo(element: &crate::osm_parser::ProcessedWay) -> bool {
     let building_residencial = matches!(
         element.tags.get("building").map(|s| s.as_str()),
         Some("residential") | Some("apartments")
@@ -1168,14 +1180,6 @@ fn generate_shopping_layout(
                 // shopping real (Conjunto Nacional, ParkShopping, Taguatinga Shopping)
                 // tem uma galeria de vidro homogêneo — cada loja tem sua própria
                 // identidade visual na testeira.
-                const VITRINE_COLORS: [Block; 6] = [
-                    ORANGE_TERRACOTTA,
-                    RED_TERRACOTTA,
-                    YELLOW_TERRACOTTA,
-                    CYAN_TERRACOTTA,
-                    BLUE_TERRACOTTA,
-                    GREEN_TERRACOTTA,
-                ];
                 for h in y..ceiling {
                     let is_pillar = (x + z) % 8 == 0;
                     let block = if is_pillar {

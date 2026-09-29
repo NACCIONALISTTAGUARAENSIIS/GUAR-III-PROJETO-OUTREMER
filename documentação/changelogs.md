@@ -1,5 +1,37 @@
 ATENÇÃO: aqui serão dispostos todos os changelogs, tudo o que foi mudado, por que, razão etc de forma extremamente documentada
 
+## 2026-09-29 — Escala de roleplay: metrô, vias, quadras, comércio e auditoria dos providers
+
+Segunda rodada após a geração real do Guará I+II. Detalhes, causa e
+verificação em `docs/QUALIDADE_GERACAO.md` (Parte II). Resumo:
+
+1. **Metrô-DF** (`railways.rs`, `stations.rs` novo): túnel/viaduto/superfície
+   decididos pelas tags (`tunnel`, `bridge`, `layer`) e não pelo tipo — a
+   Linha Verde deixa de ser enterrada; estações e acessos (nós
+   `railway=station|subway_entrance`, antes descartados) ganham plataformas
+   alinhadas ao trilho, cobertura, placas e poços de acesso; terminais de
+   ônibus reutilizam a Rodoviária de `landmarks.rs`; paradas usam o abrigo
+   existente.
+2. **Vias** (`highways.rs`): asfalto real, largura por `width`/`lanes`,
+   `surface` respeitado, faixas (branca tracejada em mão única, dupla amarela
+   em duas mãos), meio-fio + calçada, iluminação pública com o poste
+   Neoenergia único do motor (`amenities::place_neoenergia_pole`).
+3. **Quadras esportivas** (`sports.rs`, `oriented_frame.rs` novos): marcações
+   por modalidade em retângulo de área mínima, traves/cestas/redes/rampas,
+   alambrado via `barriers`, postes de canto.
+4. **Comércio** (`retrieve_data.rs`, `poi_enrichment.rs` novo, `buildings.rs`,
+   `amenities.rs`): Overpass passa a baixar `shop/office/craft/healthcare/
+   public_transport/sport/playground`; POIs (nós e lojas indoor) injetam uso e
+   nome no prédio que os contém antes do dispatch; categoria comercial/
+   institucional correta e térreo de vitrine; pátios institucionais
+   (`amenity=school|hospital|...` como área) ganham piso e alambrado
+   reaproveitando `landuse` e `barriers`.
+5. **Providers** (`providers/mod.rs`, `gdf/geojson/gpkg/postgis/osm/pbf`):
+   tradutores de atributos preservados; Shapefile GDF passa a projetar com o
+   `CoordTransformer` do mundo; `uso_to_tag` impede que lotes virem prédios
+   (e substituam os prédios reais do OSM no merge); grupos semânticos
+   canônicos (`semantic_group_from_tags`, `railway` → `Railway`).
+
 ## 2026-09-29 — Qualidade da geração: sete defeitos sistêmicos corrigidos
 
 Auditoria de rigor sobre o pipeline inteiro (não sobre um gerador isolado).

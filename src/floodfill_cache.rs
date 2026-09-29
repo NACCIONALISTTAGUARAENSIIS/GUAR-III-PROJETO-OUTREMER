@@ -469,6 +469,7 @@ const MAPPED_AREA_KEYS: &[&str] = &[
     "shop",
     "historic",
     "parking",
+    "public_transport",
     "area:highway",
 ];
 

@@ -265,3 +265,147 @@ legíveis pelo parser de produção da `fastanvil`.
 - O modo HUD interativo (`generate_region_from_global`, só sem `gui`) continua
   com chão plano e sem floresta ambiente, como documentado em
   `data_processing.rs`.
+
+---
+
+# Parte II — Escala de roleplay: metrô, vias, quadras, comércio e providers
+
+Segunda rodada, disparada pela geração real do Guará I+II (bbox
+`-15.86,-47.99,-15.80,-47.95`, 341 mil elementos OSM). O bairro era
+reconhecível, mas faltavam exatamente as coisas que o tornam o Guará: o
+Metrô-DF e suas estações, as quadras esportivas das QE/QI, as ruas com cara de
+rua e o comércio das entrequadras. A auditoria foi feita **contra os dados**
+(contagem por tag do que o Overpass devolve × o que o `dispatch_element`
+efetivamente desenha, via `provenance.json`), não por impressão visual.
+
+## 8. Metrô-DF: enterrado por regra de tipo, estações nunca desenhadas
+
+**Sintoma.** Nenhuma linha, nenhuma estação (Feira, Guará, Arniqueiras,
+Shopping), nenhum acesso.
+
+**Causa.** `railways.rs` tratava `railway=subway` como "sempre túnel" (regra
+por TIPO) e cavava a via 10 blocos abaixo do chão mesmo onde o OSM marca
+`tunnel` ausente, `bridge=viaduct` ou `layer=1` — no Guará a Linha Verde é
+quase toda de superfície/elevada. As estações são **nós** (`railway=station`,
+`railway=subway_entrance`) e o `dispatch_element` não tinha ramo para
+`railway` em nós: descartados em silêncio (0 despachados na proveniência).
+
+**Correção.**
+- `railways.rs`: `is_tunnel_way`/`is_elevated_way`/`vertical_offset(layer,
+  tunnel, elevated)` decidem pela TAG (`tunnel=*`, `bridge=*`, `layer`,
+  `location`), não pelo tipo. Túnel: `layer.min(-1)·10` (piso ≥ −40); elevado:
+  `layer.max(1)·6+1` com tabuleiro de viaduto (`LIGHT_GRAY_CONCRETE`, guarda-
+  corpo `STONE_BRICK_WALL`, pares de pilares a cada 14 pontos); superfície com
+  cerca de faixa de domínio (`IRON_BARS`). `subway|light_rail|monorail`
+  contam como metrô para o desenho do trilho.
+- `stations.rs` (novo): `RailIndex` (segmentos, entradas, estações) constrói
+  a estação a partir do nó e do trilho mais próximo: plataformas laterais
+  alinhadas ao eixo (`OrientedFrame`), 60 blocos de meia-extensão, faixa
+  tátil amarela, bancos, pilares; caixa subterrânea iluminada quando o trilho
+  está em túnel; cobertura pelo `landmarks::generate_unique_landmark` quando a
+  estação tem nome conhecido (mesma lógica de marcos), cobertura genérica
+  caso contrário; placas "METRÔ-DF"; acessos (`subway_entrance`) ligados por
+  poço com escada + corredor até a plataforma. `buffer_stop` e `halt` também.
+- Terminais de ônibus (`amenity=bus_station`, `public_transport=station` em
+  way/relation) reutilizam `landmarks::generate_terminal_rodoviario` (a
+  Rodoviária do Plano já existia; só foi parametrizada em altura).
+- Paradas (`public_transport=platform` em nó) usam o abrigo já existente,
+  extraído para `highways::generate_bus_shelter`.
+
+## 9. Vias: tudo despachado, nada parecia rua
+
+**Sintoma.** "Parece que não gerou as vias." A proveniência mostrava 100% das
+`highway=*` despachadas — o problema era o desenho: cinza uniforme, largura
+fixa, sem meio-fio, sem calçada, sem faixa, sem poste.
+
+**Correção (`highways.rs`).**
+- Asfalto real (`BLACK_CONCRETE`) para toda via motorizada; `surface=*` do OSM
+  respeitado (paralelepípedo, terra, cascalho, concreto).
+- Largura por dado: `width=*` em metros ou `lanes=*`
+  (`lanes_to_half_width`, compartilhada com `bridges.rs`); tipologias do DF
+  (Via Guará, via local com faixa de estacionamento e canteiro de 3, motorway
+  com acostamento); `service=parking_aisle|driveway` estreitos.
+- Sinalização: `oneway` → tracejado branco; duas mãos com ≥6 de largura →
+  linha dupla amarela contínua (`lane_divider_offset`); faixas laterais.
+- Zona 3 de meio-fio (`POLISHED_ANDESITE` + `SMOOTH_STONE_SLAB`) e calçada de
+  2 blocos, desligáveis por `sidewalk=no`.
+- Iluminação pública a cada 34 blocos, lados alternados, com o poste padrão
+  Neoenergia extraído de `amenities::place_neoenergia_pole` (o ÚNICO poste do
+  motor — vias, estacionamentos, quadras); `lit=no` respeitado.
+- `highway=corridor` (indoor) ignorado; `street_lamp` em nó usa o mesmo poste.
+
+## 10. Quadras esportivas por modalidade
+
+**Sintoma.** `leisure=pitch` virava um retângulo verde.
+
+**Correção.** `sports.rs` (novo): `classify` por `sport=*` (sem tag: >3500
+blocos → futebol, senão poliesportiva), `default_surface` por modalidade,
+`generate_pitch` desenha marcações em coordenadas locais do
+`OrientedFrame::from_polygon` (retângulo de área mínima — as quadras do Guará
+raramente estão alinhadas aos eixos): futebol/society (grande área, círculo
+central, traves), basquete (garrafão, cestas), vôlei/tênis (rede), futsal,
+skate (rampas). Alambrado via `barriers::generate_barriers` (way sintético
+`barrier=fence`+`fence_type=chain_link`, altura 3) e quatro postes de canto.
+`oriented_frame.rs` também substitui a estimativa de ângulo de
+`landmarks::get_oriented_bounds`.
+
+## 11. Comércio: o uso estava nos nós, não nos prédios
+
+**Sintoma.** "Problema com a estrutura dos negócios." Dos 24.600 prédios do
+Guará, 24.410 são `building=yes` sem uso; o uso está em **nós** dentro deles
+(`shop=*`, `amenity=restaurant`, `office=*`...). O Overpass nem baixava
+`shop`/`office`/`craft`/`healthcare`, e o dispatcher não desenha nada para um
+nó `amenity=restaurant` solto — o comércio inteiro sumia e cada loja era uma
+casa genérica.
+
+**Correção.**
+- `retrieve_data.rs`: a consulta pede `shop`, `office`, `craft`,
+  `healthcare`, `public_transport`, `sport`, `playground`.
+- `poi_enrichment.rs` (novo, pré-passe antes do dispatch): índice espacial
+  dos POIs (nós e também ÁREAS de uso sem `building` — lojas indoor do
+  shopping/feira com `indoor`/`level`, pátios institucionais — pelo
+  centróide); para cada prédio, o POI dominante contido no polígono (ray
+  casting) injeta as chaves de uso que faltam, o `name` e `poi:count`.
+  Assim a lógica que JÁ existia passa a valer sem código novo:
+  `BuildingCategory::from_element`, `buildings_interior::detect_tipologia`,
+  `eh_uso_misto_comercio_terreo`.
+- `buildings.rs`: `building=yes|commercial|retail` com `amenity`/`shop`/
+  `office`/`tourism`/`healthcare` cai na categoria certa (hospital, escola,
+  escritório, hotel, comércio); prédio comercial baixo ganha térreo de
+  vitrine (vidro com pilares, toldo colorido por `VITRINE_COLORS`).
+- `amenities::generate_institutional_grounds` (novo): áreas `amenity=school|
+  hospital|place_of_worship|police|...` sem `building` (36 escolas no Guará)
+  caíam no `_ => {}` e não geravam nada; agora o piso sai de
+  `landuse::generate_landuse` (estilo `education`/`religious` já existente) e
+  o alambrado de `barriers` via `sports::place_fence`, que copia `amenity`/
+  `landuse`/`name` para `barriers` aplicar a semântica de escola (4 m) que ele
+  já conhecia.
+
+## 12. Auditoria dos providers: onde eles conflitavam
+
+Os **tradutores de atributos** de cada provider (Shapefile GDF, GeoJSON,
+GeoPackage, PostGIS, KML, CSV...) foram mantidos intactos: são conhecimento de
+domínio de cada fonte e a organicidade do resultado depende deles. O que foi
+corrigido é a **interface** entre eles e o merge.
+
+| Conflito | Efeito | Correção (aditiva) |
+|---|---|---|
+| Shapefile GDF projetava com equirretangular própria (`project_to_minecraft_xz`), não com o `CoordTransformer` do mundo | Lotes/edificações do SITURB deslocados dezenas de blocos em relação ao OSM; culling por bbox errado | `gdf_provider.rs` usa `llbbox_to_xzbbox` + `transform_point` e descarta pelo `XZBBox` real |
+| Quatro tradutores mapeavam `USO=Residencial` → `building=residential` | Camada "Lotes Registrados" virava um prédio por LOTE; com prioridade 1 e grupo `Building`, esses lotes ainda **substituíam** os prédios reais do OSM no merge | `providers::uso_to_tag(uso, has_structure)`: prédio só com evidência estrutural (pavimentos/altura) ou camada de edificações; senão `landuse=residential|retail|institutional|industrial`. Fallback `building=yes` não é mais aplicado quando há `landuse` |
+| Grupos semânticos divergentes (OSM punha `railway` em `Highway`, KML em `Railway`; PBF `natural` em `Terrain`, GeoJSON em `Natural`) | `resolve_collisions` só deduplica no MESMO grupo → o dado prioritário nunca substituía o duplicado | `providers::semantic_group_from_tags` canônico; OSM/PBF `railway` → `Railway`; GeoJSON/GPKG/PostGIS usam o canônico como fallback (override explícito respeitado) |
+| OSM (10) e PBF (10) com a mesma prioridade | Duplicatas quando os dois estão ativos: empate não é resolvido | Documentado; não alterado (o PBF é alternativa offline ao OSM, não complemento) |
+
+Prioridades em vigor (`main.rs::register_providers`, menor = vence):
+LiDAR, CityGML, IFC, Mesh, PostGIS, GDF Shapefile, GeoJSON, GeoPackage,
+Indoor/Utility = **1**; WFS, KML, 3D Tiles = **2**; CSV, MVT = **5**;
+OSM, PBF = **10**. Regra: o dado governamental/levantado vence o
+crowdsourced no mesmo grupo semântico e com ≥50% de sobreposição de AABB.
+
+## Validação da Parte II
+
+Mesmos comandos da seção "Como reproduzir a validação". Testes novos:
+`providers::tests` (`uso_to_tag`, `semantic_group_from_tags`),
+`poi_enrichment::tests` (ponto-em-polígono com coordenadas negativas,
+dominância institucional > loja, unidade indoor enriquecendo o shopping),
+`sports::tests` (classificação), `oriented_frame::tests`,
+`railways::tests` (offset por tag), `stations::tests` (índice de trilhos).

@@ -233,18 +233,13 @@ fn get_oriented_bounds(element: &ProcessedWay) -> OrientedBounds {
     let min_z = cz - half_l;
     let max_z = cz + half_l;
 
-    let mut longest_segment = 0.0;
-    let mut main_angle = 0.0;
-
-    for i in 0..element.nodes.len().saturating_sub(1) {
-        let dx = (element.nodes[i + 1].x - element.nodes[i].x) as f64;
-        let dz = (element.nodes[i + 1].z - element.nodes[i].z) as f64;
-        let len = dx * dx + dz * dz;
-        if len > longest_segment {
-            longest_segment = len;
-            main_angle = dz.atan2(dx); // atan2 retorna o �ngulo do vetor
-        }
-    }
+    // Ângulo de implantação pelo retângulo de área mínima (helper único do
+    // motor, `oriented_frame.rs`) — mais robusto que "a aresta mais longa",
+    // que errava em plantas com uma fachada curva ou chanfrada.
+    let ring: Vec<(i32, i32)> = element.nodes.iter().map(|n| (n.x, n.z)).collect();
+    let main_angle = crate::element_processing::oriented_frame::OrientedFrame::from_polygon(&ring)
+        .map(|f| f.angle())
+        .unwrap_or(0.0);
 
     OrientedBounds {
         min_x,
@@ -975,8 +970,22 @@ fn generate_memorial_jk(editor: &mut WorldEditor, element: &ProcessedWay, ground
 }
 
 fn generate_rodoviaria(editor: &mut WorldEditor, element: &ProcessedWay, ground_y: i32) {
+    generate_terminal_rodoviario(editor, element, ground_y, 15.0);
+}
+
+/// Terminal rodoviário genérico (pátio com lajes, pilares a cada 15 blocos e
+/// faixa amarela de plataforma) — o mesmo desenho da Rodoviária do Plano
+/// Piloto, parametrizado pela altura em metros: 15 m para a Rodoviária, ~5 m
+/// para terminais de bairro (`public_transport=station` + `bus=yes`,
+/// `amenity=bus_station` — ex.: Terminal Rodoviário do Guará I).
+pub fn generate_terminal_rodoviario(
+    editor: &mut WorldEditor,
+    element: &ProcessedWay,
+    ground_y: i32,
+    height_m: f64,
+) {
     let bounds = get_oriented_bounds(element);
-    let height = (15.0 * V_SCALE) as i32;
+    let height = ((height_m * V_SCALE) as i32).max(4);
 
     for y in ground_y..=(ground_y + height) {
         for x in bounds.min_x..=bounds.max_x {

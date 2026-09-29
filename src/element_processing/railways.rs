@@ -79,6 +79,38 @@ fn compute_clothoid_transition(nodes: &[XZPoint], segments_per_curve: usize) -> 
     path
 }
 
+/// `tunnel=*` (exceto `no`) ou `layer<0` — nunca o tipo `subway` por si só.
+pub fn is_tunnel_way(tags: &std::collections::HashMap<String, String>) -> bool {
+    let tunnel = tags
+        .get("tunnel")
+        .is_some_and(|t| t != "no" && t != "false");
+    let layer: i32 = tags.get("layer").and_then(|s| s.parse().ok()).unwrap_or(0);
+    tunnel || layer < 0
+}
+
+/// `bridge=*` (exceto `no`) ou `layer>0`.
+pub fn is_elevated_way(tags: &std::collections::HashMap<String, String>) -> bool {
+    let bridge = tags
+        .get("bridge")
+        .is_some_and(|b| b != "no" && b != "false");
+    let layer: i32 = tags.get("layer").and_then(|s| s.parse().ok()).unwrap_or(0);
+    bridge || layer > 0
+}
+
+/// Deslocamento vertical (blocos) do leito da via em relação ao solo local:
+/// túneis descem 10 blocos por camada (mín. −40), viadutos sobem 6 por camada
+/// (+1 de tabuleiro), superfície é 0. Compartilhado com `stations.rs` para a
+/// plataforma nascer exatamente no nível do trilho.
+pub fn vertical_offset(layer: i32, tunnel: bool, elevated: bool) -> i32 {
+    if tunnel {
+        (layer.min(-1) * 10).max(-40)
+    } else if elevated {
+        layer.max(1) * 6 + 1
+    } else {
+        0
+    }
+}
+
 pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
     if let Some(railway_type) = element.tags.get("railway") {
         if [
@@ -107,16 +139,20 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
         }
         // =================================================================
 
-        // --- DETEC��O DE OPERA��O (METR�-DF VS CARGA VS P�TIOS) ---
-        let is_metro = element
-            .tags
-            .get("operator")
-            .map(|s: &String| s.contains("Metr�") || s.contains("METRO"))
-            .unwrap_or(false)
+        // --- DETECÇÃO DE OPERAÇÃO (METRÔ-DF VS CARGA VS PÁTIOS) ---
+        // 🚨 `railway=subway`/`light_rail` É metrô por definição — antes só
+        // operador/nome/usage contavam, e as vias do Metrô-DF no Guará (sem nome
+        // nem operador no OSM) eram desenhadas como ferrovia de carga.
+        let is_metro = matches!(railway_type.as_str(), "subway" | "light_rail" | "monorail")
+            || element
+                .tags
+                .get("operator")
+                .map(|s: &String| s.contains("Metr") || s.contains("METRO"))
+                .unwrap_or(false)
             || element
                 .tags
                 .get("name")
-                .map(|s: &String| s.contains("Metr�") || s.contains("Metro"))
+                .map(|s: &String| s.contains("Metr") || s.contains("Metro"))
                 .unwrap_or(false)
             || element
                 .tags
@@ -135,27 +171,22 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
             .map(|s| s == "yard" || s == "siding" || s == "spur")
             .unwrap_or(false);
 
-        // --- DETEC��O DE T�NEIS E SUBWAY (RIGOR SUBTERR�NEO) ---
-        let layer_str = element
+        // --- NÍVEL: TÚNEL, SUPERFÍCIE OU VIADUTO (pelas tags, nunca pelo tipo) ---
+        //
+        // 🚨 CORREÇÃO DE QUALIDADE: `railway=subway` (e `subway=yes`) forçavam
+        // `is_tunnel = true` — TODO o Metrô-DF era enterrado 15 blocos, inclusive
+        // os trechos em superfície e em viaduto (no Guará: 9 vias em nível, 10 em
+        // viaduto/`layer=1`, só 5 em túnel de verdade). Resultado: nenhuma linha
+        // de metrô visível. Agora só `tunnel=*` ou `layer<0` enterram, e
+        // `bridge=*`/`layer>0` elevam num viaduto com pilares.
+        let layer: i32 = element
             .tags
             .get("layer")
-            .map(|s: &String| s.as_str())
-            .unwrap_or("0");
-        let layer: i32 = layer_str.parse().unwrap_or(0);
-
-        let is_tunnel = element.tags.get("tunnel").map(|s: &String| s.as_str()) == Some("yes")
-            || element.tags.get("subway").map(|s: &String| s.as_str()) == Some("yes")
-            || railway_type.as_str() == "subway"
-            || layer < 0;
-
-        // Offset de profundidade baseado na camada (-1 = 15 blocos abaixo da terra. NATM Metro-DF Asa Sul)
-        let depth_offset = if layer < 0 {
-            layer * 15
-        } else if is_tunnel {
-            -15
-        } else {
-            0
-        };
+            .and_then(|s: &String| s.parse().ok())
+            .unwrap_or(0);
+        let is_tunnel = is_tunnel_way(&element.tags);
+        let is_elevated = !is_tunnel && is_elevated_way(&element.tags);
+        let depth_offset = vertical_offset(layer, is_tunnel, is_elevated);
 
         let tracks_str = element
             .tags
@@ -194,9 +225,15 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
             let track_y = (base_start_y + (base_end_y - base_start_y) * progress).round() as i32;
             let local_ground = editor.get_ground_level(bx, bz);
 
-            // T�neis furam a terra (Y fixo na rota calculada), Superf�cie acompanha o relevo se estiver acima
-            let final_y = if is_tunnel || layer < 0 {
+            // Túneis furam a terra (nunca afloram: ficam ≥ 5 blocos abaixo do solo
+            // local), viadutos mantêm gabarito livre (≥ 5 blocos acima), superfície
+            // acompanha o relevo.
+            let final_y = if is_tunnel {
                 track_y
+                    .min(local_ground - 5)
+                    .max(crate::data_processing::MIN_Y + 6)
+            } else if is_elevated {
+                track_y.max(local_ground + 5)
             } else {
                 track_y.max(local_ground)
             };
@@ -252,10 +289,60 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                     let build_x = bx + wx;
                     let build_z = bz + wz;
 
-                    // Aterro do terreno (Embankment) abaixo dos trilhos de superf�cie
-                    if !is_tunnel && dist_sq <= radius * radius {
+                    // Aterro do terreno (Embankment) abaixo dos trilhos de superfície
+                    if !is_tunnel && !is_elevated && dist_sq <= radius * radius {
                         for fill_y in local_ground..final_y {
                             editor.set_block_absolute(DIRT, build_x, fill_y, build_z, None, None);
+                        }
+                    }
+
+                    // --- VIADUTO (Metrô-DF elevado: Feira/Shopping, FCA sobre a EPIA) ---
+                    // Tabuleiro de concreto com guarda-corpo; pilares a cada 14 pontos.
+                    if is_elevated && dist_sq <= (radius + 1) * (radius + 1) {
+                        editor.set_block_absolute(
+                            LIGHT_GRAY_CONCRETE,
+                            build_x,
+                            final_y - 1,
+                            build_z,
+                            None,
+                            None,
+                        );
+                        let is_parapet = dist_sq > radius * radius;
+                        if is_parapet {
+                            editor.set_block_absolute(
+                                LIGHT_GRAY_CONCRETE,
+                                build_x,
+                                final_y,
+                                build_z,
+                                None,
+                                None,
+                            );
+                            editor.set_block_absolute(
+                                STONE_BRICK_WALL,
+                                build_x,
+                                final_y + 1,
+                                build_z,
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    // --- FAIXA DE DOMÍNIO EM NÍVEL: gradil dos dois lados da via ---
+                    // (o Metrô-DF em superfície é cercado; a FCA também.)
+                    if !is_tunnel && !is_elevated && !is_yard {
+                        let dist_n = (wx * norm_x + wz * norm_z).abs();
+                        let dist_t = (wx * norm_z + wz * norm_x).abs();
+                        if dist_n == radius + 1 && dist_t == 0 {
+                            let gy = editor.get_ground_level(build_x, build_z);
+                            for fy in 1..=2 {
+                                editor.set_block_if_absent_absolute(
+                                    IRON_BARS,
+                                    build_x,
+                                    gy + fy,
+                                    build_z,
+                                );
+                            }
                         }
                     }
 
@@ -382,7 +469,30 @@ pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
                 }
             }
 
-            // --- POSICIONAMENTO DIN�MICO DOS TRILHOS E DORMENTES ---
+            // Pilares do viaduto (par de colunas sob as bordas do tabuleiro)
+            if is_elevated && j % 14 == 0 {
+                for side in [-1, 1] {
+                    let px = bx + side * (radius - 1) * norm_x;
+                    let pz = bz + side * (radius - 1) * norm_z;
+                    let ground_here = editor.get_ground_level(px, pz);
+                    if editor.check_for_block_absolute(px, ground_here, pz, Some(&[WATER]), None) {
+                        continue;
+                    }
+                    for py in (ground_here + 1)..(final_y - 1) {
+                        editor.set_block_absolute(LIGHT_GRAY_CONCRETE, px, py, pz, None, None);
+                        editor.set_block_absolute(
+                            LIGHT_GRAY_CONCRETE,
+                            px + norm_z,
+                            py,
+                            pz + norm_x,
+                            None,
+                            None,
+                        );
+                    }
+                }
+            }
+
+            // --- POSICIONAMENTO DINÂMICO DOS TRILHOS E DORMENTES ---
             let rail_block = determine_rail_direction((bx, bz), prev, next);
 
             if is_double_track {
@@ -551,5 +661,46 @@ pub fn generate_roller_coaster(editor: &mut WorldEditor, element: &ProcessedWay)
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn tags(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn subway_without_tunnel_tag_stays_at_grade() {
+        // Regra por TAG, não por tipo: a Linha Verde do Metrô-DF no Guará é de
+        // superfície/elevada mesmo sendo `railway=subway`.
+        let surface = tags(&[("railway", "subway")]);
+        assert!(!is_tunnel_way(&surface));
+        assert!(!is_elevated_way(&surface));
+        assert_eq!(vertical_offset(0, false, false), 0);
+    }
+
+    #[test]
+    fn tunnel_and_viaduct_offsets_follow_layer() {
+        let tunnel = tags(&[("railway", "subway"), ("tunnel", "yes"), ("layer", "-2")]);
+        assert!(is_tunnel_way(&tunnel));
+        assert_eq!(vertical_offset(-2, true, false), -20);
+        assert_eq!(vertical_offset(0, true, false), -10);
+        assert_eq!(vertical_offset(-9, true, false), -40);
+
+        let viaduct = tags(&[("railway", "subway"), ("bridge", "viaduct"), ("layer", "1")]);
+        assert!(is_elevated_way(&viaduct));
+        assert_eq!(vertical_offset(1, false, true), 7);
+        assert_eq!(vertical_offset(0, false, true), 7);
+        assert_eq!(vertical_offset(2, false, true), 13);
+
+        assert!(!is_tunnel_way(&tags(&[("tunnel", "no")])));
+        assert!(!is_elevated_way(&tags(&[("bridge", "no")])));
     }
 }

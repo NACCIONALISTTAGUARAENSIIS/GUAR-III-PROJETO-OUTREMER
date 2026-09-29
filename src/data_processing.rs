@@ -266,6 +266,7 @@ fn dispatch_element(
     building_footprints: &BuildingFootprintBitmap,
     suppressed_building_outlines: &HashSet<u64>,
     xzbbox: &XZBBox,
+    rail_index: &stations::RailIndex,
     provenance: &mut crate::provenance::ProvenanceLedger,
 ) {
     // 🚨 BESM-6: Auditoria de proveniência — acumula, nesta chamada, TODO
@@ -320,6 +321,28 @@ fn dispatch_element(
                     None,
                 );
                 dispatched_modules.push("natural");
+            } else if way.tags.get("public_transport").map(|s| s.as_str()) == Some("station")
+                || way.tags.get("amenity").map(|s| s.as_str()) == Some("bus_station")
+            {
+                // Terminal de ônibus: o mesmo desenho da Rodoviária do Plano Piloto
+                // (`landmarks.rs`), baixo (5 m) para terminais de bairro.
+                let ground_y = way
+                    .nodes
+                    .first()
+                    .map(|n| editor.get_ground_level(n.x, n.z))
+                    .unwrap_or(args.ground_level);
+                landmarks::generate_terminal_rodoviario(editor, way, ground_y, 5.0);
+                dispatched_modules.push("landmarks::terminal_rodoviario");
+            } else if way.tags.contains_key("amenity")
+                && amenities::generate_institutional_grounds(
+                    editor,
+                    way,
+                    args,
+                    flood_fill_cache,
+                    building_footprints,
+                )
+            {
+                dispatched_modules.push("amenities::institutional_grounds");
             } else if way.tags.contains_key("amenity") {
                 amenities::generate_amenities(editor, &element, args, flood_fill_cache);
                 dispatched_modules.push("amenities");
@@ -389,6 +412,16 @@ fn dispatch_element(
                     None,
                 );
                 dispatched_modules.push("natural");
+            } else if node.tags.contains_key("railway") {
+                // 🚨 Estações, acessos e paradas de metrô/trem — antes sem branch algum.
+                stations::generate_railway_node(editor, node, rail_index);
+                dispatched_modules.push("stations");
+            } else if node.tags.get("public_transport").map(|s| s.as_str()) == Some("platform")
+                && !node.tags.contains_key("highway")
+            {
+                // Plataforma de ônibus mapeada só como public_transport (sem highway=bus_stop)
+                highways::generate_bus_shelter(editor, node.x, node.z);
+                dispatched_modules.push("highways::bus_shelter");
             } else if node.tags.contains_key("amenity") {
                 amenities::generate_amenities(editor, &element, args, flood_fill_cache);
                 dispatched_modules.push("amenities");
@@ -473,6 +506,26 @@ fn dispatch_element(
                     building_footprints,
                 );
                 dispatched_modules.push("landuse::from_relation");
+            } else if rel.tags.get("public_transport").map(|s| s.as_str()) == Some("station")
+                || rel.tags.get("amenity").map(|s| s.as_str()) == Some("bus_station")
+            {
+                for member in &rel.members {
+                    if member.role == ProcessedMemberRole::Outer {
+                        let ground_y = member
+                            .way
+                            .nodes
+                            .first()
+                            .map(|n| editor.get_ground_level(n.x, n.z))
+                            .unwrap_or(args.ground_level);
+                        let with_tags = ProcessedWay {
+                            id: member.way.id,
+                            nodes: member.way.nodes.clone(),
+                            tags: rel.tags.clone(),
+                        };
+                        landmarks::generate_terminal_rodoviario(editor, &with_tags, ground_y, 15.0);
+                    }
+                }
+                dispatched_modules.push("landmarks::terminal_rodoviario");
             } else if rel.tags.get("leisure") == Some(&"park".to_string()) {
                 leisure::generate_leisure_from_relation(
                     editor,
@@ -562,7 +615,9 @@ pub fn generate_region_from_global(
         }
     }
 
+    crate::poi_enrichment::inject_poi_tags_into_buildings(&mut osm_elements);
     let highway_connectivity = highways::build_highway_connectivity_map(&osm_elements);
+    let rail_index = stations::RailIndex::build(&osm_elements);
     let mut flood_fill_cache = FloodFillCache::new();
     let building_footprints = flood_fill_cache.collect_building_footprints(&osm_elements, &xzbbox);
 
@@ -606,6 +661,7 @@ pub fn generate_region_from_global(
             &building_footprints,
             &suppressed_building_outlines,
             &xzbbox,
+            &rail_index,
             &mut discarded_provenance,
         );
     }
@@ -656,7 +712,22 @@ pub fn generate_world_with_options(
 
     println!("{} Building Global Constraints...", "[4/7]".bold());
 
+    // 🚨 POIs → prédios: o uso real (loja, restaurante, igreja, escritório) está
+    // nos nós dentro dos prédios; injeta as tags antes de qualquer decisão de
+    // categoria/tipologia (ver `poi_enrichment.rs`).
+    let mut elements = elements;
+    let enriched = crate::poi_enrichment::inject_poi_tags_into_buildings(&mut elements);
+    if enriched > 0 {
+        println!(
+            "[INFO] {} prédios receberam o uso (shop/amenity/office...) dos POIs que contêm.",
+            enriched
+        );
+    }
+
     let highway_connectivity = highways::build_highway_connectivity_map(&elements);
+    // Trilhos + acessos + estações: as estações de metrô são nós sem polígono e
+    // derivam sua geometria da linha mais próxima (ver `stations.rs`).
+    let rail_index = stations::RailIndex::build(&elements);
     let mut flood_fill_cache = FloodFillCache::new();
 
     let building_footprints = flood_fill_cache.collect_building_footprints(&elements, &xzbbox);
@@ -842,6 +913,7 @@ pub fn generate_world_with_options(
                         &building_footprints,
                         &suppressed_building_outlines,
                         &xzbbox,
+                        &rail_index,
                         provenance,
                     );
                 }
@@ -973,6 +1045,7 @@ pub fn generate_world_with_options(
                         &building_footprints,
                         &suppressed_building_outlines,
                         &xzbbox,
+                        &rail_index,
                         provenance,
                     );
                 }

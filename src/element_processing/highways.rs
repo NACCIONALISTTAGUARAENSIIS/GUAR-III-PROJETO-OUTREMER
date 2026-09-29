@@ -220,6 +220,34 @@ pub fn generate_highways(
     );
 }
 
+/// Meia-largura de pista (blocos) a partir de `lanes` — a MESMA fórmula do
+/// tabuleiro de pontes (`bridges.rs`: cada faixa de 3,6 m ≈ 2,7 blocos na
+/// escala 1,33, mais acostamento), para uma via e a sua ponte terem a mesma
+/// largura. Sem clamp aqui: cada consumidor aplica o seu.
+pub fn lanes_to_half_width(lanes: f64) -> f64 {
+    lanes * 1.35 + 2.8
+}
+
+/// Abrigo de ponto de ônibus (padrão DF: dois pilares, cobertura de laje,
+/// painel de vidro e banco) — usado por `highway=bus_stop` e por nós
+/// `public_transport=platform` de ônibus.
+pub fn generate_bus_shelter(editor: &mut WorldEditor, x: i32, z: i32) {
+    let ground_y = editor.get_ground_level(x, z);
+    for dy in 1i32..=3i32 {
+        editor.set_block_absolute(IRON_BARS, x, ground_y + dy, z, None, None);
+        editor.set_block_absolute(IRON_BARS, x + 2, ground_y + dy, z, None, None);
+    }
+    for dx in 0i32..=2i32 {
+        editor.set_block_absolute(SMOOTH_STONE_SLAB, x + dx, ground_y + 4, z, None, None);
+        if dx == 1 {
+            editor.set_block_absolute(GRAY_STAINED_GLASS, x + dx, ground_y + 3, z, None, None);
+            editor.set_block_absolute(GRAY_STAINED_GLASS, x + dx, ground_y + 2, z, None, None);
+        }
+        // Banco
+        editor.set_block_if_absent_absolute(SMOOTH_STONE_SLAB, x + dx, ground_y + 1, z + 1);
+    }
+}
+
 pub fn build_highway_connectivity_map(elements: &[ProcessedElement]) -> HighwayConnectivityMap {
     let mut connectivity_map: HashMap<(i32, i32), Vec<i32>> = HashMap::new();
 
@@ -271,12 +299,7 @@ fn generate_highways_internal(
                 let x: i32 = first_node.x;
                 let z: i32 = first_node.z;
                 let ground_y = editor.get_ground_level(x, z);
-
-                editor.set_block_absolute(POLISHED_ANDESITE, x, ground_y + 1, z, None, None);
-                for dy in 2i32..=7i32 {
-                    editor.set_block_absolute(IRON_BARS, x, ground_y + dy, z, None, None);
-                }
-                editor.set_block_absolute(GLOWSTONE, x, ground_y + 8, z, None, None);
+                crate::element_processing::amenities::place_neoenergia_pole(editor, x, ground_y, z);
             }
         } else if highway_type == "crossing" {
             if let Some(crossing_type) = element.tags().get("crossing") {
@@ -305,34 +328,7 @@ fn generate_highways_internal(
             }
         } else if highway_type == "bus_stop" {
             if let ProcessedElement::Node(node) = element {
-                let x = node.x;
-                let z = node.z;
-                let ground_y = editor.get_ground_level(x, z);
-
-                for dy in 1i32..=3i32 {
-                    editor.set_block_absolute(IRON_BARS, x, ground_y + dy, z, None, None);
-                    editor.set_block_absolute(IRON_BARS, x + 2, ground_y + dy, z, None, None);
-                }
-                for dx in 0i32..=2i32 {
-                    editor.set_block_absolute(
-                        SMOOTH_STONE_SLAB,
-                        x + dx,
-                        ground_y + 4,
-                        z,
-                        None,
-                        None,
-                    );
-                    if dx == 1 {
-                        editor.set_block_absolute(
-                            GRAY_STAINED_GLASS,
-                            x + dx,
-                            ground_y + 3,
-                            z,
-                            None,
-                            None,
-                        );
-                    }
-                }
+                generate_bus_shelter(editor, node.x, node.z);
             }
         } else if element
             .tags()
@@ -387,9 +383,9 @@ fn generate_highways_internal(
                 .collect();
 
             let mut previous_node: Option<(i32, i32)> = None;
-            let block_type;
-            let mut block_range: i32 = 2;
-            let mut grass_buffer: i32 = 0;
+            let mut block_type: Block;
+            let mut block_range: i32;
+            let mut grass_buffer: i32;
             let mut parking_lane: bool = false;
             let mut add_stripe = false;
             let mut add_outline = false;
@@ -426,16 +422,61 @@ fn generate_highways_internal(
                 }
             }
 
-            // --- LARGURAS MONUMENTAIS E TIPOLOGIA DF (REFINADAS PARA 1.33H) ---
+            // --- TIPOLOGIA VIÁRIA DF + REALISMO DE PAVIMENTO ---
+            //
+            // 🚨 CORREÇÃO DE QUALIDADE: todas as vias LOCAIS (residential/tertiary/
+            // service/unclassified — a imensa maioria das ruas do Guará) eram pintadas
+            // de GRAY_CONCRETE, o MESMO bloco das calçadas, sem guia nem faixa, e sem
+            // passeio (a zona de calçada só existia se `grass_buffer > 0`, que era 0
+            // nas vias locais). Na prática a rua sumia dentro do passeio — "as vias
+            // não estão gerando". As ruas do DF são asfaltadas: toda via de veículo
+            // recebe asfalto, guia (meio-fio), passeio de 2-3 blocos, sinalização
+            // horizontal brasileira (amarelo separa sentidos opostos, branco separa
+            // faixas do mesmo sentido) e iluminação pública; largura vem de
+            // `width`/`lanes` quando o OSM traz.
+            let is_oneway = element
+                .tags()
+                .get("oneway")
+                .is_some_and(|v: &String| v == "yes" || v == "-1");
+            let service_kind = element
+                .tags()
+                .get("service")
+                .map(|s: &String| s.as_str())
+                .unwrap_or("");
+            let lanes_tag = element
+                .tags()
+                .get("lanes")
+                .and_then(|l: &String| l.parse::<f64>().ok())
+                .filter(|l| *l >= 1.0 && *l <= 12.0);
+            let width_tag = element.tags().get("width").and_then(|w: &String| {
+                w.trim()
+                    .trim_end_matches('m')
+                    .trim()
+                    .replace(',', ".")
+                    .parse::<f64>()
+                    .ok()
+            });
+            // Blocos de passeio além da guia (meio-fio)
+            let mut sidewalk_width: i32 = 2;
+            let mut street_lamps = false;
+            let mut outline_block = WHITE_CONCRETE;
+            // Faixa central: amarela em mão dupla (norma brasileira), branca como
+            // divisória de faixas no mesmo sentido.
+            let mut stripe_block = YELLOW_CONCRETE;
+            let mut continuous_center = false;
+            let mut lane_divider_offset: Option<i32> = None;
+            let mut is_motor_road = true;
+
             match df_road_type {
                 DFRoadType::Eixao => {
                     block_type = BLACK_CONCRETE;
-                    block_range = 18; // TWEAK GPT: Eixão largo o suficiente para 3 pistas cada lado
+                    block_range = 18; // 3 pistas por sentido
                     add_stripe = true;
                     grass_buffer = 8;
                     physical_median_radius = 6; // Canteiro Largo do Eixão
                     is_detached_sidewalk = true;
                     plant_street_trees = true;
+                    street_lamps = true;
                 }
                 DFRoadType::Monumental => {
                     block_type = BLACK_CONCRETE;
@@ -445,73 +486,93 @@ fn generate_highways_internal(
                     physical_median_radius = 10; // Gramadão Central da Esplanada
                     is_detached_sidewalk = true;
                     plant_street_trees = true;
+                    street_lamps = true;
                 }
                 DFRoadType::ExpressaDF => {
                     block_type = BLACK_CONCRETE;
                     block_range = 12;
                     add_stripe = true;
+                    add_outline = true;
                     grass_buffer = 5;
                     physical_median_radius = 1; // Barreira New Jersey (Mureta)
                     plant_street_trees = true;
+                    street_lamps = true;
                 }
                 DFRoadType::L2L4 | DFRoadType::Arterial => {
                     block_type = BLACK_CONCRETE;
                     block_range = 9;
                     add_stripe = true;
+                    add_outline = true;
                     grass_buffer = 5;
                     physical_median_radius = 1;
                     is_detached_sidewalk = true;
                     plant_street_trees = true;
+                    street_lamps = true;
                 }
                 DFRoadType::W3 => {
-                    block_type = POLISHED_BASALT; // Asfalto diferente para diferenciar W3
+                    block_type = BLACK_CONCRETE;
                     block_range = 8;
                     parking_lane = true;
                     add_stripe = true;
-                    grass_buffer = 2;
+                    continuous_center = true;
+                    grass_buffer = 3;
+                    street_lamps = true;
                 }
                 DFRoadType::ViaComercialSatelite => {
-                    block_type = GRAY_CONCRETE;
+                    block_type = BLACK_CONCRETE;
                     block_range = 7;
                     parking_lane = true;
                     add_stripe = true;
-                    grass_buffer = 0;
+                    continuous_center = true;
+                    grass_buffer = 4;
+                    sidewalk_width = 3;
                     is_detached_sidewalk = false;
+                    street_lamps = true;
                 }
                 DFRoadType::Coletora => {
-                    block_type = GRAY_CONCRETE;
+                    block_type = BLACK_CONCRETE;
                     block_range = 6;
                     add_stripe = true;
-                    grass_buffer = 2;
+                    add_outline = true;
+                    grass_buffer = 3;
+                    street_lamps = true;
                 }
                 DFRoadType::Tesourinha => {
                     block_type = BLACK_CONCRETE;
                     block_range = 4;
                     add_stripe = false;
                     grass_buffer = 2;
+                    sidewalk_width = 1;
                     add_outline = true;
                 }
                 DFRoadType::Rotatoria => {
                     block_type = BLACK_CONCRETE;
                     block_range = 6;
-                    add_stripe = true;
+                    add_stripe = false; // rotatória é mão única: sem eixo amarelo
                     grass_buffer = 2;
                     add_outline = true;
                 }
                 DFRoadType::ViaSuperquadra => {
-                    block_type = GRAY_TERRACOTTA;
+                    block_type = BLACK_CONCRETE;
                     block_range = 4;
                     parking_lane = true;
                     grass_buffer = 5;
                     is_detached_sidewalk = true;
                     plant_street_trees = true; // A marca registrada da superquadra: dossel denso
+                    street_lamps = true;
                 }
                 DFRoadType::ViaGuara | DFRoadType::ViaLocal => {
-                    block_type = GRAY_CONCRETE;
-                    block_range = 3;
+                    // Rua local de cidade-satélite: asfalto de 2 faixas (~7 m → 9
+                    // blocos) com estacionamento junto à guia, eixo amarelo tracejado,
+                    // meio-fio e passeio de 2 blocos de cada lado, poste a cada ~25 m.
+                    block_type = BLACK_CONCRETE;
+                    block_range = 4;
                     parking_lane = true;
-                    grass_buffer = 0;
+                    add_stripe = true;
+                    grass_buffer = 3;
+                    sidewalk_width = 2;
                     is_detached_sidewalk = false;
+                    street_lamps = true;
                 }
                 DFRoadType::Ciclovia => {
                     // Asfalto avermelhado característico das ciclovias do DF: estreita,
@@ -522,43 +583,163 @@ fn generate_highways_internal(
                     add_stripe = false;
                     add_outline = true;
                     grass_buffer = 1;
+                    sidewalk_width = 0;
+                    is_motor_road = false;
                 }
                 DFRoadType::Generic(ref t) => match t.as_str() {
                     "footway" | "pedestrian" => {
                         block_type = POLISHED_ANDESITE;
                         block_range = 1;
+                        grass_buffer = 0;
+                        is_motor_road = false;
                     }
                     "path" => {
                         block_type = COARSE_DIRT;
                         block_range = 1;
+                        grass_buffer = 0;
+                        is_motor_road = false;
                     }
                     "track" => {
                         block_type = DIRT_PATH;
                         block_range = 1;
+                        grass_buffer = 0;
+                        is_motor_road = false;
                     }
                     "escape" => {
                         block_type = SAND;
                         block_range = 1;
+                        grass_buffer = 0;
+                        is_motor_road = false;
                     }
                     "steps" => {
                         block_type = STONE_STAIRS;
                         block_range = 1;
+                        grass_buffer = 0;
+                        is_motor_road = false;
+                    }
+                    // Corredores internos de prédios (indoor): não são pavimento externo.
+                    "corridor" => return,
+                    "service" => match service_kind {
+                        // Corredor de estacionamento / acesso a garagem: asfalto
+                        // estreito, sem faixa, sem guia (o lote já tem a sua).
+                        "parking_aisle" | "drive-through" => {
+                            block_type = BLACK_CONCRETE;
+                            block_range = 2;
+                            grass_buffer = 0;
+                            sidewalk_width = 0;
+                        }
+                        "driveway" => {
+                            block_type = LIGHT_GRAY_CONCRETE;
+                            block_range = 1;
+                            grass_buffer = 0;
+                            sidewalk_width = 0;
+                        }
+                        _ => {
+                            block_type = BLACK_CONCRETE;
+                            block_range = 3;
+                            grass_buffer = 2;
+                            sidewalk_width = 1;
+                        }
+                    },
+                    "motorway" => {
+                        block_type = BLACK_CONCRETE;
+                        block_range = 10;
+                        add_stripe = true;
+                        add_outline = true;
+                        grass_buffer = 4;
+                        physical_median_radius = 1;
+                        street_lamps = true;
                     }
                     _ => {
-                        block_type = GRAY_CONCRETE;
-                        if let Some(lanes) = element.tags().get("lanes") {
-                            if lanes == "2" {
-                                block_range = 3;
-                                add_stripe = true;
-                                add_outline = true;
-                            } else if lanes != "1" {
-                                block_range = 4;
-                                add_stripe = true;
-                                add_outline = true;
-                            }
-                        }
+                        // unclassified / living_street fora das satélites / desconhecidas
+                        block_type = BLACK_CONCRETE;
+                        block_range = 4;
+                        add_stripe = true;
+                        grass_buffer = 3;
+                        sidewalk_width = 2;
+                        street_lamps = true;
                     }
                 },
+            }
+
+            if is_motor_road {
+                // Largura real do OSM (`width` em metros ou `lanes` × 3,3 m), quando
+                // existe, vale mais que o padrão da tipologia.
+                if let Some(w) = width_tag.filter(|w| *w >= 2.5 && *w <= 40.0) {
+                    block_range = ((w * 1.33) / 2.0).round().clamp(1.0, 14.0) as i32;
+                } else if let Some(lanes) = lanes_tag {
+                    block_range = lanes_to_half_width(lanes).round().clamp(2.0, 14.0) as i32;
+                }
+
+                // Pavimento declarado
+                if let Some(surface) = element.tags().get("surface") {
+                    match surface.as_str() {
+                        "unpaved" | "dirt" | "ground" | "earth" | "sand" | "mud" => {
+                            block_type = DIRT_PATH;
+                            add_stripe = false;
+                            add_outline = false;
+                            parking_lane = false;
+                        }
+                        "gravel" | "fine_gravel" | "compacted" | "pebblestone" => {
+                            block_type = GRAVEL;
+                            add_stripe = false;
+                            add_outline = false;
+                            parking_lane = false;
+                        }
+                        "paving_stones" | "sett" => {
+                            block_type = STONE_BRICKS;
+                            add_stripe = false;
+                            add_outline = false;
+                        }
+                        "cobblestone" | "unhewn_cobblestone" => {
+                            block_type = COBBLESTONE;
+                            add_stripe = false;
+                            add_outline = false;
+                        }
+                        "concrete" | "concrete:plates" | "concrete:lanes" => {
+                            block_type = LIGHT_GRAY_CONCRETE;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if is_oneway {
+                    // Mão única: nada de eixo amarelo; com 2+ faixas, divisória branca
+                    // tracejada no meio.
+                    stripe_block = WHITE_CONCRETE;
+                    continuous_center = false;
+                    add_stripe = add_stripe && block_range >= 4;
+                } else if physical_median_radius == 0 && block_range >= 6 {
+                    // Avenida de mão dupla sem canteiro: eixo amarelo contínuo e
+                    // divisórias brancas tracejadas entre as faixas de cada sentido.
+                    continuous_center = true;
+                    lane_divider_offset = Some(block_range / 2);
+                }
+
+                if element
+                    .tags()
+                    .get("sidewalk")
+                    .is_some_and(|v: &String| v == "no" || v == "none")
+                {
+                    sidewalk_width = 0;
+                }
+                if element
+                    .tags()
+                    .get("lit")
+                    .is_some_and(|v: &String| v == "no")
+                {
+                    street_lamps = false;
+                }
+            } else {
+                add_stripe = false;
+                street_lamps = false;
+                if block_type != RED_CONCRETE {
+                    outline_block = LIGHT_GRAY_CONCRETE;
+                }
+            }
+            // A zona de passeio precisa caber no pincel.
+            if !is_detached_sidewalk && sidewalk_width > 0 {
+                grass_buffer = grass_buffer.max(sidewalk_width + 1);
             }
 
             if scale_factor.unwrap_or(1.0) < 1.0 {
@@ -949,17 +1130,28 @@ fn generate_highways_internal(
                                                 None,
                                             );
                                         }
-                                    } else {
+                                    } else if sidewalk_width > 0 {
                                         if dist_from_center == block_range + 1 {
+                                            // Meio-fio (guia): meia laje acima do asfalto
                                             editor.set_block_absolute(
-                                                SMOOTH_STONE_SLAB,
+                                                POLISHED_ANDESITE,
                                                 set_x,
                                                 final_paint_y,
                                                 set_z,
                                                 None,
                                                 None,
                                             );
-                                        } else if dist_from_center == block_range + 2 {
+                                            editor.set_block_absolute(
+                                                SMOOTH_STONE_SLAB,
+                                                set_x,
+                                                final_paint_y + 1,
+                                                set_z,
+                                                None,
+                                                None,
+                                            );
+                                        } else if dist_from_center
+                                            <= block_range + 1 + sidewalk_width
+                                        {
                                             editor.set_block_absolute(
                                                 POLISHED_ANDESITE,
                                                 set_x,
@@ -971,6 +1163,44 @@ fn generate_highways_internal(
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        // --- ILUMINAÇÃO PÚBLICA: poste a cada ~25 m, alternando o lado,
+                        // sobre o passeio, com braço e luminária sobre a pista ---
+                        if street_lamps
+                            && !is_bridge
+                            && effective_elevation == 0
+                            && distance_accumulator % 34 == 17
+                        {
+                            let side = if (distance_accumulator / 34) % 2 == 0 {
+                                1.0_f64
+                            } else {
+                                -1.0_f64
+                            };
+                            let post_off = if is_detached_sidewalk {
+                                (block_range + 1) as f64
+                            } else {
+                                (block_range + 2) as f64
+                            };
+                            let lx = (*bx as f64 + post_off * norm_x * side).round() as i32;
+                            let lz = (*bz as f64 + post_off * norm_z * side).round() as i32;
+                            let ly = editor.get_ground_level(lx, lz);
+                            let on_walkable = editor.check_for_block_absolute(
+                                lx,
+                                ly,
+                                lz,
+                                Some(&[POLISHED_ANDESITE, GRASS_BLOCK, SMOOTH_STONE, DIRT]),
+                                None,
+                            );
+                            if on_walkable
+                                && !building_footprints.contains(lx, lz)
+                                && !editor.block_at_absolute(lx, ly + 1, lz)
+                            {
+                                // O mesmo poste padrão Neoenergia dos estacionamentos
+                                crate::element_processing::amenities::place_neoenergia_pole(
+                                    editor, lx, ly, lz,
+                                );
                             }
                         }
 
@@ -993,7 +1223,7 @@ fn generate_highways_internal(
                                 None,
                             ) {
                                 editor.set_block_absolute(
-                                    LIGHT_GRAY_CONCRETE,
+                                    outline_block,
                                     out_x1,
                                     y1,
                                     out_z1,
@@ -1009,7 +1239,7 @@ fn generate_highways_internal(
                                 None,
                             ) {
                                 editor.set_block_absolute(
-                                    LIGHT_GRAY_CONCRETE,
+                                    outline_block,
                                     out_x2,
                                     y2,
                                     out_z2,
@@ -1021,7 +1251,38 @@ fn generate_highways_internal(
 
                         if add_stripe {
                             stripe_length += 1;
-                            if stripe_length <= dash_length {
+                            let dash_on = stripe_length <= dash_length;
+
+                            // Divisórias brancas tracejadas entre faixas do mesmo sentido
+                            if let Some(off) = lane_divider_offset {
+                                if dash_on {
+                                    for side in [1.0_f64, -1.0_f64] {
+                                        let dx = (*bx as f64 + off as f64 * norm_x * side).round()
+                                            as i32;
+                                        let dz = (*bz as f64 + off as f64 * norm_z * side).round()
+                                            as i32;
+                                        let dy = editor.get_ground_level(dx, dz).max(current_y);
+                                        if editor.check_for_block_absolute(
+                                            dx,
+                                            dy,
+                                            dz,
+                                            Some(&[block_type]),
+                                            None,
+                                        ) {
+                                            editor.set_block_absolute(
+                                                WHITE_CONCRETE,
+                                                dx,
+                                                dy,
+                                                dz,
+                                                None,
+                                                None,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            if dash_on || continuous_center {
                                 // TWEAK DA DUPLICAÇÃO DE VIA
                                 if physical_median_radius > 0 {
                                     // Se tem canteiro, a rua é duplicada. As faixas devem ir no meio de cada pista isolada
@@ -1072,20 +1333,24 @@ fn generate_highways_internal(
                                         );
                                     }
                                 } else {
-                                    // Via Simples (Faixa bem no centro)
-                                    let center_x = (*bx as f64 + 0.0 * norm_x).round() as i32;
-                                    let center_z = (*bz as f64 + 0.0 * norm_z).round() as i32;
-                                    let y_center = editor.get_ground_level(center_x, center_z);
+                                    // Via Simples (eixo bem no centro; amarelo em mão dupla,
+                                    // branco como divisória em mão única). Só pinta sobre o
+                                    // próprio pavimento — nunca sobre faixa de pedestre,
+                                    // calçada ou obra que já esteja ali.
+                                    let center_x = *bx;
+                                    let center_z = *bz;
+                                    let y_center =
+                                        editor.get_ground_level(center_x, center_z).max(current_y);
 
-                                    if !editor.check_for_block_absolute(
+                                    if editor.check_for_block_absolute(
                                         center_x,
                                         y_center,
                                         center_z,
-                                        Some(PROTECTED_BLOCKS),
+                                        Some(&[block_type]),
                                         None,
                                     ) {
                                         editor.set_block_absolute(
-                                            WHITE_CONCRETE,
+                                            stripe_block,
                                             center_x,
                                             y_center,
                                             center_z,
