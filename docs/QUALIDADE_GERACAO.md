@@ -379,7 +379,10 @@ casa genérica.
   `landuse::generate_landuse` (estilo `education`/`religious` já existente) e
   o alambrado de `barriers` via `sports::place_fence`, que copia `amenity`/
   `landuse`/`name` para `barriers` aplicar a semântica de escola (4 m) que ele
-  já conhecia.
+  já conhecia. O piso pavimentado só em lotes de até 2.500 blocos (pátio);
+  campi maiores (o Batalhão do Guará tem 83 mil blocos, a mediana dos 57
+  terrenos é 6,5 mil) ficam gramados e só ganham a cerca — pavimentar tudo
+  virava uma mancha branca do tamanho de uma quadra na geração real.
 
 ## 12. Auditoria dos providers: onde eles conflitavam
 

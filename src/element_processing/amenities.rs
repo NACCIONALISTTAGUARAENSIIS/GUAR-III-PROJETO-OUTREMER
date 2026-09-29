@@ -68,21 +68,29 @@ pub fn generate_institutional_grounds(
         return false;
     }
 
-    // 1. Piso do pátio (mesmo desenho de `landuse=education|religious`)
-    let mut tags: HashMap<String, String> = way.tags.clone();
-    tags.insert("landuse".to_string(), landuse_style.to_string());
-    let ground_way = crate::osm_parser::ProcessedWay {
-        id: way.id,
-        nodes: way.nodes.clone(),
-        tags,
-    };
-    crate::element_processing::landuse::generate_landuse(
-        editor,
-        &ground_way,
-        args,
-        flood_fill_cache,
-        building_footprints,
-    );
+    // 1. Piso do pátio (mesmo desenho de `landuse=education|religious`) — só
+    // em lotes pequenos, onde o terreno é de fato um pátio pavimentado. Um
+    // quartel (Batalhão do Guará: 83 mil blocos), um CED ou um CPP são
+    // campi gramados com prédios soltos; pavimentar tudo virava uma mancha
+    // branca do tamanho de uma quadra (visto na geração real). A mediana dos
+    // 57 terrenos institucionais do Guará é ~6,5 mil blocos.
+    const PAVED_YARD_MAX_BLOCKS: f64 = 2500.0;
+    if shoelace_area_blocks(&way.nodes) <= PAVED_YARD_MAX_BLOCKS {
+        let mut tags: HashMap<String, String> = way.tags.clone();
+        tags.insert("landuse".to_string(), landuse_style.to_string());
+        let ground_way = crate::osm_parser::ProcessedWay {
+            id: way.id,
+            nodes: way.nodes.clone(),
+            tags,
+        };
+        crate::element_processing::landuse::generate_landuse(
+            editor,
+            &ground_way,
+            args,
+            flood_fill_cache,
+            building_footprints,
+        );
+    }
 
     // 2. Cerca perimetral — só quando o mapeador não desenhou uma cerca própria
     // (`barrier=*` no mesmo contorno) e para usos que realmente são cercados.
@@ -99,6 +107,20 @@ pub fn generate_institutional_grounds(
         crate::element_processing::sports::place_fence(editor, way, h);
     }
     true
+}
+
+/// Área (em blocos²) de um anel de nós pela fórmula do cadarço.
+fn shoelace_area_blocks(nodes: &[crate::osm_parser::ProcessedNode]) -> f64 {
+    if nodes.len() < 3 {
+        return 0.0;
+    }
+    let mut twice = 0i64;
+    for i in 0..nodes.len() {
+        let a = &nodes[i];
+        let b = &nodes[(i + 1) % nodes.len()];
+        twice += a.x as i64 * b.z as i64 - b.x as i64 * a.z as i64;
+    }
+    (twice.abs() as f64) / 2.0
 }
 
 /// Mapeia um `amenity=*` de área para o estilo de piso institucional que
