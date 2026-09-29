@@ -280,6 +280,12 @@ fn dispatch_element(
     // conversão pra `ProcessedElement`.
     let mut dispatched_modules: Vec<&'static str> = Vec::new();
 
+    // Precedência de PISO deste elemento (a mesma da ordenação por região):
+    // vale para as escritas in-core e viaja com as escritas adiadas no Halo,
+    // para que via vença landuse qualquer que seja a ordem das regiões.
+    editor
+        .set_write_priority(crate::osm_parser::get_priority(&element).min(u8::MAX as usize) as u8);
+
     match &element {
         ProcessedElement::Way(way) => {
             // 🚨 RECONEXÃO: `power=substation`/`power=plant` têm prioridade sobre
@@ -539,6 +545,7 @@ fn dispatch_element(
         }
     }
 
+    editor.reset_write_priority();
     provenance.record_dispatch(
         element.id(),
         dispatched_modules.into_iter().map(String::from).collect(),

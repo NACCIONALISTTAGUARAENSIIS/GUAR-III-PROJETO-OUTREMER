@@ -440,8 +440,24 @@ com a mesma cor de superfície do chão urbano; e uma rua da Candangolândia
   asfalto, bordas, faixas, divisórias e pilares; o aterro de rampas é
   relativo ao solo. `SAFE_FOR_SIDEWALK` inclui o andesito do chão urbano para
   meio-fio e calçada existirem também dentro da mancha urbana.
-- Teste `untouched_terrain_surface_is_replaceable_exactly_once` cobre os
-  quatro modos, o fast-path e o replay pelo Halo.
+- **Precedência de piso entre regiões.** Medido de novo depois da correção
+  acima: a rua da QE 17 virou GRAMA. O polígono `landuse=residential` "QE 17"
+  está ancorado na região (−34, 9) e a rua na (−33, 9); o gramado do landuse
+  chega à região da rua pelo Halo, que é replayado ANTES dos elementos da
+  própria região — então a primeira escrita era a do landuse, e a via (que
+  respeita o que já existe) perdia. A ordenação por prioridade dentro da
+  região nunca valeu ENTRE regiões. Agora cada coluna guarda também a
+  precedência (`osm_parser::get_priority`) de quem pintou a superfície
+  (`surface_writer_priority`), a precedência viaja com cada `HaloOp`, e um
+  elemento mais específico repinta o piso de um mais genérico qualquer que
+  seja a ordem de chegada; empate = o primeiro fica (Arnis). A escada de
+  prioridade foi refinada para isso: prédio > via > trilho > rio > lago >
+  cerca > piso esportivo/estacionamento > equipamento (`amenity`,
+  `man_made`, ...) > lazer e natural > `landuse` > `place` (antes toda ÁREA
+  empatava em 6).
+- Testes: `untouched_terrain_surface_is_replaceable_exactly_once` (quatro
+  modos, fast-path, replay pelo Halo e o caso QE 17 landuse-via) e
+  `floor_precedence_puts_specific_before_generic`.
 
 ## Validação da Parte II
 

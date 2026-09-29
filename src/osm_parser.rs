@@ -419,17 +419,88 @@ fn is_water_element(tags: &HashMap<String, String>) -> bool {
     false
 }
 
-const PRIORITY_ORDER: [&str; 6] = [
-    "entrance", "building", "highway", "waterway", "water", "barrier",
-];
-
-// Function to determine the priority of each element
+/// Precedência de um elemento: ordem de despacho dentro da região E
+/// precedência de PISO entre regiões (menor = desenhado antes e vence no chão,
+/// ver `WorldEditor::surface_writer_priority`).
+///
+/// A escada antiga (`entrance, building, highway, waterway, water, barrier`,
+/// resto = 6) só separava os grandes grupos; tudo que é ÁREA — quadra, pátio
+/// de escola, parque, `landuse`, `place` — empatava, e o empate era decidido
+/// pela ordem arbitrária de chegada (que, entre regiões, é a ordem do Halo:
+/// um `landuse=residential` da QE 17 ancorado na região anterior pintava o
+/// gramado por cima do asfalto das ruas da região seguinte). A escada abaixo
+/// coloca o mais específico/menor antes do mais genérico/maior: prédio >
+/// via > trilho > rio > lago > cerca > piso esportivo/estacionamento >
+/// equipamento (amenity/man_made/...) > lazer e natural > landuse > place.
 pub fn get_priority(element: &ProcessedElement) -> usize {
-    for (i, &tag) in PRIORITY_ORDER.iter().enumerate() {
-        // 🚨 A CORREÇÃO FINAL DA PRIORITY: element.tags() com parênteses.
-        if element.tags().contains_key(tag) {
-            return i;
-        }
+    let t = element.tags();
+    let has = |k: &str| t.contains_key(k);
+    let is = |k: &str, v: &str| t.get(k).map(String::as_str) == Some(v);
+    if has("entrance") {
+        0
+    } else if has("building") || has("building:part") {
+        1
+    } else if has("highway") {
+        2
+    } else if has("railway") {
+        3
+    } else if has("waterway") {
+        4
+    } else if has("water") || is("natural", "water") {
+        5
+    } else if has("barrier") {
+        6
+    } else if matches!(
+        t.get("leisure").map(String::as_str),
+        Some("pitch" | "track" | "playground" | "swimming_pool" | "fitness_station")
+    ) || is("amenity", "parking")
+        || has("sport")
+    {
+        7
+    } else if has("amenity")
+        || has("man_made")
+        || has("power")
+        || has("tourism")
+        || has("shop")
+        || has("public_transport")
+    {
+        8
+    } else if has("leisure") || has("natural") {
+        9
+    } else if has("landuse") {
+        10
+    } else if has("place") {
+        11
+    } else {
+        12
     }
-    PRIORITY_ORDER.len()
+}
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    fn way(tags: &[(&str, &str)]) -> ProcessedElement {
+        ProcessedElement::Way(std::sync::Arc::new(ProcessedWay {
+            id: 1,
+            nodes: vec![],
+            tags: tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }))
+    }
+
+    #[test]
+    fn floor_precedence_puts_specific_before_generic() {
+        let p = |tags: &[(&str, &str)]| get_priority(&way(tags));
+        assert!(p(&[("building", "yes")]) < p(&[("highway", "residential")]));
+        assert!(p(&[("highway", "residential")]) < p(&[("landuse", "residential")]));
+        assert!(p(&[("railway", "subway")]) < p(&[("landuse", "railway")]));
+        assert!(p(&[("leisure", "pitch")]) < p(&[("amenity", "school")]));
+        assert!(p(&[("amenity", "school")]) < p(&[("landuse", "residential")]));
+        assert!(p(&[("leisure", "park")]) < p(&[("landuse", "grass")]));
+        assert!(p(&[("landuse", "residential")]) < p(&[("place", "neighbourhood")]));
+        assert_eq!(p(&[("natural", "water")]), p(&[("water", "lake")]));
+    }
 }

@@ -98,7 +98,17 @@ struct HaloOp {
     block: Block,
     properties: Option<Value>,
     mode: HaloMode,
+    /// Precedência do elemento que emitiu a escrita (ver
+    /// `WorldEditor::surface_writer_priority`), preservada até o replay.
+    priority: u8,
 }
+
+/// Precedência do passe de chão: qualquer elemento vence sobre ele.
+pub const TERRAIN_WRITE_PRIORITY: u8 = u8::MAX;
+/// Precedência de escritas que não vêm de um elemento OSM despachado
+/// (floresta ambiente, features de provedor, HUD): abaixo de todo elemento
+/// mapeado, acima do terreno.
+pub const DEFAULT_WRITE_PRIORITY: u8 = 100;
 
 /// Balde de uma região vizinha ainda não ativa.
 #[derive(Default)]
@@ -148,6 +158,16 @@ pub struct WorldEditor<'a> {
     /// elemento (if-absent, whitelist ou blacklist), e a primeira escrita a
     /// consome. Blocos postos por elementos continuam protegidos como antes.
     terrain_surface_y: Vec<i32>,
+    /// Precedência (`osm_parser::get_priority`, menor = vence) do último
+    /// elemento que escreveu na cota da superfície de cada coluna;
+    /// `TERRAIN_WRITE_PRIORITY` enquanto só o passe de chão escreveu. Um
+    /// elemento de precedência MAIOR (mais específico) pode repintar o piso
+    /// de um de precedência menor — é o que faz o asfalto vencer o gramado de
+    /// um `landuse` que chegou antes pelo Halo, qualquer que seja a ordem das
+    /// regiões. Empate = o primeiro fica (semântica original do Arnis).
+    surface_writer_priority: Vec<u8>,
+    /// Precedência do elemento em despacho (definida por `data_processing`).
+    current_write_priority: u8,
     /// Ligado durante `flush_pending_halo`: a região foi relida do disco, o
     /// registro acima não existe mais, e a superfície de terreno é reconhecida
     /// pela heurística (bloco de chão do passe de terreno na cota do `Ground`).
@@ -177,6 +197,8 @@ impl<'a> WorldEditor<'a> {
             halo_block_lists: Vec::new(),
             halo_block_list_index: HashMap::new(),
             terrain_surface_y: vec![i32::MIN; TERRAIN_SURFACE_CELLS],
+            surface_writer_priority: vec![TERRAIN_WRITE_PRIORITY; TERRAIN_SURFACE_CELLS],
+            current_write_priority: DEFAULT_WRITE_PRIORITY,
             replaying_sealed_region: false,
             xzbbox,
             llbbox,
@@ -212,6 +234,8 @@ impl<'a> WorldEditor<'a> {
             halo_block_lists: Vec::new(),
             halo_block_list_index: HashMap::new(),
             terrain_surface_y: vec![i32::MIN; TERRAIN_SURFACE_CELLS],
+            surface_writer_priority: vec![TERRAIN_WRITE_PRIORITY; TERRAIN_SURFACE_CELLS],
+            current_write_priority: DEFAULT_WRITE_PRIORITY,
             replaying_sealed_region: false,
             xzbbox,
             llbbox,
@@ -234,6 +258,17 @@ impl<'a> WorldEditor<'a> {
         self.active_region_x = rx;
         self.active_region_z = rz;
         self.terrain_surface_y.fill(i32::MIN);
+        self.surface_writer_priority.fill(TERRAIN_WRITE_PRIORITY);
+    }
+
+    /// Define a precedência das próximas escritas (o elemento em despacho).
+    pub fn set_write_priority(&mut self, priority: u8) {
+        self.current_write_priority = priority;
+    }
+
+    /// Volta à precedência padrão de escritas fora de elemento.
+    pub fn reset_write_priority(&mut self) {
+        self.current_write_priority = DEFAULT_WRITE_PRIORITY;
     }
 
     #[inline(always)]
@@ -257,21 +292,27 @@ impl<'a> WorldEditor<'a> {
         }
         if self.world.get_block(x, absolute_y, z).is_none() {
             self.world.set_block(x, absolute_y, z, block);
-            self.terrain_surface_y[Self::surface_idx(x, z)] = absolute_y;
+            let idx = Self::surface_idx(x, z);
+            self.terrain_surface_y[idx] = absolute_y;
+            self.surface_writer_priority[idx] = TERRAIN_WRITE_PRIORITY;
         }
     }
 
-    /// `true` se `(x, y, z)` ainda é a superfície de terreno intocada do passe
-    /// de chão — para efeito de escrita de elementos, conta como VAZIO.
+    /// `true` se `(x, y, z)` é a cota de superfície da coluna e quem está lá
+    /// (terreno intocado ou piso de um elemento menos prioritário) cede a uma
+    /// escrita de precedência `writer` — para efeito dessa escrita, a posição
+    /// conta como VAZIA.
     #[inline]
-    fn is_untouched_terrain_surface(
+    fn surface_yields_to(
         &self,
         x: i32,
         absolute_y: i32,
         z: i32,
         existing: Block,
+        writer: u8,
     ) -> bool {
-        if self.terrain_surface_y[Self::surface_idx(x, z)] == absolute_y {
+        let idx = Self::surface_idx(x, z);
+        if self.terrain_surface_y[idx] == absolute_y && writer < self.surface_writer_priority[idx] {
             return true;
         }
         // Região relida do disco (2ª passada do Halo): o registro se perdeu, mas
@@ -285,26 +326,37 @@ impl<'a> WorldEditor<'a> {
             && self.get_ground_level(x, z) == absolute_y
     }
 
-    /// Consome a marca de terreno intocado de `(x, z)` quando um elemento
-    /// escreve na cota da superfície.
+    /// Registra quem escreveu na cota da superfície de `(x, z)`.
     #[inline]
-    fn consume_terrain_surface(&mut self, x: i32, absolute_y: i32, z: i32) {
+    fn record_surface_write(&mut self, x: i32, absolute_y: i32, z: i32, writer: u8) {
         let idx = Self::surface_idx(x, z);
         if self.terrain_surface_y[idx] == absolute_y {
-            self.terrain_surface_y[idx] = i32::MIN;
+            self.surface_writer_priority[idx] = writer;
         }
     }
 
-    /// Bloco existente na região ativa do ponto de vista de um ELEMENTO: a
-    /// superfície de terreno intocada é reportada como ausente.
+    /// Bloco existente na região ativa do ponto de vista de uma escrita de
+    /// precedência `writer`: superfície que cede é reportada como ausente.
     #[inline]
-    fn existing_for_element_write(&self, x: i32, absolute_y: i32, z: i32) -> Option<Block> {
+    fn existing_for_write(&self, x: i32, absolute_y: i32, z: i32, writer: u8) -> Option<Block> {
         let existing = self.world.get_block(x, absolute_y, z)?;
-        if self.is_untouched_terrain_surface(x, absolute_y, z, existing) {
+        if self.surface_yields_to(x, absolute_y, z, existing, writer) {
             None
         } else {
             Some(existing)
         }
+    }
+
+    /// Idem, para o elemento em despacho.
+    #[inline]
+    fn existing_for_element_write(&self, x: i32, absolute_y: i32, z: i32) -> Option<Block> {
+        self.existing_for_write(x, absolute_y, z, self.current_write_priority)
+    }
+
+    /// Idem, após a escrita do elemento em despacho.
+    #[inline]
+    fn consume_terrain_surface(&mut self, x: i32, absolute_y: i32, z: i32) {
+        self.record_surface_write(x, absolute_y, z, self.current_write_priority);
     }
 
     /// Replaya, na região agora ativa, as escritas que elementos de regiões
@@ -330,7 +382,7 @@ impl<'a> WorldEditor<'a> {
     }
 
     fn apply_halo_op(&mut self, op: HaloOp) {
-        let existing = self.existing_for_element_write(op.x, op.y, op.z);
+        let existing = self.existing_for_write(op.x, op.y, op.z, op.priority);
         let should_insert = match (op.mode, existing) {
             (HaloMode::Force, _) => true,
             (_, None) => true,
@@ -352,7 +404,7 @@ impl<'a> WorldEditor<'a> {
                 ),
                 None => self.world.set_block(op.x, op.y, op.z, op.block),
             }
-            self.consume_terrain_surface(op.x, op.y, op.z);
+            self.record_surface_write(op.x, op.y, op.z, op.priority);
         }
     }
 
@@ -402,6 +454,7 @@ impl<'a> WorldEditor<'a> {
             block,
             properties,
             mode,
+            priority: self.current_write_priority,
         });
     }
 
@@ -1383,15 +1436,43 @@ mod halo_tests {
         editor.set_block_absolute(BRICK, 14, -61, 20, None, None);
         editor.set_block_absolute(STONE, 14, -61, 20, None, None);
         assert_eq!(block_at(&editor, 14, -61, 20), Some(BRICK));
+        // Precedência de piso: um landuse (10) pinta grama; a via (2) que chega
+        // depois repinta com asfalto; outro landuse (10) não desfaz; um prédio
+        // (1) ainda vence a via.
+        editor.set_write_priority(10);
+        editor.set_block_absolute(GRASS_BLOCK, 15, -62, 20, None, None);
+        assert_eq!(block_at(&editor, 15, -62, 20), Some(GRASS_BLOCK));
+        editor.set_write_priority(2);
+        editor.set_block_absolute(BLACK_CONCRETE, 15, -62, 20, None, None);
+        assert_eq!(block_at(&editor, 15, -62, 20), Some(BLACK_CONCRETE));
+        editor.set_write_priority(10);
+        editor.set_block_absolute(GRASS_BLOCK, 15, -62, 20, None, None);
+        assert_eq!(block_at(&editor, 15, -62, 20), Some(BLACK_CONCRETE));
+        editor.set_write_priority(1);
+        editor.set_block_absolute(SMOOTH_STONE, 15, -62, 20, None, None);
+        assert_eq!(block_at(&editor, 15, -62, 20), Some(SMOOTH_STONE));
+        editor.reset_write_priority();
 
         // Pelo Halo: região 1 recebe uma escrita if-absent de asfalto antes de
         // existir; quando vira ativa, o chão de terreno nasce e o replay vence.
         editor.set_block_absolute(BLACK_CONCRETE, 700, -62, 20, None, None);
+        // E o caso real da QE 17: um landuse (10) da região 0 vaza grama para a
+        // região 1 pelo Halo (replayado ANTES dos elementos da região 1); a via
+        // (2) despachada in-core na região 1 tem que vencer mesmo chegando depois.
+        editor.set_write_priority(10);
+        editor.set_block_absolute(GRASS_BLOCK, 701, -62, 20, None, None);
+        editor.reset_write_priority();
         editor.flush_active_region_for_test();
         editor.set_active_region(1, 0);
         editor.set_terrain_surface_absolute(GRASS_BLOCK, 700, -62, 20);
+        editor.set_terrain_surface_absolute(POLISHED_ANDESITE, 701, -62, 20);
         editor.load_halo_to_core();
         assert_eq!(block_at(&editor, 700, -62, 20), Some(BLACK_CONCRETE));
+        assert_eq!(block_at(&editor, 701, -62, 20), Some(GRASS_BLOCK));
+        editor.set_write_priority(2);
+        editor.set_block_absolute(BLACK_CONCRETE, 701, -62, 20, None, None);
+        assert_eq!(block_at(&editor, 701, -62, 20), Some(BLACK_CONCRETE));
+        editor.reset_write_priority();
     }
 
     /// Vazamento "para trás" (para uma região já gravada em disco): a segunda

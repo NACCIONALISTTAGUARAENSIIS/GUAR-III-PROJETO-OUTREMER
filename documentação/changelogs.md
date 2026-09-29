@@ -38,7 +38,12 @@ verificação em `docs/QUALIDADE_GERACAO.md` (Parte II). Resumo:
    misturava Y relativo com absoluto (`ground.max(current_y)`), enterrando
    ruas em terreno positivo e fazendo-as flutuar em terreno negativo.
    Superfície de terreno intocada agora conta como vazia para a primeira
-   escrita de elemento; `paint_y_at` unifica a cota de pintura das vias.
+   escrita de elemento; a precedência do elemento (`get_priority`, escada
+   refinada: prédio > via > trilho > água > cerca > piso esportivo >
+   equipamento > lazer/natural > landuse > place) decide quem repinta o piso
+   mesmo entre regiões (o `landuse` da QE 17 chegava pelo Halo antes do
+   asfalto das ruas da região vizinha); `paint_y_at` unifica a cota de
+   pintura das vias.
 
 ## 2026-09-29 — Qualidade da geração: sete defeitos sistêmicos corrigidos
 
