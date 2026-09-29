@@ -141,6 +141,9 @@ impl DataProvider for Tiles3DProvider {
     fn priority(&self) -> u8 {
         self.priority
     }
+    fn describe_sources(&self) -> Vec<String> {
+        vec![self.endpoint_url.clone()]
+    }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         println!(

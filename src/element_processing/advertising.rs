@@ -144,7 +144,7 @@ fn is_volume_obstructed(
             let cz = z + dz;
 
             // 1. Sondagem O(1) de Espaço Aéreo (Marquises, Telhados, Pontes)
-            let surf_y = ground.surface_level(XZPoint::new(cx, cz));
+            let surf_y = ground.surface_level_abs(cx, cz);
             if surf_y > ground_y + 1 {
                 return true;
             }
@@ -193,7 +193,7 @@ pub fn generate_advertising(
             let cz = (p1.z + p2.z) / 2;
             let center_pt = XZPoint::new(cx, cz);
 
-            let ground_y = ground.surface_level(center_pt);
+            let ground_y = ground.surface_level_abs(cx, cz);
 
             match advertising_type.as_str() {
                 "column" | "totem" => {

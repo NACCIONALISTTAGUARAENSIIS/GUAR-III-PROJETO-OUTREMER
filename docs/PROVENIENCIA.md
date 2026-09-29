@@ -93,3 +93,21 @@ limitação real:
 Um modo visual nos visualizadores 3D (cor = provider/módulo em vez da cor
 real do bloco), pra inspecionar a proveniência sem precisar ler
 `provenance.ndjson` — ainda não implementado.
+
+## Fontes exatas por provedor (`dataSources`)
+
+Além de "qual provider", o relatório responde "**qual arquivo/endpoint**":
+`DataProvider::describe_sources()` é implementado por todos os provedores de
+arquivo local (caminho exato que abriram) e de rede (endpoint configurado; o
+PostGIS omite credenciais e reporta só a tabela; o OSM reporta o `--file`
+local ou "Overpass API" — vários servidores são tentados em sequência e qual
+respondeu não é rastreado). `ProviderManager::fetch_all` loga cada fonte ao
+iniciar o provedor (`↳ fonte: ...`), e `provenance_summary.json` ganhou a
+seção:
+
+```json
+"dataSources": [
+  { "provider": "OpenStreetMap (Overpass API)", "sources": ["./guara.json"] },
+  { "provider": "GDF GeoPackage (SQLite Spatial DB)", "sources": ["./dados/lotes.gpkg"] }
+]
+```

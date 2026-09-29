@@ -149,6 +149,9 @@ impl DataProvider for GDFProvider {
     fn priority(&self) -> u8 {
         self.priority
     }
+    fn describe_sources(&self) -> Vec<String> {
+        vec![self.shp_path.display().to_string()]
+    }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         let mut reader = Reader::from_path(&self.shp_path)

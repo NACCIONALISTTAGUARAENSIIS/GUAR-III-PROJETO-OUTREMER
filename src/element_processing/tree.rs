@@ -1032,10 +1032,54 @@ impl Tree<'_> {
 // GERAÇÃO PROCEDURAL DE FLORESTAS E TRONCOS CAÍDOS
 // =====================================================
 
+/// Raio (blocos) em torno de um prédio onde a mata ambiente não nasce, para a
+/// copa não atravessar parede nem sombrear a fachada.
+const BUILDING_CLEARANCE: i32 = 2;
+
+/// Verdadeiro se a coluna `(x, z)` é chão NATURAL e NÃO MAPEADO — o único lugar
+/// onde a floresta ambiente do Cerrado pode nascer:
+///
+/// * superfície de `GRASS_BLOCK` (o chão-base do mundo; qualquer gerador que já
+///   passou por ali deixou outra superfície: asfalto, calçada, terra batida,
+///   areia, água, farmland, podzol de cemitério, andesito urbano...);
+/// * fora de qualquer área mapeada (`mapped_areas`: uso do solo, lazer,
+///   amenidades, natureza, água, pátios — ver
+///   `FloodFillCache::collect_mapped_area_coverage`);
+/// * a mais de `BUILDING_CLEARANCE` blocos de qualquer prédio.
+///
+/// Antes a regra era o inverso (uma lista curta de superfícies PROIBIDAS), e a
+/// mata brotava em quintais de quadra residencial, campos de futebol,
+/// estacionamentos de terra, cemitérios e pátios industriais.
+pub fn is_wild_ground(
+    editor: &WorldEditor,
+    x: i32,
+    ground_y: i32,
+    z: i32,
+    mapped_areas: Option<&BuildingFootprintBitmap>,
+    building_footprints: Option<&BuildingFootprintBitmap>,
+) -> bool {
+    if let Some(areas) = mapped_areas {
+        if areas.contains(x, z) {
+            return false;
+        }
+    }
+    if let Some(footprints) = building_footprints {
+        for dx in -BUILDING_CLEARANCE..=BUILDING_CLEARANCE {
+            for dz in -BUILDING_CLEARANCE..=BUILDING_CLEARANCE {
+                if footprints.contains(x + dx, z + dz) {
+                    return false;
+                }
+            }
+        }
+    }
+    editor.check_for_block_absolute(x, ground_y, z, Some(&[GRASS_BLOCK]), None)
+}
+
 pub fn generate_chunk(
     chunk_x: i32,
     chunk_z: i32,
     building_footprints: Option<&BuildingFootprintBitmap>,
+    mapped_areas: Option<&BuildingFootprintBitmap>,
     editor: &mut WorldEditor,
 ) {
     let mut tree_positions: Vec<(i32, i32)> = Vec::new();
@@ -1051,6 +1095,7 @@ pub fn generate_chunk(
             editor,
             &mut chunk_rng,
             building_footprints,
+            mapped_areas,
         );
     }
 
@@ -1058,12 +1103,6 @@ pub fn generate_chunk(
         for lz in 0..16 {
             let wx = chunk_x * 16 + lx;
             let wz = chunk_z * 16 + lz;
-
-            if let Some(footprints) = building_footprints {
-                if footprints.contains(wx, wz) {
-                    continue;
-                }
-            }
 
             // Escala o Ruído de Perlin para a grade distorcida
             let sx = wx as f64 * HORIZONTAL_SCALE * (1.0 / GOV_H_SCALE);
@@ -1078,24 +1117,16 @@ pub fn generate_chunk(
                 (topo * 40.0 * VERTICAL_SCALE) as i32 + 70
             };
 
-            // 🚨 Fronteira urbana e viária: `urban_ground::UrbanGroundLookup` pinta
-            // POLISHED_ANDESITE em vez de GRASS_BLOCK nas quadras urbanas, e as ruas de
-            // highways.rs usam esta mesma paleta de asfalto/calçada (GRAY_CONCRETE nas
-            // coletoras/vias locais, GRAY_TERRACOTTA nas vias de superquadra). A floresta
-            // ambiente (e o sub-bosque que nasce nas células de baixa densidade abaixo)
-            // respeita essas superfícies — sem touceira de capim nem árvore de Cerrado
-            // brotando de calçada ou asfalto.
-            if editor.check_for_block_absolute(
+            // 🚨 Só chão natural e não mapeado (ver `is_wild_ground`): nem o
+            // sub-bosque nem a árvore nascem em quadra, calçada, asfalto, campo,
+            // quintal ou a menos de 2 blocos de um prédio.
+            if !is_wild_ground(
+                editor,
                 wx,
                 base_height,
                 wz,
-                Some(&[
-                    POLISHED_ANDESITE,
-                    GRAY_CONCRETE,
-                    LIGHT_GRAY_CONCRETE,
-                    GRAY_TERRACOTTA,
-                ]),
-                None,
+                mapped_areas,
+                building_footprints,
             ) {
                 continue;
             }
@@ -1135,26 +1166,17 @@ pub fn generate_chunk(
             }
             tree_positions.push((tx, tz));
 
-            let ground_check = editor.check_for_block_absolute(
+            // O jitter pode ter movido a árvore para uma coluna vizinha: confere
+            // de novo no ponto final (e usa a cota real DELE).
+            let tree_ground_y = editor.get_ground_level(tx, tz);
+            if !is_wild_ground(
+                editor,
                 tx,
-                base_height,
+                tree_ground_y,
                 tz,
-                Some(&[
-                    WATER,
-                    BLACK_CONCRETE,
-                    WHITE_CONCRETE,
-                    YELLOW_CONCRETE,
-                    RED_CONCRETE,
-                    POLISHED_BASALT,
-                    // 🚨 Solo urbano (urban_ground::UrbanGroundLookup) pinta POLISHED_ANDESITE
-                    // em vez de GRASS_BLOCK — é o mesmo sinal que o motor já usa pra saber
-                    // "aqui é cidade, não campo". A floresta ambiente respeita essa fronteira
-                    // em vez de brotar árvore de Cerrado no meio de uma quadra urbana.
-                    POLISHED_ANDESITE,
-                ]),
-                None,
-            );
-            if ground_check {
+                mapped_areas,
+                building_footprints,
+            ) {
                 continue;
             }
 
@@ -1179,7 +1201,7 @@ pub fn generate_chunk(
 
             Tree::create_of_type_with_height(
                 editor,
-                (tx, base_height, tz),
+                (tx, tree_ground_y, tz),
                 tree_type,
                 None,
                 building_footprints,
@@ -1195,15 +1217,10 @@ fn generate_fallen_log(
     editor: &mut WorldEditor,
     rng: &mut SmallRng,
     building_footprints: Option<&BuildingFootprintBitmap>,
+    mapped_areas: Option<&BuildingFootprintBitmap>,
 ) {
     let tx = chunk_x * 16 + rng.random_range(4..12);
     let tz = chunk_z * 16 + rng.random_range(4..12);
-
-    if let Some(footprints) = building_footprints {
-        if footprints.contains(tx, tz) {
-            return;
-        }
-    }
 
     let ground_y = if editor.get_ground().is_some() {
         editor.get_ground_level(tx, tz)
@@ -1211,21 +1228,7 @@ fn generate_fallen_log(
         return;
     };
 
-    if editor.check_for_block_absolute(
-        tx,
-        ground_y,
-        tz,
-        Some(&[
-            WATER,
-            BLACK_CONCRETE,
-            WHITE_CONCRETE,
-            YELLOW_CONCRETE,
-            RED_CONCRETE,
-            POLISHED_BASALT,
-            POLISHED_ANDESITE, // Solo urbano: sem tronco caído de Cerrado dentro da cidade
-        ]),
-        None,
-    ) {
+    if !is_wild_ground(editor, tx, ground_y, tz, mapped_areas, building_footprints) {
         return;
     }
 

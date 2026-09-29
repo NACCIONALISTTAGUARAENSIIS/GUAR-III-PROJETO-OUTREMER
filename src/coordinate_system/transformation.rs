@@ -211,40 +211,6 @@ impl CoordTransformer {
     }
 }
 
-// (lat meters, lon meters)
-#[inline]
-pub fn geo_distance(a: LLPoint, b: LLPoint) -> (f64, f64) {
-    let z: f64 = lat_distance(a.lat(), b.lat());
-
-    // distance between two lons depends on their latitude. In this case we'll just average them
-    let x: f64 = lon_distance((a.lat() + b.lat()) / 2.0, a.lng(), b.lng());
-
-    (z, x)
-}
-
-// Haversine but optimized for a latitude delta of 0
-// returns meters
-fn lon_distance(lat: f64, lon1: f64, lon2: f64) -> f64 {
-    const R: f64 = 6_371_000.0;
-    let d_lon: f64 = (lon2 - lon1).to_radians();
-    let a: f64 =
-        lat.to_radians().cos() * lat.to_radians().cos() * (d_lon / 2.0).sin() * (d_lon / 2.0).sin();
-    let c: f64 = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-
-    R * c
-}
-
-// Haversine but optimized for a longitude delta of 0
-// returns meters
-fn lat_distance(lat1: f64, lat2: f64) -> f64 {
-    const R: f64 = 6_371_000.0;
-    let d_lat: f64 = (lat2 - lat1).to_radians();
-    let a: f64 = (d_lat / 2.0).sin() * (d_lat / 2.0).sin();
-    let c: f64 = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-
-    R * c
-}
-
 // 🚨 Helper de teste legado sem chamador hoje — a projeção real do motor é
 // `CoordTransformer::transform_point`; mantido só como utilitário auxiliar.
 #[cfg(test)]

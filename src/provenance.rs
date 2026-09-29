@@ -60,8 +60,19 @@ pub struct ProvenanceRecord {
     pub modules: Vec<String>,
 }
 
+/// Fonte exata (arquivo ou endpoint) usada por um provedor nesta geração —
+/// ver `DataProvider::describe_sources`.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct DataSourceRecord {
+    pub provider: String,
+    pub sources: Vec<String>,
+}
+
 #[derive(Serialize)]
 struct ProvenanceSummary {
+    /// Provedores registrados e as fontes exatas (arquivo/endpoint) de cada um.
+    #[serde(rename = "dataSources")]
+    data_sources: Vec<DataSourceRecord>,
     #[serde(rename = "totalFeaturesRegistered")]
     total_features_registered: usize,
     #[serde(rename = "totalFeaturesDispatched")]
@@ -84,11 +95,19 @@ struct ProvenanceSummary {
 pub struct ProvenanceLedger {
     origins: HashMap<u64, FeatureOrigin>,
     records: Vec<ProvenanceRecord>,
+    data_sources: Vec<DataSourceRecord>,
 }
 
 impl ProvenanceLedger {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Registra as fontes exatas (arquivos/endpoints) de um provedor — a
+    /// resposta ao "QUAL arquivo gerou isto", complementar ao "qual provider".
+    pub fn register_data_sources(&mut self, provider: String, sources: Vec<String>) {
+        self.data_sources
+            .push(DataSourceRecord { provider, sources });
     }
 
     /// Registra a origem de uma `Feature` — chamar ANTES de
@@ -163,6 +182,7 @@ impl ProvenanceLedger {
         }
 
         ProvenanceSummary {
+            data_sources: self.data_sources.clone(),
             total_features_registered: self.origins.len(),
             total_features_dispatched: self.records.len(),
             by_provider,
@@ -316,6 +336,10 @@ mod tests {
         let feature = make_feature(3, "osm", SemanticGroup::Building);
         ledger.register_origin(&feature);
         ledger.record_dispatch(3, vec!["buildings".to_string()]);
+        ledger.register_data_sources(
+            "OpenStreetMap (Overpass API)".to_string(),
+            vec!["./guara.json".to_string()],
+        );
 
         let tmp = tempfile::tempdir().expect("tmp dir");
         ledger.write_reports(tmp.path()).expect("write reports");
@@ -328,6 +352,8 @@ mod tests {
         let summary_text =
             std::fs::read_to_string(tmp.path().join("provenance_summary.json")).unwrap();
         assert!(summary_text.contains("totalFeaturesDispatched"));
+        assert!(summary_text.contains("dataSources"));
+        assert!(summary_text.contains("./guara.json"));
     }
 
     // Espelha só os campos que o teste acima precisa ler de volta — evita

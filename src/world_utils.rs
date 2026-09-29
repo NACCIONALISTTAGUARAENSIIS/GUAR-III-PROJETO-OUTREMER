@@ -338,18 +338,15 @@ pub fn create_new_world(base_path: &Path) -> Result<String, String> {
 /// Sets the player spawn point in an existing Java Edition level.dat file.
 ///
 /// Updates both the world spawn point (SpawnX/SpawnY/SpawnZ) and the player
-/// position if a Player compound exists. The Y coordinate is set to 150 as a
-/// safe default above terrain; Minecraft will adjust it on first load.
-///
-/// 🚨 Usado apenas no build sem a feature `gui` (ver `main::run_generation_pipeline`,
-/// que troca para `gui::set_player_spawn_in_level_dat` — mais completo — quando a
-/// GUI está habilitada). `--all-features` sempre liga `gui`, então o linter enxerga
-/// este ramo como "nunca chamado" nesse build específico; ele é real e usado no
-/// build headless.
-#[allow(dead_code)]
-pub fn set_spawn_in_level_dat(world_path: &Path, spawn_x: i32, spawn_z: i32) -> Result<(), String> {
-    let spawn_y = 150;
-
+/// position if a Player compound exists. `spawn_y` é a cota real do terreno
+/// no ponto de spawn (+ folga), calculada pelo chamador a partir do `Ground`
+/// definitivo do mundo — usado nos dois builds (com e sem `gui`).
+pub fn set_spawn_in_level_dat(
+    world_path: &Path,
+    spawn_x: i32,
+    spawn_y: i32,
+    spawn_z: i32,
+) -> Result<(), String> {
     let level_path = world_path.join("level.dat");
     if !level_path.exists() {
         return Err(format!("level.dat not found at {level_path:?}"));

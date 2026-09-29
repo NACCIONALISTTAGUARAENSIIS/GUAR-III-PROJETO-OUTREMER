@@ -164,3 +164,13 @@ Cinco testes em `args.rs` (`test_bedrock_flag`, `test_wfs_dependency`,
 "BESM-6" — os testes nunca haviam rodado contra essas regras novas. Corrigidos
 para usar uma bbox pequena e realista (ou `--max-area-km2` explícito) sem
 enfraquecer as validações em si.
+
+## Adendo (2026-09-29) — dependências de ambiente do `proj-sys`
+
+Numa máquina limpa, o build script do `proj-sys` (que compila o PROJ 9 a
+partir do código-fonte) exige o **binário `sqlite3`** no PATH
+(`CMake Error: sqlite3 binary not found!`) além do `libclang`. Neste ambiente
+bastou `apt-get install sqlite3 libsqlite3-dev libtiff-dev` e
+`LIBCLANG_PATH=/usr/lib/llvm-18/lib` (a única versão de libclang instalada
+aqui; ver "Achado #1" acima para o caso de várias versões coexistirem). O CI
+(`ubuntu-latest`) já traz o `sqlite3`.

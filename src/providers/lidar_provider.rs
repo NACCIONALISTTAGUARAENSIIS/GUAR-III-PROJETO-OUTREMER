@@ -175,6 +175,9 @@ impl DataProvider for LidarProvider {
     fn priority(&self) -> u8 {
         self.priority
     }
+    fn describe_sources(&self) -> Vec<String> {
+        vec![self.file_path.display().to_string()]
+    }
     fn name(&self) -> &str {
         "High-Density LiDAR Concave Vectorizer (.las/.laz)"
     }

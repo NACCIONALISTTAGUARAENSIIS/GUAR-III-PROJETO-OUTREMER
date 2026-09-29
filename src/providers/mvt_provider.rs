@@ -97,6 +97,9 @@ impl DataProvider for MvtProvider {
     fn priority(&self) -> u8 {
         self.priority
     }
+    fn describe_sources(&self) -> Vec<String> {
+        vec![self.endpoint.clone()]
+    }
 
     fn fetch_features(&self, _bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         // NOTA: Implementação MVT desabilitada temporariamente

@@ -183,6 +183,9 @@ impl DataProvider for CityGmlProvider {
     fn priority(&self) -> u8 {
         self.priority
     }
+    fn describe_sources(&self) -> Vec<String> {
+        vec![self.file_path.display().to_string()]
+    }
     fn name(&self) -> &str {
         "CityGML 3D Provider (LOD3 SAX Stream with Facade Matrix)"
     }

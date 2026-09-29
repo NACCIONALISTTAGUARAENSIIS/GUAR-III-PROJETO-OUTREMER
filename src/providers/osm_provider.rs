@@ -108,6 +108,15 @@ impl DataProvider for OSMProvider {
     fn priority(&self) -> u8 {
         10
     }
+    fn describe_sources(&self) -> Vec<String> {
+        match &self.local_file {
+            Some(path) => vec![path.clone()],
+            None if self.offline => vec!["(offline, sem fonte OSM)".to_string()],
+            // Vários servidores Overpass são tentados em sequência
+            // (`retrieve_data.rs`); qual respondeu não é rastreado aqui.
+            None => vec![format!("Overpass API (downloader: {})", self.downloader)],
+        }
+    }
     fn name(&self) -> &str {
         "OpenStreetMap (Overpass API)"
     }

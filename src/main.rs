@@ -232,6 +232,9 @@ pub fn run_generation_pipeline(
     // Sem isso feito aqui, não haveria como saber depois de onde cada
     // elemento veio.
     let mut provenance_ledger = provenance::ProvenanceLedger::new();
+    for (provider_name, sources) in provider_manager.describe_registered_sources() {
+        provenance_ledger.register_data_sources(provider_name, sources);
+    }
     for feature in provider_specific_features
         .iter()
         .chain(osm_convertible_features.iter())
@@ -283,7 +286,7 @@ pub fn run_generation_pipeline(
             );
             match elevation_data::fetch_elevation_data(
                 &args.bbox,
-                args.scale_h,
+                &xzbbox,
                 args.scale_v,
                 args.ground_level,
                 args.local_lidar.as_ref(),
@@ -455,16 +458,35 @@ pub fn run_generation_pipeline(
         _ => Some(world_utils::calculate_default_spawn(&xzbbox)),
     };
 
+    // 🚨 Terreno definitivo (uma única montagem para o mundo inteiro): funde
+    // SRTM/LiDAR, DEM local (re-baseado), DSM e bioma — ver `Ground::assemble`.
+    // Sem `--terrain`, é o chão plano em `ground_level`.
+    let world_ground = std::sync::Arc::new(if args.terrain {
+        ground::Ground::assemble(
+            args.ground_level,
+            &xzbbox,
+            elevation_data.as_ref(),
+            dem_override.as_ref(),
+            surface_data.map(std::sync::Arc::new),
+            biome_grid.map(std::sync::Arc::new),
+        )
+    } else {
+        ground::Ground::new_flat(args.ground_level)
+    });
+    if args.terrain && !world_ground.elevation_enabled {
+        eprintln!(
+            "{} --terrain ativo, mas nenhuma fonte de elevação foi obtida: o mundo será plano.",
+            "Aviso:".yellow().bold()
+        );
+    }
+
     let generation_options = data_processing::GenerationOptions {
         path: generation_path.clone(),
         format: world_format,
         level_name,
         spawn_point,
         provider_features: provider_specific_features, // 🚨 BESM-6: Injeta features governamentais
-        elevation_data: elevation_data.map(std::sync::Arc::new), // 🚨 Reconexão: elevação real
-        biome_grid: biome_grid.map(std::sync::Arc::new), // 🚨 Reconexão: bioma real
-        surface_data: surface_data.map(std::sync::Arc::new), // 🚨 Reconexão: superfície real (DSM)
-        dem_override: dem_override.map(std::sync::Arc::new), // 🚨 Reconexão: DEM local explícito
+        ground: std::sync::Arc::clone(&world_ground),
         ambient_forest: args.terrain && !args.no_ambient_forest, // 🚨 Reconexão: floresta ambiente
         telemetry_tx,
     };
@@ -496,19 +518,17 @@ pub fn run_generation_pipeline(
 
             if !args.bedrock {
                 if let Some((spawn_x, spawn_z)) = spawn_point {
-                    // 🚨 BESM-6 RECONEXÃO: no build com GUI, usa a versão mais completa
-                    // (também atualiza o NBT `Player/Pos`, não só `SpawnX/Y/Z`), que
-                    // ficava definida mas nunca chamada; no build sem GUI (`gui.rs` nem
-                    // compila), mantém o fallback que já funcionava.
-                    #[cfg(feature = "gui")]
-                    let spawn_result = gui::set_player_spawn_in_level_dat(
-                        generation_path.to_str().unwrap_or_default(),
+                    // 🚨 Spawn na cota REAL do terreno (+3 de folga), uma única vez,
+                    // depois da geração. Antes, o Y era corrigido para o terreno
+                    // dentro da geração e em seguida sobrescrito aqui por um 150 fixo
+                    // — o jogador nascia no ar e caía dezenas de blocos.
+                    let spawn_y = world_ground.level_abs(spawn_x, spawn_z) + 3;
+                    let spawn_result = world_utils::set_spawn_in_level_dat(
+                        &generation_path,
                         spawn_x,
+                        spawn_y,
                         spawn_z,
                     );
-                    #[cfg(not(feature = "gui"))]
-                    let spawn_result =
-                        world_utils::set_spawn_in_level_dat(&generation_path, spawn_x, spawn_z);
 
                     if let Err(e) = spawn_result {
                         eprintln!(

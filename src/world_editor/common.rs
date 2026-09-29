@@ -7,8 +7,8 @@ use crate::block_definitions::*;
 
 /// Minimum Y coordinate in Minecraft (1.18+)
 const MIN_Y: i32 = -64;
-/// Maximum Y coordinate in Minecraft (1.18+)
-const MAX_Y: i32 = 319;
+/// Maximum Y coordinate in Minecraft (1.18+) — teto físico do escritor de chunks.
+pub(crate) const MAX_Y: i32 = 319;
 use fastnbt::{LongArray, Value};
 use fnv::FnvHashMap;
 use serde::{Deserialize, Serialize};

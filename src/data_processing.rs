@@ -7,18 +7,14 @@ use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::element_processing::*;
-use crate::elevation_data::ElevationData;
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
 use crate::ground::Ground;
 use crate::master_control::BesmSignal; // 🚨 A Ponte com a Telemetria
 use crate::osm_parser::{ProcessedElement, ProcessedMemberRole, ProcessedWay};
 use crate::progress::{emit_gui_progress_update, emit_open_mcworld_file};
-#[cfg(feature = "gui")]
-use crate::telemetry::{send_log, LogLevel};
 use crate::urban_ground;
 use crate::world_editor::{WorldEditor, WorldFormat};
 use colored::Colorize;
-use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
@@ -37,27 +33,12 @@ pub struct GenerationOptions {
     // 🚨 BESM-6: Features governamentais diretas (CAESB, CityGML, IFC) + Advertising
     // (agnóstica de provedor — ver `is_provider_specific` em main.rs)
     pub provider_features: Vec<crate::providers::Feature>,
-    // 🚨 RECONEXÃO: Elevação real (SRTM/LiDAR), buscada uma vez para o bbox inteiro em
-    // main.rs. O Scanline abaixo fatia esta grade densa em `bare_earth_cache` por região.
-    // Empacotada em Arc para que o clone por região seja O(1) (só o ponteiro), nunca
-    // uma cópia profunda da grade inteira.
-    pub elevation_data: Option<Arc<ElevationData>>,
-    // 🚨 RECONEXÃO: Bioma real (MapBiomas/IBGE/SICAR), já esparso e em coordenadas
-    // absolutas do Minecraft — compartilhado (via Arc) entre todas as regiões sem
-    // recorte, pois já é pequeno o bastante (só pixels com vegetação são inseridos).
-    pub biome_grid: Option<Arc<FxHashMap<(i32, i32), u16>>>,
-    // 🚨 RECONEXÃO: Superfície real (DSM: telhados/copas), via `DsmProvider`. Mesmo
-    // formato/tratamento do `biome_grid` (esparso, coordenadas absolutas, Arc
-    // compartilhado sem recorte). Alimenta `Ground::surface_level` — que antes
-    // sempre caía no fallback do chão nu porque `canopy_surface_cache` nunca
-    // recebia dados reais (ver `generate_world_with_options`).
-    pub surface_data: Option<Arc<FxHashMap<(i32, i32), i32>>>,
-    // 🚨 RECONEXÃO: Terreno nu (bare earth) de um GeoTIFF DEM local explícito
-    // (`DemProvider`), como alternativa/complemento à busca SRTM/LiDAR de
-    // `elevation_data` — útil offline ou quando o usuário tem um DEM oficial
-    // (Copernicus/ANADEM) mais preciso que o SRTM público. Sobrepõe
-    // `bare_earth_cache` onde tiver dado; onde não tiver, o SRTM/LiDAR prevalece.
-    pub dem_override: Option<Arc<FxHashMap<(i32, i32), i32>>>,
+    // 🚨 Terreno definitivo do mundo inteiro (SRTM/LiDAR + DEM local + DSM +
+    // bioma), montado UMA vez em `main.rs` via `Ground::assemble` e compartilhado
+    // (Arc) por todas as regiões — substitui o antigo fatiamento por região, que
+    // além de custoso populava a cache com chaves absolutas e a consultava com
+    // chaves relativas (o mundo saía plano mesmo com `--terrain`). Ver `ground.rs`.
+    pub ground: Arc<Ground>,
     // 🚨 RECONEXÃO: Liga a floresta ambiente procedural (tree::generate_chunk) no
     // Scanline. Calculado em main.rs a partir de `--terrain` e `--no-ambient-forest`.
     pub ambient_forest: bool,
@@ -209,38 +190,69 @@ pub fn generate_underground_infrastructure(
 // 🚨 BESM-6 SCANLINE ENGINE (OUT-OF-CORE SPATIAL ROUTER) 🚨
 // ============================================================================
 
-/// Extrai o Centroide Espacial Geométrico de um Elemento OSM.
-/// Usado para indexar na R-Tree (Spatial Buckets).
-fn get_element_centroid(element: &ProcessedElement) -> (i32, i32) {
+/// Margem (blocos) além do nó mais a noroeste de um elemento que o desenho dele
+/// pode alcançar: brush de via (até 26 de pista + 12 de faixa verde no Eixo
+/// Monumental), copa de árvore, beiral de telhado, pilar de ponte. Entra no
+/// cálculo da região-âncora para que NENHUM bloco do elemento caia numa região
+/// já varrida (ver `anchor_region`).
+const ELEMENT_REACH_MARGIN: i32 = 64;
+
+/// Região que EXECUTA o desenho de um elemento no Scanline.
+///
+/// 🚨 CORREÇÃO DE QUALIDADE (defeito sistêmico): antes o elemento era executado
+/// na região do seu CENTROIDE. Como a varredura é `rz` crescente e, dentro da
+/// linha, `rx` crescente, tudo o que o elemento pintasse em regiões
+/// "anteriores" (à esquerda ou acima do centroide) ia para o Halo de uma
+/// região já selada em disco — e nunca mais era escrito. Na prática: ruas
+/// cortadas ao meio na borda de região, metade de um prédio ausente, lagos com
+/// um quadrante faltando. Pior: um elemento grande cujo centroide caísse FORA
+/// do bbox (um lago ou rodovia parcialmente dentro do recorte) não era
+/// executado em região nenhuma.
+///
+/// Agora a âncora é a região do canto MÍNIMO do AABB do elemento, recuado por
+/// `ELEMENT_REACH_MARGIN` e recortado ao intervalo varrido. Toda coordenada que
+/// o elemento possa tocar tem `z >= min_z - margem` (logo `rz >= âncora.rz`) e,
+/// na mesma linha de regiões, `x >= min_x - margem` (logo `rx >= âncora.rx`):
+/// todo vazamento é sempre "para frente", para uma região que AINDA vai ser
+/// varrida e que replaya o Halo antes de selar. Elementos sem geometria caem
+/// na primeira região (não pintam nada de qualquer forma).
+fn anchor_region(
+    element: &ProcessedElement,
+    (min_rx, max_rx): (i32, i32),
+    (min_rz, max_rz): (i32, i32),
+) -> (i32, i32) {
+    let mut min_x = i32::MAX;
+    let mut min_z = i32::MAX;
+    let mut consider = |x: i32, z: i32| {
+        min_x = min_x.min(x);
+        min_z = min_z.min(z);
+    };
     match element {
-        ProcessedElement::Node(n) => (n.x, n.z),
-        ProcessedElement::Way(w) => {
-            if w.nodes.is_empty() {
-                return (0, 0);
-            }
-            let sum_x: i64 = w.nodes.iter().map(|n| n.x as i64).sum();
-            let sum_z: i64 = w.nodes.iter().map(|n| n.z as i64).sum();
-            (
-                (sum_x / w.nodes.len() as i64) as i32,
-                (sum_z / w.nodes.len() as i64) as i32,
-            )
-        }
-        ProcessedElement::Relation(r) => {
-            if let Some(m) = r.members.first() {
-                if m.way.nodes.is_empty() {
-                    return (0, 0);
-                }
-                let sum_x: i64 = m.way.nodes.iter().map(|n| n.x as i64).sum();
-                let sum_z: i64 = m.way.nodes.iter().map(|n| n.z as i64).sum();
-                (
-                    (sum_x / m.way.nodes.len() as i64) as i32,
-                    (sum_z / m.way.nodes.len() as i64) as i32,
-                )
-            } else {
-                (0, 0)
-            }
-        }
+        ProcessedElement::Node(n) => consider(n.x, n.z),
+        ProcessedElement::Way(w) => w.nodes.iter().for_each(|n| consider(n.x, n.z)),
+        ProcessedElement::Relation(r) => r
+            .members
+            .iter()
+            .flat_map(|m| m.way.nodes.iter())
+            .for_each(|n| consider(n.x, n.z)),
     }
+    if min_x == i32::MAX {
+        return (min_rx, min_rz);
+    }
+    anchor_region_for_min_corner(min_x, min_z, (min_rx, max_rx), (min_rz, max_rz))
+}
+
+/// Mesma regra de `anchor_region`, a partir do canto mínimo já conhecido
+/// (usada também para `Feature`s de provedor, que carregam o AABB em cache).
+fn anchor_region_for_min_corner(
+    min_x: i32,
+    min_z: i32,
+    (min_rx, max_rx): (i32, i32),
+    (min_rz, max_rz): (i32, i32),
+) -> (i32, i32) {
+    let rx = (min_x.saturating_sub(ELEMENT_REACH_MARGIN) >> 9).clamp(min_rx, max_rx);
+    let rz = (min_z.saturating_sub(ELEMENT_REACH_MARGIN) >> 9).clamp(min_rz, max_rz);
+    (rx, rz)
 }
 
 /// A Rota Individual de Geração (O "Bisturi" que o Orquestrador chama para cada forma)
@@ -649,6 +661,15 @@ pub fn generate_world_with_options(
 
     let building_footprints = flood_fill_cache.collect_building_footprints(&elements, &xzbbox);
 
+    // Áreas já descritas por algum dado (uso do solo, lazer, amenidades,
+    // natureza, água, prédios): a floresta ambiente do Cerrado só nasce fora
+    // delas. Só custa algo quando a floresta está ligada.
+    let mapped_areas = if options.ambient_forest {
+        Some(flood_fill_cache.collect_mapped_area_coverage(&elements, &xzbbox))
+    } else {
+        None
+    };
+
     let building_centroids = if args.city_boundaries {
         flood_fill_cache.collect_building_centroids(&elements)
     } else {
@@ -685,15 +706,23 @@ pub fn generate_world_with_options(
         outlines
     };
 
-    // 🚨 BESM-6: Indexação Espacial (A R-Tree Simulada)
+    // Delimitação da Matriz Global Scanline (Regiões do Minecraft: 512x512 blocos)
+    let min_rx = xzbbox.min_x() >> 9;
+    let max_rx = xzbbox.max_x() >> 9;
+    let min_rz = xzbbox.min_z() >> 9;
+    let max_rz = xzbbox.max_z() >> 9;
+    let rx_range = (min_rx, max_rx);
+    let rz_range = (min_rz, max_rz);
+
+    // 🚨 BESM-6: Indexação Espacial — cada elemento é executado na sua
+    // região-âncora (canto mínimo com margem, ver `anchor_region`), nunca na do
+    // centroide, para que nenhum bloco caia numa região já selada.
     println!("{} Spatially Indexing Vectors...", "[5/7]".bold());
     let mut spatial_index: HashMap<(i32, i32), Vec<ProcessedElement>> = HashMap::new();
 
     for element in elements.into_iter() {
-        let (cx, cz) = get_element_centroid(&element);
-        let rx = cx >> 9;
-        let rz = cz >> 9;
-        spatial_index.entry((rx, rz)).or_default().push(element);
+        let key = anchor_region(&element, rx_range, rz_range);
+        spatial_index.entry(key).or_default().push(element);
     }
 
     // 🚨 RECONEXÃO: `osm_parser::get_priority` já existia (prioriza building >
@@ -706,14 +735,10 @@ pub fn generate_world_with_options(
         elements_in_region.sort_by_key(crate::osm_parser::get_priority);
     }
 
-    // Delimitação da Matriz Global Scanline (Regiões do Minecraft: 512x512 blocos)
-    let min_rx = xzbbox.min_x() >> 9;
-    let max_rx = xzbbox.max_x() >> 9;
-    let min_rz = xzbbox.min_z() >> 9;
-    let max_rz = xzbbox.max_z() >> 9;
-
     let total_regions = ((max_rx - min_rx + 1) * (max_rz - min_rz + 1)) as usize;
     let mut processed_regions = 0;
+
+    editor.set_ground(Arc::clone(&options.ground));
 
     // 🚨 O MOTOR DE VARREDURA (SCANLINE) 🚨
     for rz in min_rz..=max_rz {
@@ -725,103 +750,11 @@ pub fn generate_world_with_options(
             // Informa ao editor qual cache ele deve ativar (O Core Router)
             editor.set_active_region(rx, rz);
 
-            // 1. CARREGAMENTO DINÂMICO DE TOPOGRAFIA E BIOLOGIA
-            //
-            // 🚨 RECONEXÃO ESTRUTURAL: `bare_earth_cache` era sempre um HashMap vazio
-            // aqui — `Ground::level()` caía sempre no `ground_level` plano, e todo
-            // `get_ground_level()` do motor inteiro (árvores, estradas, pontes,
-            // prédios, declividade) media terreno chato mesmo com `--terrain` ativo.
-            // Agora, se `options.elevation_data` veio de `main.rs` (busca real de
-            // SRTM/LiDAR, feita uma única vez para o bbox inteiro), fatiamos a grade
-            // densa dela para as coordenadas absolutas desta região de 512×512 blocos.
-            //
-            // `canopy_surface_cache` vem de `options.surface_data` (DSM real, ver
-            // `DsmProvider` + `main.rs`) quando fornecido; sem ele, fica vazio e
-            // `Ground::surface_level` degrada graciosamente para `level()` — seguro,
-            // só menos detalhado (sem "chão" separado para topo de prédios/copas).
-            let mut bare_cache: FxHashMap<(i32, i32), i32> = FxHashMap::default();
-            let canopy_cache: Arc<FxHashMap<(i32, i32), i32>> = options
-                .surface_data
-                .clone()
-                .unwrap_or_else(|| Arc::new(FxHashMap::default()));
-
-            if let Some(ref elevation) = options.elevation_data {
-                let region_min_x = (rx << 9).max(xzbbox.min_x());
-                let region_max_x = ((rx << 9) + 511).min(xzbbox.max_x());
-                let region_min_z = (rz << 9).max(xzbbox.min_z());
-                let region_max_z = ((rz << 9) + 511).min(xzbbox.max_z());
-
-                // A grade de `ElevationData` é densa e relativa ao canto mínimo do
-                // bbox (índice 0,0 = xzbbox.min_x()/min_z()). O `.get()` com checagem
-                // de limites é proposital: `grid_width`/`grid_height` vêm de uma
-                // fórmula de distância diferente da usada para calcular o `XZBBox`
-                // (ENU/elipsoide vs. distância geodésica simples), então podem
-                // divergir por poucos blocos nas bordas — preferimos pular a célula
-                // (mantendo o fallback plano ali) a arriscar um índice fora da grade.
-                for z in region_min_z..=region_max_z {
-                    let row = (z - xzbbox.min_z()) as usize;
-                    let Some(row_heights) = elevation.heights.get(row) else {
-                        continue;
-                    };
-                    for x in region_min_x..=region_max_x {
-                        let col = (x - xzbbox.min_x()) as usize;
-                        if let Some(&h) = row_heights.get(col) {
-                            bare_cache.insert((x, z), h);
-                        }
-                    }
-                }
-            }
-
-            // 🚨 RECONEXÃO DEM: um GeoTIFF DEM local explícito (ver `DemProvider`,
-            // `--local-dem`) tem prioridade sobre o SRTM/LiDAR acima onde tiver
-            // dado — permite terreno nu offline ou mais preciso que o SRTM público.
-            // Iteramos a janela da região (limitada, ~512×512), não o mapa do DEM
-            // inteiro, para o custo não escalar com o tamanho do raster fornecido.
-            if let Some(ref dem_override) = options.dem_override {
-                let region_min_x = (rx << 9).max(xzbbox.min_x());
-                let region_max_x = ((rx << 9) + 511).min(xzbbox.max_x());
-                let region_min_z = (rz << 9).max(xzbbox.min_z());
-                let region_max_z = ((rz << 9) + 511).min(xzbbox.max_z());
-
-                for z in region_min_z..=region_max_z {
-                    for x in region_min_x..=region_max_x {
-                        if let Some(&h) = dem_override.get(&(x, z)) {
-                            bare_cache.insert((x, z), h);
-                        }
-                    }
-                }
-            }
-
-            // 🚨 TWEAK O(1): Injeção Direta do Fallback de Biomas
-            // Se o usuário não providenciou um MapBiomas (Raster), `options.biome_grid`
-            // é `None` e a Scanline não quebra: o motor usa o ground_level e o bioma
-            // "Cerrado_SS" matemático implementado como fallback no natural.rs.
-            // Quando fornecido, o mapa já vem em coordenadas absolutas do Minecraft e
-            // é compartilhado (Arc, sem recorte) entre todas as regiões — ver o campo
-            // `biome_grid` em `GenerationOptions` para o porquê disso ser seguro.
-            let biome_cache: Arc<FxHashMap<(i32, i32), u16>> = options
-                .biome_grid
-                .clone()
-                .unwrap_or_else(|| Arc::new(FxHashMap::default()));
-
-            let local_ground = if args.terrain {
-                Ground::new_enabled(
-                    args.ground_level,
-                    Arc::new(bare_cache),
-                    canopy_cache,
-                    biome_cache,
-                )
-            } else {
-                Ground::new_flat(args.ground_level)
-            };
-
-            // Injeta o chão local no editor para que as árvores saibam onde nascer.
-            // Mantemos um segundo Arc (barato: só incrementa o refcount) para uso
-            // fora do `editor` — ex.: `advertising::generate_advertising`, que precisa
-            // de `&Ground` e `&mut WorldEditor` simultaneamente, o que um
-            // `editor.get_ground()` emprestado do próprio `editor` não permitiria.
-            let region_ground = Arc::new(local_ground);
-            editor.set_ground(Arc::clone(&region_ground));
+            // 1. TOPOGRAFIA: o mesmo `Ground` global serve todas as regiões (ver
+            // `GenerationOptions::ground`); `region_ground` é só um segundo Arc
+            // para `advertising::generate_advertising`, que precisa de `&Ground` e
+            // `&mut WorldEditor` ao mesmo tempo.
+            let region_ground = Arc::clone(&options.ground);
 
             // 2. GERAÇÃO FÍSICA DO CHÃO NA REGIÃO
             let chunk_min_x = rx * 32;
@@ -838,11 +771,7 @@ pub fn generate_world_with_options(
 
                     for x in min_x..=max_x {
                         for z in min_z..=max_z {
-                            let ground_y = if args.terrain {
-                                editor.get_ground_level(x, z)
-                            } else {
-                                args.ground_level
-                            };
+                            let ground_y = editor.get_ground_level(x, z);
 
                             let is_urban = has_urban_ground && urban_lookup.is_urban(x, z);
 
@@ -921,19 +850,17 @@ pub fn generate_world_with_options(
             // 🚨 BESM-6: PROCESSAMENTO DE FEATURES GOVERNAMENTAIS (CAESB, CityGML, IFC)
             // Infraestrutura que requer preservação de metadados (diâmetro, profundidade, material)
             for feature in &options.provider_features {
-                // Verifica se a feature intersecta esta região
-                let (feat_min_x, feat_max_x, feat_min_z, feat_max_z) = feature.aabb;
-                let region_min_x = rx << 9;
-                let region_max_x = (rx << 9) + 511;
-                let region_min_z = rz << 9;
-                let region_max_z = (rz << 9) + 511;
+                // 🚨 Executada UMA vez, na região-âncora do seu AABB (mesma regra
+                // dos elementos OSM). Antes era executada em TODA região que o
+                // AABB intersectasse: um duto CAESB de 2 km era desenhado 4-5
+                // vezes (uma por região), cada passada re-pintando e re-vazando
+                // para as vizinhas, com proveniência registrada em dobro.
+                let (feat_min_x, _, feat_min_z, _) = feature.aabb;
+                let anchored_here =
+                    anchor_region_for_min_corner(feat_min_x, feat_min_z, rx_range, rz_range)
+                        == (rx, rz);
 
-                let intersects = !(feat_max_x < region_min_x
-                    || feat_min_x > region_max_x
-                    || feat_max_z < region_min_z
-                    || feat_min_z > region_max_z);
-
-                if intersects {
+                if anchored_here {
                     // 🚨 RECONEXÃO DO PIPELINE CAESB (água/esgoto/indoor subterrâneo)
                     //
                     // Antes desta correção, TODA feature de provedor — incluindo as de
@@ -1064,7 +991,13 @@ pub fn generate_world_with_options(
             if options.ambient_forest {
                 for cx in chunk_min_x..=chunk_max_x {
                     for cz in chunk_min_z..=chunk_max_z {
-                        tree::generate_chunk(cx, cz, Some(&building_footprints), &mut editor);
+                        tree::generate_chunk(
+                            cx,
+                            cz,
+                            Some(&building_footprints),
+                            mapped_areas.as_ref(),
+                            &mut editor,
+                        );
                     }
                 }
             }
@@ -1083,39 +1016,22 @@ pub fn generate_world_with_options(
         }
     }
 
+    // Com o roteamento por região-âncora, nenhuma operação pode sobrar no Halo
+    // (toda região que recebeu vazamentos foi varrida depois deles). Se sobrar,
+    // é regressão: blocos perdidos na borda de região — avisa em vez de calar.
+    let pending_halo = editor.pending_halo_ops();
+    if pending_halo > 0 {
+        eprintln!(
+            "{} {} operações do Halo nunca foram aplicadas (blocos perdidos em bordas de região) — regressão em `anchor_region`?",
+            "Aviso:".yellow().bold(),
+            pending_halo
+        );
+    }
+
     // Salva Metadados Finais
     editor.save();
 
     emit_gui_progress_update(99.0, "Finalizing world...");
-
-    #[cfg(feature = "gui")]
-    if world_format == WorldFormat::JavaAnvil {
-        use crate::gui::update_player_spawn_y_after_generation;
-        let bbox_string = format!(
-            "{},{},{},{}",
-            args.bbox.min().lat(),
-            args.bbox.min().lng(),
-            args.bbox.max().lat(),
-            args.bbox.max().lng()
-        );
-
-        if let Some(ref world_path) = args.path {
-            // Em caso de uso puramente console, isso falharia graciosamente se não tivesse o fallback.
-            // Para garantir a integridade, nós passamos um dummy pro ground, ou lemos o metadata real no futuro.
-            let dummy_ground = Ground::new_flat(args.ground_level);
-            if let Err(e) = update_player_spawn_y_after_generation(
-                world_path,
-                bbox_string,
-                args.scale_h,
-                &dummy_ground,
-            ) {
-                let warning_msg = format!("Failed to update spawn point Y coordinate: {}", e);
-                eprintln!("Warning: {}", warning_msg);
-                #[cfg(feature = "gui")]
-                send_log(LogLevel::Warning, &warning_msg);
-            }
-        }
-    }
 
     if world_format == WorldFormat::BedrockMcWorld {
         if let Some(path_str) = output_path.to_str() {
@@ -1140,4 +1056,122 @@ pub fn generate_world_with_options(
     }
 
     Ok(output_path)
+}
+
+#[cfg(test)]
+mod anchor_tests {
+    use super::*;
+    use crate::osm_parser::{ProcessedMember, ProcessedNode, ProcessedRelation};
+
+    fn node(x: i32, z: i32) -> ProcessedNode {
+        ProcessedNode {
+            id: 0,
+            tags: HashMap::new(),
+            x,
+            z,
+        }
+    }
+
+    fn way(pts: &[(i32, i32)]) -> ProcessedElement {
+        ProcessedElement::Way(Arc::new(ProcessedWay {
+            id: 1,
+            nodes: pts.iter().map(|&(x, z)| node(x, z)).collect(),
+            tags: HashMap::new(),
+        }))
+    }
+
+    /// Bbox cobrindo as regiões rx ∈ [-30, -28], rz ∈ [7, 9] (Guará fica a
+    /// oeste do Marco Zero: X negativo é o caso normal deste motor).
+    const RX: (i32, i32) = (-30, -28);
+    const RZ: (i32, i32) = (7, 9);
+
+    #[test]
+    fn anchor_is_min_corner_not_centroid() {
+        // Rua diagonal do canto noroeste da região (-29, 8) até (-28, 9): o
+        // centroide cai em (-29, 8)/(−28, 9) dependendo do arredondamento; a
+        // âncora tem que ser a região do canto mínimo, recuada pela margem.
+        let w = way(&[
+            (-29 * 512 + 100, 8 * 512 + 100),
+            (-28 * 512 + 400, 9 * 512 + 400),
+        ]);
+        assert_eq!(anchor_region(&w, RX, RZ), (-29, 8));
+    }
+
+    #[test]
+    fn margin_pulls_anchor_back_across_a_region_border() {
+        // Nó mínimo a 10 blocos da borda oeste/norte da região (-28, 8): o brush
+        // de uma avenida alcança a região anterior → âncora recua para (-29, 7).
+        let w = way(&[
+            (-28 * 512 + 10, 8 * 512 + 10),
+            (-28 * 512 + 300, 8 * 512 + 300),
+        ]);
+        assert_eq!(anchor_region(&w, RX, RZ), (-29, 7));
+    }
+
+    #[test]
+    fn anchor_is_clamped_into_the_swept_range() {
+        // Lago que começa muito fora do bbox (a noroeste): o centroide antigo
+        // cairia numa região nunca varrida e o lago sumia. Agora: primeira região.
+        let w = way(&[(-40 * 512, 2 * 512), (-29 * 512 + 50, 8 * 512 + 50)]);
+        assert_eq!(anchor_region(&w, RX, RZ), (-30, 7));
+        // E a sudeste: última região varrida ainda executa o elemento.
+        let w = way(&[
+            (-27 * 512 + 900, 10 * 512 + 900),
+            (-27 * 512 + 950, 10 * 512 + 950),
+        ]);
+        assert_eq!(anchor_region(&w, RX, RZ), (-28, 9));
+    }
+
+    #[test]
+    fn relation_anchor_considers_all_members() {
+        let outer = Arc::new(ProcessedWay {
+            id: 2,
+            nodes: vec![node(-28 * 512 + 200, 9 * 512 + 200)],
+            tags: HashMap::new(),
+        });
+        let inner = Arc::new(ProcessedWay {
+            id: 3,
+            nodes: vec![node(-29 * 512 + 300, 8 * 512 + 300)],
+            tags: HashMap::new(),
+        });
+        let rel = ProcessedElement::Relation(Arc::new(ProcessedRelation {
+            id: 4,
+            tags: HashMap::new(),
+            members: vec![
+                ProcessedMember {
+                    role: ProcessedMemberRole::Outer,
+                    way: outer,
+                },
+                ProcessedMember {
+                    role: ProcessedMemberRole::Inner,
+                    way: inner,
+                },
+            ],
+        }));
+        assert_eq!(anchor_region(&rel, RX, RZ), (-29, 8));
+    }
+
+    /// Propriedade central: a região-âncora nunca é posterior, na ordem da
+    /// varredura (rz, depois rx), a qualquer região que o elemento (com margem)
+    /// possa tocar.
+    #[test]
+    fn anchor_never_comes_after_any_touched_region_in_sweep_order() {
+        let w = way(&[
+            (-28 * 512 + 5, 8 * 512 + 5),
+            (-28 * 512 + 500, 8 * 512 + 500),
+        ]);
+        let (arx, arz) = anchor_region(&w, RX, RZ);
+        let sweep_index = |rx: i32, rz: i32| (rz - RZ.0) * (RX.1 - RX.0 + 1) + (rx - RX.0);
+        for (x, z) in [
+            (
+                -28 * 512 + 5 - ELEMENT_REACH_MARGIN,
+                8 * 512 + 5 - ELEMENT_REACH_MARGIN,
+            ),
+            (-28 * 512 + 5, 8 * 512 + 5),
+            (-28 * 512 + 500, 8 * 512 + 500),
+        ] {
+            let (rx, rz) = ((x >> 9).clamp(RX.0, RX.1), (z >> 9).clamp(RZ.0, RZ.1));
+            assert!(sweep_index(arx, arz) <= sweep_index(rx, rz));
+        }
+    }
 }

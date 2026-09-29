@@ -17,6 +17,9 @@ pub mod bedrock;
 
 // Re-export common types used internally
 pub(crate) use common::WorldToModify;
+/// Teto físico de Y que este escritor grava (formato Java atual). Toda cota
+/// de terreno/superfície do motor é limitada por ele — ver `ground.rs`.
+pub(crate) use common::MAX_Y as WORLD_MAX_Y;
 
 #[cfg(feature = "bedrock")]
 pub(crate) use bedrock::{BedrockSaveError, BedrockWriter};
@@ -63,8 +66,50 @@ pub(crate) struct WorldMetadata {
     pub max_geo_lon: f64,
 }
 
-/// (RegX, RegZ) -> (X, Y, Z) -> Block
-type HaloCache = HashMap<(i32, i32), HashMap<(i32, i32, i32), Block>>;
+/// Semântica de escrita de uma operação adiada no Halo — espelha exatamente as
+/// regras que `set_block_absolute`/`set_block_if_absent_absolute`/
+/// `fill_column_absolute` aplicam no Core, para que um bloco que "vazou" para
+/// a região vizinha seja decidido pelas MESMAS regras quando aquela região
+/// for a ativa (e o chão dela já existir).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HaloMode {
+    /// `set_block_absolute(.., None, None)` e `set_block_if_absent_absolute`:
+    /// só escreve se a posição estiver vazia (AIR/ausente).
+    IfAbsent,
+    /// `set_block_absolute(.., Some(whitelist), _)`: escreve se vazia OU se o
+    /// bloco existente estiver na lista (índice em `halo_block_lists`).
+    Whitelist(u16),
+    /// `set_block_absolute(.., None, Some(blacklist))`: escreve se vazia OU se
+    /// o bloco existente NÃO estiver na lista.
+    Blacklist(u16),
+    /// `fill_column_absolute(.., skip_existing = false)`: sobrescreve sempre.
+    Force,
+}
+
+/// Uma escrita adiada, na ordem em que foi emitida.
+struct HaloOp {
+    x: i32,
+    y: i32,
+    z: i32,
+    block: Block,
+    properties: Option<Value>,
+    mode: HaloMode,
+}
+
+/// Balde de uma região vizinha ainda não ativa.
+#[derive(Default)]
+struct HaloBucket {
+    /// Log de operações, replayado em ordem por `load_halo_to_core`.
+    ops: Vec<HaloOp>,
+    /// Estado especulativo (última escrita por posição) para leituras
+    /// (`check_for_block_absolute`/`block_at_absolute`) feitas ANTES da região
+    /// virar ativa — ex.: um mesmo elemento conferindo o que ele próprio já
+    /// pintou do outro lado da borda.
+    shadow: HashMap<(i32, i32, i32), Block>,
+}
+
+/// (RegX, RegZ) -> operações adiadas
+type HaloCache = HashMap<(i32, i32), HaloBucket>;
 
 /// The main world editor struct for placing blocks and saving worlds.
 ///
@@ -79,6 +124,10 @@ pub struct WorldEditor<'a> {
     active_region_x: i32,
     active_region_z: i32,
     halo_cache: HaloCache,
+    /// Whitelists/blacklists internadas (poucas dezenas distintas em todo o
+    /// motor) para que cada `HaloOp` guarde só um índice `u16`.
+    halo_block_lists: Vec<Vec<Block>>,
+    halo_block_list_index: HashMap<Vec<Block>, u16>,
 
     xzbbox: &'a XZBBox,
     llbbox: LLBBox,
@@ -101,6 +150,8 @@ impl<'a> WorldEditor<'a> {
             active_region_x: 0, // Ser� dinamicamente setado pelo loop principal
             active_region_z: 0,
             halo_cache: HashMap::new(),
+            halo_block_lists: Vec::new(),
+            halo_block_list_index: HashMap::new(),
             xzbbox,
             llbbox,
             ground: None,
@@ -132,6 +183,8 @@ impl<'a> WorldEditor<'a> {
             active_region_x: 0,
             active_region_z: 0,
             halo_cache: HashMap::new(),
+            halo_block_lists: Vec::new(),
+            halo_block_list_index: HashMap::new(),
             xzbbox,
             llbbox,
             ground: None,
@@ -154,23 +207,119 @@ impl<'a> WorldEditor<'a> {
         self.active_region_z = rz;
     }
 
-    /// Injeta os blocos "�rf�os" que vazaram das regi�es vizinhas anteriores
-    /// para dentro do Core Cache atual, para que sejam selados no momento correto.
+    /// Replaya, na região agora ativa, as escritas que elementos de regiões
+    /// anteriores emitiram para cá — com a MESMA semântica (if-absent/
+    /// whitelist/blacklist/force) que teriam tido se a região já fosse a ativa.
+    /// Chamado DEPOIS do chão da região existir, para que as whitelists
+    /// enxerguem o terreno real (exatamente como no desenho in-core).
     pub fn load_halo_to_core(&mut self) {
         let region_key = (self.active_region_x, self.active_region_z);
 
-        if let Some(blocks) = self.halo_cache.remove(&region_key) {
-            let count = blocks.len();
-            for ((x, y, z), block) in blocks {
-                self.world.set_block(x, y, z, block);
+        if let Some(bucket) = self.halo_cache.remove(&region_key) {
+            let count = bucket.ops.len();
+            for op in bucket.ops {
+                self.apply_halo_op(op);
             }
             if count > 0 {
                 println!(
-                    "[HALO] Despejados {} blocos vazados na regi�o ({}, {})",
+                    "[HALO] {} operações replayadas na região ({}, {})",
                     count, self.active_region_x, self.active_region_z
                 );
             }
         }
+    }
+
+    fn apply_halo_op(&mut self, op: HaloOp) {
+        let existing = self.world.get_block(op.x, op.y, op.z);
+        let should_insert = match (op.mode, existing) {
+            (HaloMode::Force, _) => true,
+            (_, None) => true,
+            (HaloMode::IfAbsent, Some(_)) => false,
+            (HaloMode::Whitelist(i), Some(e)) => self.halo_block_lists[i as usize]
+                .iter()
+                .any(|b| b.id() == e.id()),
+            (HaloMode::Blacklist(i), Some(e)) => !self.halo_block_lists[i as usize]
+                .iter()
+                .any(|b| b.id() == e.id()),
+        };
+        if should_insert {
+            match op.properties {
+                Some(props) => self.world.set_block_with_properties(
+                    op.x,
+                    op.y,
+                    op.z,
+                    BlockWithProperties::new(op.block, Some(props)),
+                ),
+                None => self.world.set_block(op.x, op.y, op.z, op.block),
+            }
+        }
+    }
+
+    fn intern_block_list(&mut self, list: &[Block]) -> u16 {
+        if let Some(&idx) = self.halo_block_list_index.get(list) {
+            return idx;
+        }
+        let idx = self.halo_block_lists.len() as u16;
+        self.halo_block_lists.push(list.to_vec());
+        self.halo_block_list_index.insert(list.to_vec(), idx);
+        idx
+    }
+
+    /// Enfileira uma escrita para uma região ainda não ativa.
+    #[allow(clippy::too_many_arguments)]
+    fn push_halo_op(
+        &mut self,
+        rx: i32,
+        rz: i32,
+        x: i32,
+        y: i32,
+        z: i32,
+        block: Block,
+        properties: Option<Value>,
+        mode: HaloMode,
+    ) {
+        let bucket = self.halo_cache.entry((rx, rz)).or_default();
+        // Estado especulativo para leituras antecipadas: aplica a mesma regra
+        // contra o que o próprio Halo já "escreveu" nesta posição.
+        let speculative_insert = match (mode, bucket.shadow.get(&(x, y, z))) {
+            (HaloMode::Force, _) | (_, None) => true,
+            (HaloMode::IfAbsent, Some(_)) => false,
+            (HaloMode::Whitelist(i), Some(e)) => self.halo_block_lists[i as usize]
+                .iter()
+                .any(|b| b.id() == e.id()),
+            (HaloMode::Blacklist(i), Some(e)) => !self.halo_block_lists[i as usize]
+                .iter()
+                .any(|b| b.id() == e.id()),
+        };
+        if speculative_insert {
+            bucket.shadow.insert((x, y, z), block);
+        }
+        bucket.ops.push(HaloOp {
+            x,
+            y,
+            z,
+            block,
+            properties,
+            mode,
+        });
+    }
+
+    /// Operações do Halo que NUNCA foram replayadas (regiões que a varredura
+    /// não visitou depois de recebê-las). Com o roteamento por canto mínimo de
+    /// `data_processing.rs` isto deve ser sempre zero; é conferido no fim da
+    /// geração para que uma regressão apareça no log em vez de sumir em
+    /// silêncio como blocos perdidos na borda de região.
+    pub fn pending_halo_ops(&self) -> usize {
+        self.halo_cache.values().map(|b| b.ops.len()).sum()
+    }
+
+    /// Retorna o tamanho atual do Halo Cache para estat�sticas do Terminal HUD
+    /// (usado por `master_control.rs`, que só é alcançável no build sem `gui`).
+    #[allow(dead_code)]
+    pub fn get_halo_metrics(&self) -> (usize, usize) {
+        let active_buckets = self.halo_cache.len();
+        let total_blocks = self.pending_halo_ops();
+        (active_buckets, total_blocks)
     }
 
     /// Comprime o Core Cache (WorldToModify) com Zlib, escreve o `.mca` no disco,
@@ -192,15 +341,6 @@ impl<'a> WorldEditor<'a> {
 
         // ?? EXPURGO ABSOLUTO O(1): Mata a RAM do Core
         self.world = WorldToModify::default();
-    }
-
-    /// Retorna o tamanho atual do Halo Cache para estat�sticas do Terminal HUD
-    /// (usado por `master_control.rs`, que só é alcançável no build sem `gui`).
-    #[allow(dead_code)]
-    pub fn get_halo_metrics(&self) -> (usize, usize) {
-        let active_buckets = self.halo_cache.len();
-        let total_blocks = self.halo_cache.values().map(|bucket| bucket.len()).sum();
-        (active_buckets, total_blocks)
     }
 
     // ========================================================================
@@ -299,15 +439,25 @@ impl<'a> WorldEditor<'a> {
                 self.world.set_block(x, absolute_y, z, block);
             }
         }
-        // Se o bloco pertencer a uma regi�o vizinha (vazamento), ele vai pro Halo Cache.
+        // Se o bloco pertencer a uma regi�o vizinha (vazamento), ele vai pro Halo
+        // Cache — com a semântica preservada, decidida no replay.
         else {
-            // Nota: No Halo, ignoramos whitelists complexos por performance,
-            // assumindo que a borda do pr�dio tem prioridade de escrita. O check definitivo
-            // ocorre quando o Halo � despejado no Core.
-            self.halo_cache
-                .entry((rx, rz))
-                .or_default()
-                .insert((x, absolute_y, z), block);
+            let mode = self.halo_mode_for(override_whitelist, override_blacklist);
+            self.push_halo_op(rx, rz, x, absolute_y, z, block, None, mode);
+        }
+    }
+
+    fn halo_mode_for(
+        &mut self,
+        override_whitelist: Option<&[Block]>,
+        override_blacklist: Option<&[Block]>,
+    ) -> HaloMode {
+        if let Some(whitelist) = override_whitelist {
+            HaloMode::Whitelist(self.intern_block_list(whitelist))
+        } else if let Some(blacklist) = override_blacklist {
+            HaloMode::Blacklist(self.intern_block_list(blacklist))
+        } else {
+            HaloMode::IfAbsent
         }
     }
 
@@ -324,9 +474,7 @@ impl<'a> WorldEditor<'a> {
         if rx == self.active_region_x && rz == self.active_region_z {
             self.world.set_block_if_absent(x, absolute_y, z, block);
         } else {
-            // Se j� n�o existe no Halo, insere.
-            let bucket = self.halo_cache.entry((rx, rz)).or_default();
-            bucket.entry((x, absolute_y, z)).or_insert(block);
+            self.push_halo_op(rx, rz, x, absolute_y, z, block, None, HaloMode::IfAbsent);
         }
     }
 
@@ -387,12 +535,19 @@ impl<'a> WorldEditor<'a> {
                     .set_block_with_properties(x, absolute_y, z, block_with_props);
             }
         } else {
-            // Blocos com propriedades vazando para o Halo (Armazenamos o bloco base por ora)
-            // Futuro: Expans�o do Halo para suportar properties
-            self.halo_cache
-                .entry((rx, rz))
-                .or_default()
-                .insert((x, absolute_y, z), block_with_props.block);
+            // Propriedades (orientação de escada, meia-laje em cima, etc.) são
+            // preservadas — antes só o bloco base sobrevivia à borda de região.
+            let mode = self.halo_mode_for(override_whitelist, override_blacklist);
+            self.push_halo_op(
+                rx,
+                rz,
+                x,
+                absolute_y,
+                z,
+                block_with_props.block,
+                block_with_props.properties,
+                mode,
+            );
         }
     }
 
@@ -466,9 +621,9 @@ impl<'a> WorldEditor<'a> {
             return false;
         }
 
-        // Se a regi�o vazou, checa no Halo
+        // Se a regi�o vazou, checa o estado especulativo do Halo
         if let Some(bucket) = self.halo_cache.get(&(rx, rz)) {
-            if let Some(existing_block) = bucket.get(&(x, absolute_y, z)) {
+            if let Some(existing_block) = bucket.shadow.get(&(x, absolute_y, z)) {
                 if let Some(whitelist) = whitelist {
                     return whitelist.iter().any(|b| b.id() == existing_block.id());
                 }
@@ -492,7 +647,7 @@ impl<'a> WorldEditor<'a> {
         } else {
             self.halo_cache
                 .get(&(rx, rz))
-                .is_some_and(|b| b.contains_key(&(x, absolute_y, z)))
+                .is_some_and(|b| b.shadow.contains_key(&(x, absolute_y, z)))
         }
     }
 
@@ -517,13 +672,15 @@ impl<'a> WorldEditor<'a> {
             self.world
                 .fill_column(x, z, y_min, y_max, block, skip_existing);
         } else {
-            // Emula o fill block by block no Halo
+            // Emula o fill bloco a bloco no Halo, com a MESMA semântica do Core:
+            // `skip_existing = false` sobrescreve (Force), não "só se vazio".
+            let mode = if skip_existing {
+                HaloMode::IfAbsent
+            } else {
+                HaloMode::Force
+            };
             for y in y_min..=y_max {
-                if skip_existing {
-                    self.set_block_if_absent_absolute(block, x, y, z);
-                } else {
-                    self.set_block_absolute(block, x, y, z, None, None);
-                }
+                self.push_halo_op(rx, rz, x, y, z, block, None, mode);
             }
         }
     }
@@ -938,4 +1095,117 @@ fn single_item(id: &str, slot: i8, count: i8) -> HashMap<String, Value> {
     item.insert("Slot".to_string(), Value::Byte(slot));
     item.insert("Count".to_string(), Value::Byte(count));
     item
+}
+
+#[cfg(test)]
+mod halo_tests {
+    use super::*;
+    use crate::coordinate_system::geographic::LLBBox;
+
+    fn editor_for(xzbbox: &XZBBox) -> WorldEditor<'_> {
+        let llbbox = LLBBox::new(-15.83, -47.98, -15.82, -47.97).unwrap();
+        let mut editor = WorldEditor::new(std::env::temp_dir(), xzbbox, llbbox);
+        editor.set_ground(Arc::new(Ground::new_flat(-62)));
+        editor
+    }
+
+    fn block_at(editor: &WorldEditor, x: i32, y: i32, z: i32) -> Option<Block> {
+        editor.world.get_block(x, y, z)
+    }
+
+    /// Região 0 ativa, escritas vazando para a região 1 (x >= 512), depois a
+    /// região 1 vira ativa com um "chão" já posto — cada modo tem que decidir
+    /// exatamente como decidiria in-core.
+    #[test]
+    fn halo_replay_honours_core_write_semantics() {
+        let xzbbox = XZBBox::new(0, 1023, 0, 511);
+        let mut editor = editor_for(&xzbbox);
+        editor.set_active_region(0, 0);
+
+        // 1. IfAbsent sobre chão existente: NÃO escreve.
+        editor.set_block_absolute(OAK_PLANKS, 600, -62, 10, None, None);
+        // 2. Whitelist que bate com o chão (GRASS_BLOCK): escreve.
+        editor.set_block_absolute(BLACK_CONCRETE, 601, -62, 10, Some(&[GRASS_BLOCK]), None);
+        // 3. Whitelist que NÃO bate (STONE): não escreve.
+        editor.set_block_absolute(BLACK_CONCRETE, 602, -62, 10, Some(&[STONE]), None);
+        // 4. Blacklist contendo o chão: não escreve.
+        editor.set_block_absolute(BLACK_CONCRETE, 603, -62, 10, None, Some(&[GRASS_BLOCK]));
+        // 5. Blacklist sem o chão: escreve.
+        editor.set_block_absolute(BLACK_CONCRETE, 604, -62, 10, None, Some(&[STONE]));
+        // 6. Force (fill_column sem skip): sobrescreve.
+        editor.fill_column_absolute(STONE, 605, 10, -62, -62, false);
+        // 7. Posição vazia: qualquer modo escreve.
+        editor.set_block_absolute(OAK_PLANKS, 606, -60, 10, None, None);
+        // 8. Propriedades sobrevivem à borda.
+        let props = Value::Compound(HashMap::from([(
+            "facing".to_string(),
+            Value::String("north".to_string()),
+        )]));
+        editor.set_block_with_properties_absolute(
+            BlockWithProperties::new(OAK_STAIRS, Some(props)),
+            607,
+            -60,
+            10,
+            None,
+            None,
+        );
+
+        assert_eq!(editor.pending_halo_ops(), 8);
+        assert!(block_at(&editor, 600, -62, 10).is_none());
+
+        // Região 1 vira ativa: chão primeiro, halo depois (mesma ordem do Scanline).
+        editor.flush_active_region_for_test();
+        editor.set_active_region(1, 0);
+        for x in 600..=607 {
+            editor.set_block_if_absent_absolute(GRASS_BLOCK, x, -62, 10);
+        }
+        editor.load_halo_to_core();
+        assert_eq!(editor.pending_halo_ops(), 0);
+
+        assert_eq!(block_at(&editor, 600, -62, 10), Some(GRASS_BLOCK));
+        assert_eq!(block_at(&editor, 601, -62, 10), Some(BLACK_CONCRETE));
+        assert_eq!(block_at(&editor, 602, -62, 10), Some(GRASS_BLOCK));
+        assert_eq!(block_at(&editor, 603, -62, 10), Some(GRASS_BLOCK));
+        assert_eq!(block_at(&editor, 604, -62, 10), Some(BLACK_CONCRETE));
+        assert_eq!(block_at(&editor, 605, -62, 10), Some(STONE));
+        assert_eq!(block_at(&editor, 606, -60, 10), Some(OAK_PLANKS));
+        assert_eq!(block_at(&editor, 607, -60, 10), Some(OAK_STAIRS));
+
+        let (px, py, pz) = (607i32, -60i32, 10i32);
+        let region = editor.world.get_region(1, 0).unwrap();
+        let chunk = region.get_chunk((px >> 4) & 31, (pz >> 4) & 31).unwrap();
+        let section = chunk.sections.get(&(py >> 4).try_into().unwrap()).unwrap();
+        let idx = common::SectionToModify::index((px & 15) as u8, (py & 15) as u8, (pz & 15) as u8);
+        assert!(
+            section.properties.contains_key(&idx),
+            "propriedades perdidas no halo"
+        );
+    }
+
+    /// Leituras antecipadas veem o estado especulativo do halo, na ordem das
+    /// escritas (o mesmo elemento conferindo o que já pintou do outro lado).
+    #[test]
+    fn halo_shadow_reflects_speculative_state_in_order() {
+        let xzbbox = XZBBox::new(0, 1023, 0, 511);
+        let mut editor = editor_for(&xzbbox);
+        editor.set_active_region(0, 0);
+
+        assert!(!editor.block_at_absolute(700, -62, 5));
+        editor.set_block_absolute(GRASS_BLOCK, 700, -62, 5, None, None);
+        assert!(editor.check_for_block_absolute(700, -62, 5, Some(&[GRASS_BLOCK]), None));
+        // IfAbsent por cima: ignorado também no shadow.
+        editor.set_block_absolute(STONE, 700, -62, 5, None, None);
+        assert!(editor.check_for_block_absolute(700, -62, 5, Some(&[GRASS_BLOCK]), None));
+        // Whitelist que bate: shadow atualizado.
+        editor.set_block_absolute(STONE, 700, -62, 5, Some(&[GRASS_BLOCK]), None);
+        assert!(editor.check_for_block_absolute(700, -62, 5, Some(&[STONE]), None));
+    }
+
+    impl<'a> WorldEditor<'a> {
+        /// Descarta o Core sem tocar no disco (equivalente de teste do
+        /// `flush_active_region`, que gravaria um `.mca`).
+        fn flush_active_region_for_test(&mut self) {
+            self.world = WorldToModify::default();
+        }
+    }
 }

@@ -335,6 +335,9 @@ impl ProviderManager {
 
         for provider in &self.providers {
             println!("[INFO] Motor iniciando provedor: {}", provider.name());
+            for source in provider.describe_sources() {
+                println!("       ↳ fonte: {}", source);
+            }
             match provider.fetch_features(bbox) {
                 Ok(mut features) => {
                     println!(
@@ -366,41 +369,59 @@ impl ProviderManager {
         Ok(merged_features)
     }
 
-    /// Lógica de Resolução de Colisões Espaciais (Spatial Sweeper Otimizado O(N))
+    /// Deduplicação espacial ENTRE provedores (Spatial Sweeper O(N) por baldes).
+    ///
+    /// 🚨 CORREÇÃO DE QUALIDADE (defeito sistêmico): a versão anterior descartava
+    /// QUALQUER feature cujo AABB tocasse o AABB de outra já aceita do mesmo
+    /// `SemanticGroup` — sem olhar de onde cada uma veio. Com um único provedor
+    /// (o caso padrão: só OSM), isso significava que de duas ruas que se cruzam
+    /// só a primeira sobrevivia, que dois prédios vizinhos com AABBs encostados
+    /// perdiam um deles, e que polígonos de uso do solo que se tocam eram
+    /// dizimados. O objetivo documentado da função ("dois provedores diferentes
+    /// não devem gerar o mesmo Building no mesmo lugar") nunca exigiu isso.
+    ///
+    /// Regra atual, restrita ao caso que a função existe para resolver:
+    /// uma feature só é descartada se uma feature JÁ ACEITA
+    ///   1. veio de OUTRA fonte (`source` diferente),
+    ///   2. tem prioridade ESTRITAMENTE maior (número menor),
+    ///   3. é do mesmo `SemanticGroup`, e
+    ///   4. cobre pelo menos `MIN_COVERAGE_TO_SUPERSEDE` do AABB da candidata
+    ///      (ou seja, é de fato "o mesmo objeto" e não um vizinho encostado).
+    ///
+    /// Duas features da mesma fonte nunca colidem entre si — o próprio provedor
+    /// já é a autoridade sobre o que ele emite.
     fn resolve_collisions(&self, mut features: Vec<Feature>) -> Vec<Feature> {
-        // Ordena garantindo que os dados de Shapefile do GDF(priority 1) sejam processados primeiro.
+        // Ordena garantindo que os dados de Shapefile do GDF (priority 1) sejam
+        // processados primeiro. `sort_by_key` é estável: a ordem original dentro
+        // de uma mesma prioridade (ordem de emissão do provedor) é preservada.
         features.sort_by_key(|f| f.priority);
 
         let mut accepted_features: Vec<Feature> = Vec::with_capacity(features.len());
+        let mut superseded = 0usize;
 
         // Grid de indexação espacial (Baldes de 256x256 blocos)
         const GRID_SIZE: i32 = 256;
         let mut spatial_grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
 
         for new_feature in features {
-            let mut is_collision = false;
+            let dedup_eligible = new_feature.semantic_group != SemanticGroup::Terrain
+                && new_feature.semantic_group != SemanticGroup::Infrastructure;
 
-            if new_feature.semantic_group != SemanticGroup::Terrain
-                && new_feature.semantic_group != SemanticGroup::Infrastructure
-            {
-                // Determina em quais baldes o Bounding Box desta nova feature cai
+            let mut is_superseded = false;
+
+            if dedup_eligible {
                 let (min_x, max_x, min_z, max_z) = new_feature.aabb;
-                let min_grid_x = min_x / GRID_SIZE;
-                let max_grid_x = max_x / GRID_SIZE;
-                let min_grid_z = min_z / GRID_SIZE;
-                let max_grid_z = max_z / GRID_SIZE;
+                let min_grid_x = min_x.div_euclid(GRID_SIZE);
+                let max_grid_x = max_x.div_euclid(GRID_SIZE);
+                let min_grid_z = min_z.div_euclid(GRID_SIZE);
+                let max_grid_z = max_z.div_euclid(GRID_SIZE);
 
-                // Checa colisões APENAS com features que estão nos mesmos baldes
                 'collision_check: for gx in min_grid_x..=max_grid_x {
                     for gz in min_grid_z..=max_grid_z {
                         if let Some(cell_indices) = spatial_grid.get(&(gx, gz)) {
                             for &idx in cell_indices {
-                                let accepted = &accepted_features[idx];
-
-                                if new_feature.semantic_group == accepted.semantic_group
-                                    && new_feature.intersects_aabb(accepted)
-                                {
-                                    is_collision = true;
+                                if should_supersede(&accepted_features[idx], &new_feature) {
+                                    is_superseded = true;
                                     break 'collision_check;
                                 }
                             }
@@ -409,33 +430,73 @@ impl ProviderManager {
                 }
             }
 
-            // Se sobreviveu à checagem de colisão, nós a aceitamos e registramos no Grid
-            if !is_collision {
-                let accepted_idx = accepted_features.len();
+            if is_superseded {
+                superseded += 1;
+                continue;
+            }
 
-                if new_feature.semantic_group != SemanticGroup::Terrain
-                    && new_feature.semantic_group != SemanticGroup::Infrastructure
-                {
-                    let (min_x, max_x, min_z, max_z) = new_feature.aabb;
-                    let min_grid_x = min_x / GRID_SIZE;
-                    let max_grid_x = max_x / GRID_SIZE;
-                    let min_grid_z = min_z / GRID_SIZE;
-                    let max_grid_z = max_z / GRID_SIZE;
-
-                    for gx in min_grid_x..=max_grid_x {
-                        for gz in min_grid_z..=max_grid_z {
-                            spatial_grid.entry((gx, gz)).or_default().push(accepted_idx);
-                        }
+            let accepted_idx = accepted_features.len();
+            if dedup_eligible {
+                let (min_x, max_x, min_z, max_z) = new_feature.aabb;
+                for gx in min_x.div_euclid(GRID_SIZE)..=max_x.div_euclid(GRID_SIZE) {
+                    for gz in min_z.div_euclid(GRID_SIZE)..=max_z.div_euclid(GRID_SIZE) {
+                        spatial_grid.entry((gx, gz)).or_default().push(accepted_idx);
                     }
                 }
-
-                accepted_features.push(new_feature);
             }
+            accepted_features.push(new_feature);
+        }
+
+        if superseded > 0 {
+            println!(
+                "[INFO] Merge Intelligence: {} feature(s) de menor prioridade substituídas por dado de provedor prioritário.",
+                superseded
+            );
         }
 
         accepted_features.shrink_to_fit();
         accepted_features
     }
+
+    /// Lista, por provedor registrado, as fontes exatas (arquivos/endpoints)
+    /// que ele usa — alimenta a auditoria de proveniência (`provenance.rs`).
+    pub fn describe_registered_sources(&self) -> Vec<(String, Vec<String>)> {
+        self.providers
+            .iter()
+            .map(|p| (p.name().to_string(), p.describe_sources()))
+            .collect()
+    }
+}
+
+/// Fração mínima do AABB da candidata que precisa estar coberta pelo AABB da
+/// feature já aceita para que a candidata seja considerada "o mesmo objeto"
+/// (e não um vizinho encostado) e descartada.
+const MIN_COVERAGE_TO_SUPERSEDE: f64 = 0.5;
+
+/// Fração da área do AABB `inner` coberta pela interseção com `outer`, em
+/// blocos inclusivos (um ponto tem área 1, então também funciona para nós).
+/// 0.0 quando não há interseção.
+pub(crate) fn aabb_coverage_ratio(inner: (i32, i32, i32, i32), outer: (i32, i32, i32, i32)) -> f64 {
+    let (a_min_x, a_max_x, a_min_z, a_max_z) = inner;
+    let (b_min_x, b_max_x, b_min_z, b_max_z) = outer;
+
+    let ix = (a_max_x.min(b_max_x) as i64 - a_min_x.max(b_min_x) as i64 + 1).max(0);
+    let iz = (a_max_z.min(b_max_z) as i64 - a_min_z.max(b_min_z) as i64 + 1).max(0);
+    if ix == 0 || iz == 0 {
+        return 0.0;
+    }
+    let inner_area =
+        ((a_max_x as i64 - a_min_x as i64 + 1) * (a_max_z as i64 - a_min_z as i64 + 1)).max(1);
+    (ix * iz) as f64 / inner_area as f64
+}
+
+/// Ver `ProviderManager::resolve_collisions` para a regra completa.
+fn should_supersede(accepted: &Feature, candidate: &Feature) -> bool {
+    accepted.source != candidate.source
+        && accepted.priority < candidate.priority
+        && accepted.semantic_group == candidate.semantic_group
+        && accepted.intersects_aabb(candidate)
+        && aabb_coverage_ratio(candidate.aabb, accepted.aabb) >= MIN_COVERAGE_TO_SUPERSEDE
 }
 
 // ============================================================================
@@ -552,5 +613,185 @@ impl Feature {
                 }))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[allow(clippy::too_many_arguments)]
+    fn rect(
+        id: u64,
+        group: SemanticGroup,
+        source: &str,
+        priority: u8,
+        x0: i32,
+        z0: i32,
+        x1: i32,
+        z1: i32,
+    ) -> Feature {
+        let ring = vec![
+            XZPoint::new(x0, z0),
+            XZPoint::new(x1, z0),
+            XZPoint::new(x1, z1),
+            XZPoint::new(x0, z1),
+            XZPoint::new(x0, z0),
+        ];
+        Feature::new(
+            id,
+            group,
+            HashMap::new(),
+            GeometryType::Polygon(ring),
+            source.to_string(),
+            priority,
+        )
+    }
+
+    fn line(id: u64, source: &str, priority: u8, pts: &[(i32, i32)]) -> Feature {
+        let pts = pts.iter().map(|&(x, z)| XZPoint::new(x, z)).collect();
+        Feature::new(
+            id,
+            SemanticGroup::Highway,
+            HashMap::new(),
+            GeometryType::LineString(pts),
+            source.to_string(),
+            priority,
+        )
+    }
+
+    fn ids(features: &[Feature]) -> Vec<u64> {
+        let mut v: Vec<u64> = features.iter().map(|f| f.id).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Regressão do defeito sistêmico: duas ruas OSM que se cruzam têm AABBs
+    /// que se intersectam — a segunda era descartada e a malha viária inteira
+    /// virava um conjunto de vias isoladas.
+    #[test]
+    fn crossing_highways_from_same_provider_are_both_kept() {
+        let manager = ProviderManager::new();
+        let features = vec![
+            line(1, "osm", 10, &[(0, 50), (100, 50)]),
+            line(2, "osm", 10, &[(50, 0), (50, 100)]),
+            line(3, "osm", 10, &[(0, 0), (100, 100)]),
+        ];
+        let kept = manager.resolve_collisions(features);
+        assert_eq!(ids(&kept), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn adjacent_buildings_from_same_provider_are_both_kept() {
+        let manager = ProviderManager::new();
+        let features = vec![
+            rect(1, SemanticGroup::Building, "osm", 10, 0, 0, 10, 10),
+            rect(2, SemanticGroup::Building, "osm", 10, 10, 0, 20, 10),
+            rect(3, SemanticGroup::Building, "osm", 10, 5, 5, 15, 15),
+        ];
+        let kept = manager.resolve_collisions(features);
+        assert_eq!(ids(&kept), vec![1, 2, 3]);
+    }
+
+    /// O caso que a função existe para resolver: o lote oficial do GDF
+    /// (prioridade 1) substitui o mesmo prédio desenhado no OSM (prioridade 10).
+    #[test]
+    fn higher_priority_provider_supersedes_same_object_from_lower_priority() {
+        let manager = ProviderManager::new();
+        let features = vec![
+            rect(10, SemanticGroup::Building, "osm", 10, 0, 0, 10, 10),
+            rect(
+                1,
+                SemanticGroup::Building,
+                "gdf_shapefile",
+                1,
+                -1,
+                -1,
+                11,
+                11,
+            ),
+        ];
+        let kept = manager.resolve_collisions(features);
+        assert_eq!(ids(&kept), vec![1]);
+    }
+
+    #[test]
+    fn partial_overlap_below_threshold_keeps_both() {
+        let manager = ProviderManager::new();
+        let features = vec![
+            rect(10, SemanticGroup::Building, "osm", 10, 0, 0, 10, 10),
+            // Cobre só ~25% do AABB do prédio OSM: vizinho, não o mesmo objeto.
+            rect(1, SemanticGroup::Building, "gdf_shapefile", 1, 5, 5, 20, 20),
+        ];
+        let kept = manager.resolve_collisions(features);
+        assert_eq!(ids(&kept), vec![1, 10]);
+    }
+
+    #[test]
+    fn different_semantic_group_never_collides() {
+        let manager = ProviderManager::new();
+        let features = vec![
+            rect(10, SemanticGroup::Building, "osm", 10, 0, 0, 10, 10),
+            rect(
+                1,
+                SemanticGroup::Landuse,
+                "gdf_shapefile",
+                1,
+                -50,
+                -50,
+                50,
+                50,
+            ),
+        ];
+        let kept = manager.resolve_collisions(features);
+        assert_eq!(ids(&kept), vec![1, 10]);
+    }
+
+    #[test]
+    fn equal_priority_from_different_sources_keeps_both() {
+        let manager = ProviderManager::new();
+        let features = vec![
+            rect(1, SemanticGroup::Building, "gdf_shapefile", 1, 0, 0, 10, 10),
+            rect(2, SemanticGroup::Building, "gdf_geojson", 1, 0, 0, 10, 10),
+        ];
+        let kept = manager.resolve_collisions(features);
+        assert_eq!(ids(&kept), vec![1, 2]);
+    }
+
+    #[test]
+    fn point_features_use_unit_area_for_coverage() {
+        assert_eq!(aabb_coverage_ratio((5, 5, 5, 5), (0, 10, 0, 10)), 1.0);
+        assert_eq!(aabb_coverage_ratio((5, 5, 5, 5), (6, 10, 6, 10)), 0.0);
+        assert!((aabb_coverage_ratio((0, 9, 0, 9), (5, 20, 0, 9)) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn negative_coordinates_bucket_consistently() {
+        // Guará/Taguatinga ficam a oeste do Marco Zero: X negativo é o caso normal.
+        let manager = ProviderManager::new();
+        let features = vec![
+            rect(
+                10,
+                SemanticGroup::Building,
+                "osm",
+                10,
+                -300,
+                -300,
+                -290,
+                -290,
+            ),
+            rect(
+                1,
+                SemanticGroup::Building,
+                "gdf_shapefile",
+                1,
+                -301,
+                -301,
+                -289,
+                -289,
+            ),
+        ];
+        let kept = manager.resolve_collisions(features);
+        assert_eq!(ids(&kept), vec![1]);
     }
 }

@@ -161,6 +161,12 @@ impl DataProvider for PostGisProvider {
     fn priority(&self) -> u8 {
         self.priority
     }
+    fn describe_sources(&self) -> Vec<String> {
+        vec![format!(
+            "postgis://<credenciais omitidas>/{}",
+            self.table_name
+        )]
+    }
 
     fn fetch_features(&self, bbox: &LLBBox) -> Result<Vec<Feature>, String> {
         println!("[INFO] 🐘 Estabelecendo conexão direta com Banco de Dados Espacial PostGIS: Tabela '{}'", self.table_name);
