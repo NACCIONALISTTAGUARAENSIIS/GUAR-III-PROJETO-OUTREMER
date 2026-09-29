@@ -154,6 +154,147 @@ impl<'a> WorldEditor<'a> {
         }
     }
 
+    /// Relê uma região já gravada (`r.<rx>.<rz>.mca`) para dentro do Core Cache,
+    /// bloco a bloco (paleta + índices empacotados do formato Java atual),
+    /// preservando propriedades de blockstate e os demais campos do chunk
+    /// (`block_entities`, `entities`...). Usado pela segunda passada do Halo
+    /// (`WorldEditor::flush_pending_halo`): operações que vazaram para uma
+    /// região já selada são aplicadas sobre o conteúdo REAL dela e a região é
+    /// regravada — nenhum bloco se perde na borda de região.
+    ///
+    /// Chunks que contêm só a camada-base (grama em Y=-62 escrita por
+    /// `create_base_chunk`) são recriados iguais no `save` seguinte; chunks
+    /// ausentes/ilegíveis são pulados (e recriados como base).
+    pub(super) fn load_java_region_from_disk(
+        &mut self,
+        region_x: i32,
+        region_z: i32,
+    ) -> Result<usize, String> {
+        let region_path = self
+            .world_dir
+            .join("region")
+            .join(format!("r.{}.{}.mca", region_x, region_z));
+        let file = File::open(&region_path)
+            .map_err(|e| format!("não foi possível reabrir {}: {e}", region_path.display()))?;
+        let mut region = Region::from_stream(file)
+            .map_err(|e| format!("região ilegível {}: {e}", region_path.display()))?;
+
+        const ROOT_KEYS: &[&str] = &[
+            "DataVersion",
+            "xPos",
+            "zPos",
+            "yPos",
+            "Status",
+            "isLightOn",
+            "sections",
+        ];
+
+        let mut chunks_loaded = 0usize;
+        for chunk_x in 0..32usize {
+            for chunk_z in 0..32usize {
+                let Ok(Some(raw)) = region.read_chunk(chunk_x, chunk_z) else {
+                    continue;
+                };
+                if raw.is_empty() {
+                    continue;
+                }
+                let Ok(Value::Compound(root)) = fastnbt::from_bytes::<Value>(&raw) else {
+                    continue;
+                };
+
+                let region_to_modify = self.world.get_or_create_region(region_x, region_z);
+                let chunk = region_to_modify.get_or_create_chunk(chunk_x as i32, chunk_z as i32);
+
+                for (key, value) in &root {
+                    if !ROOT_KEYS.contains(&key.as_str()) {
+                        chunk.other.insert(key.clone(), value.clone());
+                    }
+                }
+
+                let Some(Value::List(sections)) = root.get("sections") else {
+                    chunks_loaded += 1;
+                    continue;
+                };
+                for section in sections {
+                    let Value::Compound(section) = section else {
+                        continue;
+                    };
+                    let section_y = match section.get("Y") {
+                        Some(Value::Byte(y)) => *y,
+                        Some(Value::Int(y)) => *y as i8,
+                        _ => continue,
+                    };
+                    let Some(Value::Compound(block_states)) = section.get("block_states") else {
+                        continue;
+                    };
+                    let Some(Value::List(palette)) = block_states.get("palette") else {
+                        continue;
+                    };
+                    let palette: Vec<(Option<crate::block_definitions::Block>, Option<Value>)> =
+                        palette
+                            .iter()
+                            .map(|item| {
+                                let Value::Compound(item) = item else {
+                                    return (None, None);
+                                };
+                                let block = match item.get("Name") {
+                                    Some(Value::String(name)) => {
+                                        crate::block_definitions::Block::from_name(name)
+                                    }
+                                    _ => None,
+                                };
+                                let props = item.get("Properties").cloned();
+                                (block, props)
+                            })
+                            .collect();
+                    if palette.is_empty() {
+                        continue;
+                    }
+
+                    let indices: Vec<usize> = match block_states.get("data") {
+                        Some(Value::LongArray(data)) if palette.len() > 1 => {
+                            let mut bits = 4usize;
+                            while (1usize << bits) < palette.len() {
+                                bits += 1;
+                            }
+                            let per_long = 64 / bits;
+                            let mask = (1u64 << bits) - 1;
+                            let mut out = Vec::with_capacity(4096);
+                            'outer: for long in data.iter() {
+                                let long = *long as u64;
+                                for i in 0..per_long {
+                                    out.push(((long >> (i * bits)) & mask) as usize);
+                                    if out.len() == 4096 {
+                                        break 'outer;
+                                    }
+                                }
+                            }
+                            out.resize(4096, 0);
+                            out
+                        }
+                        _ => vec![0usize; 4096],
+                    };
+
+                    let target = chunk.sections.entry(section_y).or_default();
+                    for (index, &pal_idx) in indices.iter().enumerate() {
+                        let Some((Some(block), props)) = palette.get(pal_idx) else {
+                            continue;
+                        };
+                        if *block == crate::block_definitions::AIR {
+                            continue;
+                        }
+                        target.storage.set(index, *block);
+                        if let Some(props) = props {
+                            target.properties.insert(index, props.clone());
+                        }
+                    }
+                }
+                chunks_loaded += 1;
+            }
+        }
+        Ok(chunks_loaded)
+    }
+
     /// Executado apenas no FIM da esteira de produ��o para gravar as coordenadas e finalizar.
     pub(super) fn save_java(&mut self) {
         println!("{} Saving world metadata...", "[7/7]".bold());

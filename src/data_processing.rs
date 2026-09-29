@@ -1016,16 +1016,29 @@ pub fn generate_world_with_options(
         }
     }
 
-    // Com o roteamento por região-âncora, nenhuma operação pode sobrar no Halo
-    // (toda região que recebeu vazamentos foi varrida depois deles). Se sobrar,
-    // é regressão: blocos perdidos na borda de região — avisa em vez de calar.
+    // 🚨 Segunda passada do Halo. A âncora por canto mínimo garante que os
+    // ELEMENTOS nunca vazam para trás; mas a floresta ambiente (gerada por
+    // chunk, não por elemento) planta copas e troncos caídos na borda
+    // oeste/norte de cada região, que caem na região anterior — já selada.
+    // Antes, esses blocos eram simplesmente perdidos (copas cortadas em
+    // linha reta a cada 512 blocos). Agora as regiões afetadas são relidas do
+    // disco, recebem as operações pendentes com a semântica normal e são
+    // regravadas.
     let pending_halo = editor.pending_halo_ops();
     if pending_halo > 0 {
-        eprintln!(
-            "{} {} operações do Halo nunca foram aplicadas (blocos perdidos em bordas de região) — regressão em `anchor_region`?",
-            "Aviso:".yellow().bold(),
-            pending_halo
-        );
+        emit_gui_progress_update(98.0, "Aplicando vazamentos de borda (2ª passada)...");
+        match editor.flush_pending_halo() {
+            Ok((regions, applied)) => println!(
+                "[HALO] 2ª passada: {} operações aplicadas em {} regiões já seladas.",
+                applied, regions
+            ),
+            Err(e) => eprintln!(
+                "{} {} operações do Halo não puderam ser aplicadas: {}",
+                "Aviso:".yellow().bold(),
+                pending_halo,
+                e
+            ),
+        }
     }
 
     // Salva Metadados Finais

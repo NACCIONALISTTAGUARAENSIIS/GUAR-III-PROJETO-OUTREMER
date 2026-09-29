@@ -27,6 +27,10 @@ Detalhes, causa exata, correção e verificação de cada item em
    região já selada; features de provedor executadas uma vez; Halo virou log
    de operações com a semântica do Core (if-absent/whitelist/blacklist/force
    e propriedades preservadas), replayado em ordem após o chão existir.
+   Segunda passada no fim da geração: regiões já seladas que ainda receberam
+   vazamentos (copas da floresta ambiente na borda oeste/norte — 1,25 M de
+   operações medidas no Guará I+II) são relidas do disco, atualizadas e
+   regravadas (`flush_pending_halo`/`load_java_region_from_disk`).
 5. **Floresta ambiente** (`tree.rs`, `floodfill_cache.rs`): só nasce em
    `GRASS_BLOCK` natural, fora de qualquer área mapeada (bitmap de cobertura
    de uso do solo/lazer/amenidades/natureza/água/prédios) e a >2 blocos de

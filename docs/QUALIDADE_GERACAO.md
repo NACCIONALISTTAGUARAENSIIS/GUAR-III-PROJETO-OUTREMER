@@ -158,13 +158,25 @@ dobro.
   ordem**, **depois** do chão da região existir — exatamente a decisão que
   teria sido tomada in-core. Um estado "sombra" mantém as leituras
   antecipadas (`check_for_block_absolute`) coerentes.
-- No fim da geração, operações do Halo nunca aplicadas (que agora devem ser
-  zero) são contadas e avisadas no log, em vez de sumir em silêncio.
+- **Segunda passada para o que ainda vaza para trás.** A âncora cobre os
+  ELEMENTOS; a floresta ambiente, porém, é gerada por chunk (não por
+  elemento) e planta copas/troncos caídos na borda oeste/norte de cada região
+  — que caem na região anterior, já selada. Medido na geração real do Guará
+  I+II: **1,25 milhão** de operações nessa situação, antes simplesmente
+  perdidas (copas cortadas em linha reta a cada 512 blocos). Agora, no fim da
+  varredura, `WorldEditor::flush_pending_halo` relê cada região afetada do
+  disco (`load_java_region_from_disk`: paleta + índices empacotados,
+  propriedades de blockstate e `block_entities` preservados), replaya as
+  operações com a semântica normal e regrava. Só no formato Java; no Bedrock
+  o log avisa a quantidade não aplicada.
 
 **Verificação.** `data_processing::anchor_tests::*` (5 testes, incluindo a
 propriedade "a âncora nunca vem depois de qualquer região tocada na ordem da
 varredura") e `world_editor::halo_tests::*` (replay com cada modo contra um
-chão pré-existente; propriedades preservadas; estado sombra em ordem).
+chão pré-existente; propriedades preservadas; estado sombra em ordem; e a
+segunda passada gravando/relendo um `.mca` real e conferindo, com o parser da
+`fastanvil`, que o bloco vazado apareceu e os originais — inclusive uma
+escada com `facing` — sobreviveram).
 
 ---
 

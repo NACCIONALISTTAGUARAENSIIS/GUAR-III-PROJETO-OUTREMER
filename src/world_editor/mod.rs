@@ -304,6 +304,47 @@ impl<'a> WorldEditor<'a> {
         });
     }
 
+    /// Segunda passada do Halo: aplica as operações que ficaram pendentes para
+    /// regiões JÁ SELADAS em disco (vazamentos "para trás" que a âncora por
+    /// canto mínimo não cobre — ex.: copas da floresta ambiente e troncos
+    /// caídos gerados por chunk na borda oeste/norte de cada região), relendo
+    /// cada região do disco, replayando com a semântica normal e regravando.
+    /// Devolve (regiões regravadas, operações aplicadas). Só para Java Anvil —
+    /// o Bedrock não tem região reabrível.
+    pub fn flush_pending_halo(&mut self) -> Result<(usize, usize), String> {
+        let mut keys: Vec<(i32, i32)> = self
+            .halo_cache
+            .iter()
+            .filter(|(_, b)| !b.ops.is_empty())
+            .map(|(k, _)| *k)
+            .collect();
+        if keys.is_empty() {
+            return Ok((0, 0));
+        }
+        if self.format != WorldFormat::JavaAnvil {
+            return Err(format!(
+                "{} operações do Halo pendentes não podem ser aplicadas neste formato",
+                self.pending_halo_ops()
+            ));
+        }
+        keys.sort_unstable();
+        let mut applied = 0usize;
+        for (rx, rz) in &keys {
+            let ops = self
+                .halo_cache
+                .get(&(*rx, *rz))
+                .map(|b| b.ops.len())
+                .unwrap_or(0);
+            self.set_active_region(*rx, *rz);
+            self.world = WorldToModify::default();
+            self.load_java_region_from_disk(*rx, *rz)?;
+            self.load_halo_to_core();
+            self.flush_active_region();
+            applied += ops;
+        }
+        Ok((keys.len(), applied))
+    }
+
     /// Operações do Halo que NUNCA foram replayadas (regiões que a varredura
     /// não visitou depois de recebê-las). Com o roteamento por canto mínimo de
     /// `data_processing.rs` isto deve ser sempre zero; é conferido no fim da
@@ -1199,6 +1240,72 @@ mod halo_tests {
         // Whitelist que bate: shadow atualizado.
         editor.set_block_absolute(STONE, 700, -62, 5, Some(&[GRASS_BLOCK]), None);
         assert!(editor.check_for_block_absolute(700, -62, 5, Some(&[STONE]), None));
+    }
+
+    /// Vazamento "para trás" (para uma região já gravada em disco): a segunda
+    /// passada relê a região, aplica e regrava — e o que já estava lá sobrevive.
+    #[test]
+    fn pending_halo_is_flushed_into_already_sealed_regions_on_disk() {
+        use fastanvil::Chunk as _;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let xzbbox = XZBBox::new(0, 1023, 0, 511);
+        let llbbox = LLBBox::new(-15.83, -47.98, -15.82, -47.97).unwrap();
+        let mut editor = WorldEditor::new(tmp.path().to_path_buf(), &xzbbox, llbbox);
+        editor.set_ground(Arc::new(Ground::new_flat(-62)));
+
+        // Região 0 selada em disco com um bloco original (e uma escada com
+        // propriedades, que precisa sobreviver à releitura).
+        editor.set_active_region(0, 0);
+        editor.set_block_absolute(BRICK, 100, -50, 100, None, None);
+        let props = Value::Compound(HashMap::from([(
+            "facing".to_string(),
+            Value::String("east".to_string()),
+        )]));
+        editor.set_block_with_properties_absolute(
+            BlockWithProperties::new(OAK_STAIRS, Some(props)),
+            101,
+            -50,
+            100,
+            None,
+            None,
+        );
+        editor.flush_active_region();
+
+        // Região 1 ativa: um elemento vaza para trás, para a região 0.
+        editor.set_active_region(1, 0);
+        editor.set_block_absolute(OAK_LEAVES, 510, -49, 100, None, None);
+        editor.set_block_absolute(STONE, 100, -50, 100, None, None); // IfAbsent: não sobrescreve o tijolo
+        editor.flush_active_region();
+        assert_eq!(editor.pending_halo_ops(), 2);
+
+        let (regions, applied) = editor.flush_pending_halo().expect("flush");
+        assert_eq!((regions, applied), (1, 2));
+        assert_eq!(editor.pending_halo_ops(), 0);
+
+        let file = std::fs::File::open(tmp.path().join("region/r.0.0.mca")).unwrap();
+        let mut region = fastanvil::Region::from_stream(file).unwrap();
+        let block_name = |region: &mut fastanvil::Region<std::fs::File>, x: i32, y: i32, z: i32| {
+            let raw = region
+                .read_chunk((x >> 4) as usize, (z >> 4) as usize)
+                .unwrap()
+                .unwrap();
+            let chunk: fastanvil::CurrentJavaChunk = fastnbt::from_bytes(&raw).unwrap();
+            chunk
+                .block((x & 15) as usize, y as isize, (z & 15) as usize)
+                .map(|b| b.encoded_description().to_string())
+        };
+        assert_eq!(
+            block_name(&mut region, 510, -49, 100).as_deref(),
+            Some("minecraft:oak_leaves|persistent=true")
+        );
+        assert_eq!(
+            block_name(&mut region, 100, -50, 100).as_deref(),
+            Some("minecraft:bricks|")
+        );
+        assert_eq!(
+            block_name(&mut region, 101, -50, 100).as_deref(),
+            Some("minecraft:oak_stairs|facing=east")
+        );
     }
 
     impl<'a> WorldEditor<'a> {
