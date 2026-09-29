@@ -33,6 +33,11 @@ verificação em `docs/QUALIDADE_GERACAO.md` (Parte II). Resumo:
    `CoordTransformer` do mundo; `uso_to_tag` impede que lotes virem prédios
    (e substituam os prédios reais do OSM no merge); grupos semânticos
    canônicos (`semantic_group_from_tags`, `railway` → `Railway`).
+8. **Merge de provedores** (`providers/mod.rs`): a feature vencedora
+   (LiDAR/CityGML, contorno exato) herda as chaves semânticas que não tem da
+   feature OSM que substitui (nome, pavimentos, amenity/shop, leaf_type),
+   com `merged:source` para a auditoria — a fonte que não sabe o que vê
+   deixa de apagar a que sabe.
 7. **Árvores × estruturas** (`block_definitions.rs`, `world_editor/mod.rs`,
    `tree.rs`, `highways.rs`): vegetação existente cede a escritores
    estruturais (prédio, via, trilho...) em vez de deixar paredes com buracos;

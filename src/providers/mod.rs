@@ -516,6 +516,18 @@ impl ProviderManager {
                         if let Some(cell_indices) = spatial_grid.get(&(gx, gz)) {
                             for &idx in cell_indices {
                                 if should_supersede(&accepted_features[idx], &new_feature) {
+                                    // 🚨 O vencedor fica com a GEOMETRIA (é para isso que
+                                    // ele tem prioridade: contorno LiDAR/CityGML exato),
+                                    // mas herda a SEMÂNTICA que não tem. Antes o prédio
+                                    // do LiDAR (só `building=yes`) apagava nome,
+                                    // pavimentos, amenity/shop do prédio OSM que cobria —
+                                    // e a mata LiDAR apagava `leaf_type`/`name` do
+                                    // `natural=wood` do OSM: a fonte que não sabe o que
+                                    // vê "comia" a que sabe.
+                                    inherit_missing_semantics(
+                                        &mut accepted_features[idx],
+                                        &new_feature,
+                                    );
                                     is_superseded = true;
                                     break 'collision_check;
                                 }
@@ -586,6 +598,33 @@ pub(crate) fn aabb_coverage_ratio(inner: (i32, i32, i32, i32), outer: (i32, i32,
 }
 
 /// Ver `ProviderManager::resolve_collisions` para a regra completa.
+/// Chaves que descrevem a ORIGEM/medição de uma feature, não o objeto — nunca
+/// são herdadas (a proveniência do vencedor tem que continuar verdadeira).
+const NON_INHERITABLE_KEYS: &[&str] = &["source", "density", "layer_name", "id", "osm_id"];
+
+/// Copia para `winner` toda chave semântica de `loser` que o vencedor não
+/// tem. O vencedor mantém geometria, prioridade e tudo que já declarava; a
+/// origem herdada fica registrada em `merged:source` para a auditoria.
+fn inherit_missing_semantics(winner: &mut Feature, loser: &Feature) {
+    let mut inherited = 0usize;
+    for (k, v) in &loser.attributes {
+        if NON_INHERITABLE_KEYS.contains(&k.as_str())
+            || k.starts_with("merged:")
+            || winner.attributes.contains_key(k)
+        {
+            continue;
+        }
+        winner.attributes.insert(k.clone(), v.clone());
+        inherited += 1;
+    }
+    if inherited > 0 {
+        winner
+            .attributes
+            .entry("merged:source".to_string())
+            .or_insert_with(|| loser.source.clone());
+    }
+}
+
 fn should_supersede(accepted: &Feature, candidate: &Feature) -> bool {
     accepted.source != candidate.source
         && accepted.priority < candidate.priority
@@ -764,6 +803,80 @@ mod tests {
     /// Regressão do defeito sistêmico: duas ruas OSM que se cruzam têm AABBs
     /// que se intersectam — a segunda era descartada e a malha viária inteira
     /// virava um conjunto de vias isoladas.
+    #[test]
+    fn superseded_feature_lends_its_missing_semantics_to_the_winner() {
+        use crate::coordinate_system::cartesian::XZPoint;
+        let square = |x0: i32, z0: i32, w: i32| {
+            GeometryType::Polygon(vec![
+                XZPoint::new(x0, z0),
+                XZPoint::new(x0 + w, z0),
+                XZPoint::new(x0 + w, z0 + w),
+                XZPoint::new(x0, z0 + w),
+                XZPoint::new(x0, z0),
+            ])
+        };
+        let tags = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let lidar = Feature::new(
+            1,
+            SemanticGroup::Building,
+            tags(&[
+                ("building", "yes"),
+                ("source", "GDF_LiDAR_Cloud"),
+                ("height", "12"),
+            ]),
+            square(0, 0, 20),
+            "lidar".to_string(),
+            1,
+        );
+        let osm = Feature::new(
+            2,
+            SemanticGroup::Building,
+            tags(&[
+                ("building", "retail"),
+                ("name", "Feira do Guará"),
+                ("building:levels", "2"),
+                ("shop", "mall"),
+                ("source", "survey"),
+            ]),
+            square(2, 2, 18),
+            "osm".to_string(),
+            10,
+        );
+        let mut manager = ProviderManager::new();
+        let out = manager.resolve_collisions(vec![osm, lidar]);
+        assert_eq!(out.len(), 1);
+        let f = &out[0];
+        assert_eq!(f.source, "lidar");
+        assert_eq!(
+            f.attributes.get("building").map(String::as_str),
+            Some("yes")
+        );
+        assert_eq!(f.attributes.get("height").map(String::as_str), Some("12"));
+        assert_eq!(
+            f.attributes.get("name").map(String::as_str),
+            Some("Feira do Guará")
+        );
+        assert_eq!(
+            f.attributes.get("building:levels").map(String::as_str),
+            Some("2")
+        );
+        assert_eq!(f.attributes.get("shop").map(String::as_str), Some("mall"));
+        assert_eq!(
+            f.attributes.get("source").map(String::as_str),
+            Some("GDF_LiDAR_Cloud")
+        );
+        assert_eq!(
+            f.attributes.get("merged:source").map(String::as_str),
+            Some("osm")
+        );
+        let _ = &mut manager;
+    }
+
     #[test]
     fn crossing_highways_from_same_provider_are_both_kept() {
         let manager = ProviderManager::new();

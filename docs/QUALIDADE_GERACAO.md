@@ -511,6 +511,23 @@ laje, cascalho); (3) nada removia a copa que ficava sobre a pista.
   blocos, tolerando vãos de copa).
 - Teste em `halo_tests` (copa × parede por prioridade, limpeza sobre a via).
 
+## 15. Merge de provedores: o vencedor herda a semântica que não tem
+
+**Sintoma (mesma família do §14).** Um prédio da nuvem LiDAR (classe 6 →
+`building=yes` + `source`, prioridade 1) cobre o prédio do OSM e o substitui
+no merge — levando junto nome, pavimentos, `amenity`/`shop`. A mata LiDAR
+(`natural=wood`) apaga `leaf_type`/`name` da mata do OSM; a água LiDAR, o
+nome do lago. A fonte que **não sabe o que vê** comia a que sabe.
+
+**Correção.** `resolve_collisions` passa a chamar `inherit_missing_semantics`
+no momento em que descarta a candidata: o vencedor mantém geometria,
+prioridade e tudo que já declarava, e recebe as chaves que não tinha (nunca
+`source`/`density`/ids); `merged:source` registra de onde veio a herança
+para a auditoria de proveniência. Assim `BuildingCategory`, o enriquecimento
+por POIs e as espécies do Cerrado continuam funcionando sobre o contorno
+exato do LiDAR/CityGML. Teste
+`superseded_feature_lends_its_missing_semantics_to_the_winner`.
+
 ## Validação da Parte II
 
 Mesmos comandos da seção "Como reproduzir a validação". Testes novos:
